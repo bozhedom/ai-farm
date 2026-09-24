@@ -3,22 +3,17 @@ import { z } from 'zod'
 import { audit, query, transaction } from '../../core/db'
 import { enqueue, requestResearch } from '../../core/queue'
 import { simulateEvolution } from '../../core/evolution'
+import { templateSchema } from '../../core/policy'
 import { body, respond } from '../utils/api'
 export default defineEventHandler((event) =>
   respond(async () => {
     const input = await body(
       event,
       z.discriminatedUnion('action', [
+        z.object({ action: z.literal('research'), template: templateSchema.optional() }).strict(),
         z
           .object({
-            action: z.enum([
-              'research',
-              'evaluate',
-              'running',
-              'paused',
-              'emergency_stop',
-              'restart_research',
-            ]),
+            action: z.enum(['evaluate', 'running', 'paused', 'emergency_stop', 'restart_research']),
           })
           .strict(),
         z
@@ -26,7 +21,7 @@ export default defineEventHandler((event) =>
           .strict(),
       ]),
     )
-    if (input.action === 'research') return requestResearch()
+    if (input.action === 'research') return requestResearch(input.template)
     if (input.action === 'evaluate')
       return enqueue('evaluate', `evaluate:${Math.floor(Date.now() / (7 * 86400000))}`)
     if (input.action === 'simulate') return simulateEvolution(input.generation)

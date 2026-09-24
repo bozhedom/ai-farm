@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import type { Template } from '../../core/policy'
+
 const { state: d, failure } = useFarm()
 const props = defineProps<{ busy?: boolean }>()
-const emit = defineEmits<{ research: [] }>()
+const emit = defineEmits<{ research: [template?: Template] }>()
+const researchTemplate = useState<Template | ''>('research-template', () => '')
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval>
 onMounted(() => {
@@ -51,6 +54,18 @@ const calls = computed(
       .reverse() || [],
 )
 const current = computed(() => pending.value[0])
+const researchActive = computed(() =>
+  d.value?.jobs.some((j: any) => j.kind === 'research' && ['queued', 'running'].includes(j.status)),
+)
+const researchDisabled = computed(
+  () =>
+    !d.value ||
+    props.busy ||
+    !online.value ||
+    d.value.state.mode !== 'running' ||
+    !d.value.state.research_enabled ||
+    researchActive.value,
+)
 const currentStrategy = computed(() => {
   if (!current.value) return ''
   const run = d.value.jobs.find((j: any) => j.id === current.value.job_id)
@@ -168,23 +183,22 @@ const roleStatus: Record<string, string> = {
           лимита</small
         >
       </p>
-      <button
-        class="button primary small"
-        :disabled="
-          props.busy ||
-          !online ||
-          d.state.mode !== 'running' ||
-          !d.state.research_enabled ||
-          d.jobs.some((j: any) => j.kind === 'research' && ['queued', 'running'].includes(j.status))
-        "
-        @click="emit('research')"
-      >
-        {{
-          d.jobs.some((j: any) => j.kind === 'research' && ['queued', 'running'].includes(j.status))
-            ? 'Исследование выполняется…'
-            : 'Новое исследование ↗'
-        }}
-      </button>
+      <div class="research-controls">
+        <label for="research-template">Направление исследования</label>
+        <select id="research-template" v-model="researchTemplate" :disabled="researchDisabled">
+          <option value="">Автоматический выбор</option>
+          <option value="description">Описание товара</option>
+          <option value="faq">Вопросы и ответы</option>
+          <option value="social">Публикации</option>
+        </select>
+        <button
+          class="button primary small"
+          :disabled="researchDisabled"
+          @click="emit('research', researchTemplate || undefined)"
+        >
+          {{ researchActive ? 'Исследование выполняется…' : 'Новое исследование ↗' }}
+        </button>
+      </div>
     </div>
     <div class="live-details">
       <div class="run-history">

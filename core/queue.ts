@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
+import { templateSchema, type Template } from './policy'
 
 export type Job = {
   id: string
@@ -45,7 +46,8 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
 }
 
 /** Owners may start a new run when the previous one ends; parallel clicks share the active job. */
-export async function requestResearch() {
+export async function requestResearch(template?: Template) {
+  if (template !== undefined) templateSchema.parse(template)
   return transaction(async (db) => {
     const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
     if (state?.mode !== 'running') throw new Error('RESEARCH_PAUSED')
@@ -56,11 +58,16 @@ export async function requestResearch() {
       db,
     )
     if (active) return { id: active.id as string, status: active.status as string, reused: true }
-    const job = await enqueue('research', `manual-research:${randomUUID()}`, {}, db)
+    const job = await enqueue(
+      'research',
+      `manual-research:${randomUUID()}`,
+      template ? { templates: JSON.stringify([template]) } : {},
+      db,
+    )
     await audit(
       'research_requested',
       'Владелец запустил дополнительное исследование.',
-      { jobId: job.id },
+      { jobId: job.id, template: template || 'auto' },
       db,
     )
     return { id: job.id as string, status: job.status as string, reused: false }

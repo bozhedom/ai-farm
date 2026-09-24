@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Template } from '../../core/policy'
 import DashboardOverview from '~/components/dashboard/Overview.vue'
 import DashboardHypotheses from '~/components/dashboard/Hypotheses.vue'
 import DashboardStrategies from '~/components/dashboard/Strategies.vue'
@@ -6,6 +7,7 @@ import DashboardOrders from '~/components/dashboard/Orders.vue'
 import DashboardAudit from '~/components/dashboard/Audit.vue'
 
 const { state: d, refresh } = useFarm()
+const researchTemplate = useState<Template | ''>('research-template', () => '')
 const route = useRoute()
 const view = computed(() => String(route.query.view || 'overview'))
 const title = computed(
@@ -21,14 +23,19 @@ const title = computed(
 const busy = ref(false),
   message = ref(''),
   actionError = ref('')
-async function control(action: string) {
+async function control(action: string, template?: Template) {
   busy.value = true
   actionError.value = ''
   message.value = ''
   try {
     const response = await $fetch<any>('/api/control', {
       method: 'POST',
-      body: action === 'simulate' ? { action, generation: d.value.state.generation } : { action },
+      body:
+        action === 'simulate'
+          ? { action, generation: d.value.state.generation }
+          : action === 'research'
+            ? { action, template: template || researchTemplate.value || undefined }
+            : { action },
     })
     await refresh()
     message.value =
@@ -104,7 +111,7 @@ async function control(action: string) {
       <LiveActivity
         v-if="view === 'overview' || view === 'hypotheses'"
         :busy="busy"
-        @research="control('research')"
+        @research="(template) => control('research', template)"
       />
       <DashboardOverview v-if="view === 'overview'" :busy="busy" @control="control" />
       <DashboardHypotheses v-else-if="view === 'hypotheses'" :busy="busy" @control="control" />

@@ -13,6 +13,7 @@ import {
   requestResearch,
 } from '../../core/queue'
 import { runJob } from '../../core/jobs/run'
+import type { Template } from '../../core/policy'
 import * as providers from '../../core/providers'
 import { createOrder } from '../../core/orders'
 import {
@@ -129,6 +130,25 @@ describe('durable autonomous pipeline', () => {
     }
     await query("UPDATE system_state SET mode='running',research_enabled=false")
     await expect(requestResearch()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+  })
+  it('runs the owner-selected template without changing an already active request', async () => {
+    await expect(requestResearch('arbitrary-code' as Template)).rejects.toThrow()
+    expect(await query('SELECT id FROM jobs')).toHaveLength(0)
+    const requested = await requestResearch('social')
+    expect(await requestResearch('faq')).toMatchObject({ id: requested.id, reused: true })
+    const job = (await claimJob(['research']))!
+    await runJob(job)
+    await finishJob(job)
+    expect((await query('SELECT template FROM products')).map((p) => p.template)).toEqual([
+      'social',
+    ])
+    await requestResearch('faq')
+    const next = (await claimJob(['research']))!
+    await runJob(next)
+    await finishJob(next)
+    expect(
+      (await query('SELECT template FROM products ORDER BY template')).map((p) => p.template),
+    ).toEqual(['faq', 'social'])
   })
   it.each(['over-budget', 'invalid-output'])(
     'rotates to another template after a missing product fails with %s',
