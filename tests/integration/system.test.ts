@@ -221,6 +221,46 @@ describe('durable autonomous pipeline', () => {
     expect(evaluation!.decision).toBe('HOLD')
     expect(evaluation!.details.realRevenueKopecks).toBe(0)
   })
+  it('preserves quality objections and never publishes a rejected control example', async () => {
+    const original = providers.model
+    vi.spyOn(providers, 'model').mockImplementation(async (args: any) =>
+      args.role === 'Проверяющий'
+        ? args.schema.parse({ verdict: 'REVISE', reason: 'В ответе выдуманы условия доставки.' })
+        : original(args),
+    )
+    expect(await research()).toHaveLength(0)
+    const hypotheses = await query('SELECT status,critique FROM hypotheses')
+    expect(hypotheses).toHaveLength(2)
+    expect(
+      hypotheses.every((h) => h.status === 'rejected' && h.critique.verdict === 'BLOCKED'),
+    ).toBe(true)
+    expect(
+      hypotheses.every((h) => h.critique.reason.includes('В ответе выдуманы условия доставки.')),
+    ).toBe(true)
+    expect(await query('SELECT * FROM product_versions')).toHaveLength(0)
+  })
+  it('keeps rejected order output private and marks the obligation for review', async () => {
+    const o = await order()
+    await sandboxPayment(o.id)
+    const original = providers.model
+    vi.spyOn(providers, 'model').mockImplementation(async (args: any) =>
+      args.role === 'Проверяющий'
+        ? args.schema.parse({
+            verdict: 'BLOCKED',
+            reason: 'В ответ добавлены неподтверждённые свойства.',
+          })
+        : original(args),
+    )
+    const job = (await claimJob(['fulfill']))!
+    await expect(runJob(job)).rejects.toThrow('OUTPUT_REVIEW_REQUIRED')
+    await finishJob(job, new Error('OUTPUT_REVIEW_REQUIRED'))
+    expect((await query('SELECT status,result FROM orders WHERE id=$1', [o.id]))[0]).toEqual({
+      status: 'manual_review',
+      result: null,
+    })
+    expect(await query("SELECT id FROM audit_events WHERE kind='order_delivered'")).toHaveLength(0)
+    expect((await budgetSummary()).outstanding).toBe(0)
+  })
   it('does not queue delivery for an unpaid order', async () => {
     const o = await order()
     expect(await claimJob(['fulfill'])).toBeUndefined()

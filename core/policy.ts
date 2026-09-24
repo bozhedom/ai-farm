@@ -39,7 +39,13 @@ export const researchSchema = z
     hypothesis: plain(10, 700),
     counterargument: plain(10, 700),
     experiment: plain(10, 500),
-    estimatedCostRub: z.number().min(0).max(1000000),
+    estimatedCostRub: z
+      .number()
+      .min(0)
+      .max(1000000)
+      .describe(
+        'Собственные прямые расходы в рублях на генерацию и проверку одного заказа, по costContext. Не цена продажи и не стоимость копирайтера из источников. Сервер и привлечение клиентов учитываются отдельно в uncertainties. Оценку выше лимита не уменьшай.',
+      ),
     sources: z.array(z.url()).max(6),
     uncertainties: z.array(plain(3, 300)).min(1).max(6),
   })

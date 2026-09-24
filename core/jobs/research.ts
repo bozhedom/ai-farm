@@ -5,6 +5,7 @@ import { audit, query, transaction } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model, search } from '../providers'
 import { demoSpecs, demoResult } from '../providers/demo'
+import { recipes } from '../templates'
 import {
   POLICY,
   outputSchema,
@@ -72,6 +73,13 @@ export async function research(job: Job) {
     )
     const context = {
       template,
+      service: {
+        task: recipes[template].task,
+        delivery:
+          'Готовый сервер получает исходный текст владельца, генерирует ответ, отдельно проверяет и выдаёт текст / TXT в закрытом стенде.',
+        experiment:
+          'Проверяется качество черновика на обезличенных примерах. Разработка нового ПО, наём авторов, публикация и платное привлечение клиентов в этот эксперимент не входят.',
+      },
       strategy_id: strategy.id,
       strategy: strategy.approach,
       evidence,
@@ -79,12 +87,13 @@ export async function research(job: Job) {
       costContext: {
         definition:
           'estimatedCostRub — оценка собственных прямых расходов на генерацию и проверку ОДНОГО заказа в рублях. Это НЕ цена продажи услуги и НЕ цена конкурента из поиска.',
+        modelProvider: config().MODEL_PROVIDER,
         maximumOrderCostRub: config().ORDER_RESERVE_KOPECKS / 100,
         localApiCostRub: config().MODEL_PROVIDER === 'ollama' ? 0 : undefined,
         instruction:
           'Серверные расходы отдельно неизвестны: укажи это в uncertainties. Не подгоняй оценку под лимит. Если она выше лимита, гипотеза сохранится, но не будет выпущена.',
       },
-      task: 'Оцени небольшой тест текстового сервиса. Ссылки — только из evidence, минимум два независимых домена. Поисковые фрагменты показывают предложения конкурентов, но не доказанные продажи. Не объявляй спрос подтверждённым.',
+      task: 'Сформулируй узкую гипотезу для описанного в service текстового сервиса: конкретная аудитория, польза черновика и способ проверить её на исходных материалах. Не пересказывай статью из поиска как собственную идею. Ссылки — только из evidence, минимум два независимых домена. Цены конкурентов показывают их предложения, а не наши расходы и не доказанные продажи. Расходы оцени по costContext; неизвестное укажи в uncertainties.',
     }
     const idea = await model({
       role: 'Исследователь',
@@ -152,8 +161,7 @@ export async function research(job: Job) {
           }),
           template,
         )
-        const fixture =
-          'Керамическая мастерская выпускает кружки объёмом 350 мл. Белая матовая глазурь. Ручная работа. Самовывоз по предварительному согласованию.'
+        const fixture = recipes[template].fixture
         validateInput(fixture)
         const rejects = (input: string) => {
           try {
@@ -172,7 +180,12 @@ export async function research(job: Job) {
           role: 'Исполнитель',
           key: `${job.id}:${template}:fixture`,
           reservationId,
-          context: { product: spec, input: fixture, strategy: strategy.approach },
+          context: {
+            product: spec,
+            input: fixture,
+            strategy: strategy.approach,
+            task: recipes[template].task,
+          },
           schema: outputSchema,
           demoValue: { text: demoResult(template, fixture) },
         })
@@ -181,14 +194,21 @@ export async function research(job: Job) {
           role: 'Проверяющий',
           key: `${job.id}:${template}:fixture-review`,
           reservationId,
-          context: { product: spec, input: fixture, output: sample.text },
+          context: {
+            product: spec,
+            input: fixture,
+            output: sample.text,
+            recipe: recipes[template].task,
+            task: 'Сравни ответ с исходным материалом и рецептом. Проверь числа, условия, отсутствие выдуманных фактов и полноту результата. Верни решение проверки, а не новый текст.',
+          },
           schema: reviewSchema,
           demoValue: {
             verdict: 'PASS',
             reason: 'Контрольный тест соответствует разрешённому шаблону и исходному материалу.',
           },
         })
-        if (quality.verdict !== 'PASS') blockedReason = 'RECIPE_QUALITY_BLOCKED'
+        if (quality.verdict !== 'PASS')
+          blockedReason = `Контрольный пример отклонён (${quality.verdict}): ${quality.reason}`
         checks = {
           normal: quality.verdict,
           incomplete: 'BLOCKED',
