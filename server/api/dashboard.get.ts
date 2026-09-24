@@ -3,6 +3,7 @@ import { config } from '../../core/config'
 import { query } from '../../core/db'
 import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
+import { POLICY } from '../../core/policy'
 export default defineEventHandler(async () => {
   const [
     state,
@@ -37,7 +38,10 @@ export default defineEventHandler(async () => {
       FROM tool_calls ORDER BY created_at DESC LIMIT 120`,
     ),
     query(
-      "SELECT count(*) FILTER(WHERE status='running')::int AS running,count(*) FILTER(WHERE status='queued')::int AS queued FROM jobs",
+      `SELECT count(*) FILTER(WHERE status='running')::int AS running,
+        count(*) FILTER(WHERE status='queued')::int AS queued,
+        count(*) FILTER(WHERE dedupe_key LIKE 'manual-research:%' AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::int AS manual_research_today
+       FROM jobs`,
     ),
   ])
   const c = config()
@@ -73,6 +77,7 @@ export default defineEventHandler(async () => {
       monthlyLimit: c.MONTHLY_BUDGET_KOPECKS,
       dailyLimit: c.DAILY_BUDGET_KOPECKS,
       autonomyEnabled: c.AUTONOMY_ENABLED,
+      manualResearchLimit: POLICY.manualResearchPerDay,
     },
     realRevenueKopecks: 0,
   }

@@ -51,6 +51,9 @@ const calls = computed(
       .reverse() || [],
 )
 const current = computed(() => pending.value[0])
+const researchRemaining = computed(() =>
+  Math.max(0, d.value.config.manualResearchLimit - d.value.workload.manual_research_today),
+)
 const currentStrategy = computed(() => {
   if (!current.value) return ''
   const run = d.value.jobs.find((j: any) => j.id === current.value.job_id)
@@ -163,7 +166,9 @@ const roleStatus: Record<string, string> = {
     <div class="live-toolbar">
       <p>
         <strong>{{ online ? d.workload.running : '—' }}</strong> задач в работе <span>·</span>
-        {{ d.workload.queued }} в очереди
+        {{ d.workload.queued }} в очереди<br /><small
+          >Дополнительных исследований осталось: {{ researchRemaining }}</small
+        >
       </p>
       <button
         class="button primary small"
@@ -172,6 +177,7 @@ const roleStatus: Record<string, string> = {
           !online ||
           d.state.mode !== 'running' ||
           !d.state.research_enabled ||
+          researchRemaining === 0 ||
           d.jobs.some((j: any) => j.kind === 'research' && ['queued', 'running'].includes(j.status))
         "
         @click="emit('research')"
@@ -179,7 +185,9 @@ const roleStatus: Record<string, string> = {
         {{
           d.jobs.some((j: any) => j.kind === 'research' && ['queued', 'running'].includes(j.status))
             ? 'Исследование выполняется…'
-            : 'Новое исследование ↗'
+            : researchRemaining === 0
+              ? 'Лимит дополнительных запусков использован'
+              : 'Новое исследование ↗'
         }}
       </button>
     </div>

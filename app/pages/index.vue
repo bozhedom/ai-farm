@@ -260,7 +260,14 @@ const sourceHost = (url: string) => new URL(url).hostname
               <p>{{ h.research.experiment }}</p>
             </div>
             <div>
-              <h3>Решение критика · {{ labels[h.critique.verdict] }}</h3>
+              <h3>Оценка прямых расходов</h3>
+              <p>
+                {{ rub(Math.round(h.research.estimatedCostRub * 100)) }} за заказ. Предварительная
+                оценка модели; сервер и привлечение покупателей считаются отдельно.
+              </p>
+            </div>
+            <div>
+              <h3>Итоговая проверка · {{ labels[h.critique.verdict] }}</h3>
               <p>{{ h.critique.reason }}</p>
             </div>
           </div>
