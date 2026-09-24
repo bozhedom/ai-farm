@@ -1,0 +1,16 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - bing
+      - brave
+search:
+  safe_search: 2
+  default_lang: ru-RU
+  formats: [json]
+server:
+  limiter: false
+  image_proxy: false
+outgoing:
+  request_timeout: 12
+  max_request_timeout: 18

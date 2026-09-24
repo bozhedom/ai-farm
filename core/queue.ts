@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
+import { POLICY } from './policy'
 
 export type Job = {
   id: string
@@ -35,12 +36,48 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
     )
     if (!row) return
     const [claimed] = await query<Job>(
-      `UPDATE jobs SET status='running', attempts=attempts+1,
+      `UPDATE jobs SET status='running', attempts=attempts+1,started_at=COALESCE(started_at,now()),
       locked_until=now()+interval '2 minutes', lease_token=$2 WHERE id=$1 RETURNING *`,
       [row.id, randomUUID()],
       db,
     )
     return claimed
+  })
+}
+
+/** Manual demonstrations have a separate, bounded quota; parallel clicks share the active job. */
+export async function requestResearch() {
+  return transaction(async (db) => {
+    const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
+    if (state?.mode !== 'running') throw new Error('RESEARCH_PAUSED')
+    if (!state.research_enabled) throw new Error('RESEARCH_WINDOW_CLOSED')
+    const [active] = await query(
+      "SELECT id,status FROM jobs WHERE kind='research' AND status IN ('queued','running') ORDER BY created_at LIMIT 1",
+      [],
+      db,
+    )
+    if (active) return { id: active.id as string, status: active.status as string, reused: true }
+    const rows = await query(
+      `SELECT created_at FROM jobs WHERE dedupe_key LIKE 'manual-research:%'
+       AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+       ORDER BY created_at DESC`,
+      [],
+      db,
+    )
+    if (rows.length >= POLICY.manualResearchPerDay) throw new Error('RESEARCH_DAILY_LIMIT')
+    if (
+      rows[0] &&
+      Date.now() - new Date(rows[0].created_at).getTime() < POLICY.manualResearchCooldownMs
+    )
+      throw new Error('RESEARCH_COOLDOWN')
+    const job = await enqueue('research', `manual-research:${randomUUID()}`, {}, db)
+    await audit(
+      'research_requested',
+      'Владелец запустил дополнительное исследование.',
+      { jobId: job.id },
+      db,
+    )
+    return { id: job.id as string, status: job.status as string, reused: false }
   })
 }
 export async function heartbeatJob(job: Job) {
@@ -135,8 +172,10 @@ export async function expireResearchSlots(day: string) {
   await transaction(async (db) => {
     const stale = await query(
       `UPDATE jobs SET status='failed',error_code='RESEARCH_SLOT_EXPIRED',finished_at=now()
-      WHERE kind='research' AND status='queued' AND dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-      AND right(dedupe_key,10)<$1 RETURNING id`,
+      WHERE kind='research' AND status='queued' AND (
+        (dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND right(dedupe_key,10)<$1)
+        OR (dedupe_key LIKE 'manual-research:%' AND created_at < ($1::date::timestamp AT TIME ZONE 'UTC'))
+      ) RETURNING id`,
       [day],
       db,
     )

@@ -1,0 +1,11 @@
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS started_at timestamptz;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS job_id uuid REFERENCES jobs(id);
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS template text;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS task_label text;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS provider text;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS model text;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS finished_at timestamptz;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS heartbeat_at timestamptz;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS progress_chars integer NOT NULL DEFAULT 0;
+ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS error_code text;
+CREATE INDEX IF NOT EXISTS tool_calls_job_idx ON tool_calls(job_id,created_at);

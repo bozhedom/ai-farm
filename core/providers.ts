@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { config } from './config'
 import { meteredCall } from './budget'
 import { POLICY, safeSourceUrl, type Evidence, type Template } from './policy'
+import { localModel, localSearch } from './local-providers'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
 const searchQueries: Record<Template, string> = {
@@ -60,8 +61,9 @@ export async function search(
     key,
     reservationId,
     role: 'search',
-    maximum: demo ? 0 : c.SEARCH_COST_KOPECKS,
+    maximum: c.SEARCH_PROVIDER === 'yandex' ? c.SEARCH_COST_KOPECKS : 0,
     demo,
+    activity: { template, provider: c.SEARCH_PROVIDER, taskLabel: searchQueries[template] },
     invoke: async () => {
       if (demo)
         return {
@@ -83,6 +85,8 @@ export async function search(
             },
           ],
         }
+      if (c.SEARCH_PROVIDER === 'searxng')
+        return { value: await localSearch(searchQueries[template]), cost: 0 }
       const data = await requestJson(
         'https://searchapi.api.cloud.yandex.net/v2/web/search',
         {
@@ -162,24 +166,60 @@ export async function model<T>(args: {
     ...args.context,
   })
   // UTF-8 bytes plus fixed overhead safely overestimate input token count for this small text context.
-  const maxTokens = 2000
+  const maxTokens = args.role === 'Исследователь' ? 2800 : 2000
   const upperInput = Buffer.byteLength(system + context, 'utf8') + 2048
   if (upperInput > 100000) throw new Error('CONTEXT_TOO_LARGE')
   const demo = c.MODEL_PROVIDER === 'demo'
-  const maximum = demo
-    ? 0
-    : Math.ceil(
-        (upperInput * c.MODEL_INPUT_KOPECKS_PER_1K) / 1000 +
-          (maxTokens * c.MODEL_OUTPUT_KOPECKS_PER_1K) / 1000,
-      )
+  const maximum =
+    c.MODEL_PROVIDER !== 'yandex'
+      ? 0
+      : Math.ceil(
+          (upperInput * c.MODEL_INPUT_KOPECKS_PER_1K) / 1000 +
+            (maxTokens * c.MODEL_OUTPUT_KOPECKS_PER_1K) / 1000,
+        )
   return meteredCall({
     key: args.key,
     reservationId: args.reservationId,
     role: args.role,
     maximum,
     demo,
+    activity: {
+      provider: c.MODEL_PROVIDER,
+      model:
+        c.MODEL_PROVIDER === 'ollama'
+          ? c.OLLAMA_MODEL
+          : c.MODEL_PROVIDER === 'yandex'
+            ? c.YANDEX_MODEL
+            : undefined,
+      template: String(
+        args.context.template ||
+          (args.context.product as Record<string, unknown> | undefined)?.template ||
+          '',
+      ),
+      taskLabel:
+        (
+          {
+            Исследователь: 'Изучает источники и формулирует проверяемую гипотезу',
+            Критик: 'Ищет слабые места, бесплатные альтернативы и причины отказа',
+            Архитектор: 'Проектирует текстовый сервис по принятой гипотезе',
+            Исполнитель: 'Готовит текст по исходным данным',
+            Проверяющий: 'Сверяет результат с исходными фактами и правилами',
+          } as Record<string, string>
+        )[args.role] || args.role,
+    },
     invoke: async () => {
       if (demo) return { value: args.schema.parse(args.demoValue), cost: 0 }
+      if (c.MODEL_PROVIDER === 'ollama')
+        return {
+          value: await localModel({
+            key: args.key,
+            system,
+            context,
+            schema: args.schema,
+            maxTokens,
+          }),
+          cost: 0,
+        }
       const response = await requestJson(
         'https://llm.api.cloud.yandex.net/foundationModels/v1/completion',
         {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { config } from './config'
 import { audit, query, transaction } from './db'
 import { closeReservation, reserveBudget } from './budget'
@@ -19,9 +20,9 @@ import {
   type ProductSpec,
 } from './policy'
 import type { Job } from './queue'
+import { activityContext } from './activity'
 
 export async function research(job: Job) {
-  const reservationId = await reserveBudget(`research:${job.id}`, 'research')
   const strategies = await query(
     "SELECT * FROM strategies WHERE status='active' ORDER BY created_at,id",
   )
@@ -30,13 +31,15 @@ export async function research(job: Job) {
   let plan: { template: Template; strategy: { id: string; approach: string } }[]
   if (savedJob!.payload.plan) plan = JSON.parse(savedJob!.payload.plan)
   else {
-    const existing = await query('SELECT template FROM products')
+    const existing = await query(
+      'SELECT template FROM products ORDER BY is_demo DESC,updated_at,template',
+    )
     const wanted = templates.filter((t) => !existing.some((p) => p.template === t))
     const selected: Template[] = savedJob!.payload.templates
       ? JSON.parse(savedJob!.payload.templates)
       : wanted.length
         ? wanted.slice(0, 2)
-        : [templates[new Date().getUTCDate() % 3]!]
+        : [existing[0]!.template as Template]
     plan = selected.map((template, i) => {
       const strategy = strategies[(new Date().getUTCDate() + i) % 4]!
       return { template, strategy: { id: strategy.id, approach: strategy.approach } }
@@ -46,6 +49,15 @@ export async function research(job: Job) {
       JSON.stringify({ plan: JSON.stringify(plan) }),
     ])
   }
+  const completed = await query('SELECT template FROM hypotheses WHERE job_id=$1', [job.id])
+  if (plan.every((item) => completed.some((h) => h.template === item.template))) {
+    const [reservation] = await query('SELECT id FROM budget_reservations WHERE dedupe_key=$1', [
+      `research:${job.id}`,
+    ])
+    if (reservation) await closeReservation(reservation.id)
+    return
+  }
+  const reservationId = await reserveBudget(`research:${job.id}`, 'research')
   for (const { template, strategy } of plan) {
     if (
       (await query('SELECT id FROM hypotheses WHERE job_id=$1 AND template=$2', [job.id, template]))
@@ -65,13 +77,19 @@ export async function research(job: Job) {
       strategy: strategy.approach,
       evidence,
       memory,
+      task: 'Оцени небольшой тест текстового сервиса. Ссылки — только из evidence, минимум два независимых домена. Поисковые фрагменты показывают предложения конкурентов, но не доказанные продажи. Не объявляй спрос подтверждённым.',
     }
     const idea = await model({
       role: 'Исследователь',
       key: `${job.id}:${template}:research`,
       reservationId,
       context,
-      schema: researchSchema,
+      schema: researchSchema.extend({
+        sources: z
+          .array(z.enum(evidence.map((e) => e.url) as [string, ...string[]]))
+          .min(2)
+          .max(6),
+      }),
       demoValue: {
         title: demoSpecs[template].name,
         problem: 'Подготовка понятного текста по существующим материалам требует времени.',
@@ -94,7 +112,11 @@ export async function research(job: Job) {
       role: 'Критик',
       key: `${job.id}:${template}:critic`,
       reservationId,
-      context: { ...context, idea },
+      context: {
+        ...context,
+        idea,
+        task: 'Проверь допустимость и проверяемость малого теста. PASS означает, что гипотезу можно проверить в закрытом стенде; доказанная прибыль для PASS не требуется. REVISE — конкретный исправимый недостаток. BLOCKED — запрещённая тема или недостоверные основания.',
+      },
       schema: reviewSchema,
       demoValue: {
         verdict: 'PASS',
@@ -172,12 +194,17 @@ export async function research(job: Job) {
       const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
       const accepted = !!spec && !blockedReason
       const count = (await query("SELECT id FROM products WHERE status='sandbox'", [], db)).length
-      const occupied =
-        (await query('SELECT id FROM products WHERE template=$1', [template], db)).length > 0
+      const [occupied] = await query(
+        'SELECT * FROM products WHERE template=$1 FOR UPDATE',
+        [template],
+        db,
+      )
+      const isDemo = config().MODEL_PROVIDER === 'demo'
       const publish =
         accepted &&
-        !occupied &&
-        count < POLICY.maxProducts &&
+        (occupied
+          ? occupied.status === 'sandbox' && (occupied.is_demo || !isDemo)
+          : count < POLICY.maxProducts) &&
         state?.mode === 'running' &&
         state.research_enabled
       const id = randomUUID()
@@ -198,24 +225,31 @@ export async function research(job: Job) {
         db,
       )
       if (!rows.length) return
-      if (publish)
+      if (publish) {
+        const productId = occupied?.id || randomUUID()
+        const version = occupied ? occupied.version + 1 : 1
         await query(
-          'INSERT INTO products(id,hypothesis_id,strategy_id,template,spec,is_demo,checks) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(template) DO NOTHING',
-          [
-            randomUUID(),
-            id,
-            strategy.id,
-            template,
-            spec,
-            config().MODEL_PROVIDER === 'demo',
-            checks,
-          ],
+          `INSERT INTO products(id,hypothesis_id,strategy_id,template,spec,is_demo,checks,version)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT(template) DO UPDATE SET hypothesis_id=EXCLUDED.hypothesis_id,
+           strategy_id=EXCLUDED.strategy_id,spec=EXCLUDED.spec,is_demo=EXCLUDED.is_demo,
+           checks=EXCLUDED.checks,version=EXCLUDED.version,updated_at=now()`,
+          [productId, id, strategy.id, template, spec, isDemo, checks, version],
           db,
         )
+        await query(
+          `INSERT INTO product_versions(product_id,version,hypothesis_id,strategy_id,spec,checks,is_demo)
+           VALUES($1,$2,$3,$4,$5,$6,$7)`,
+          [productId, version, id, strategy.id, spec, checks, isDemo],
+          db,
+        )
+      }
       await audit(
-        publish ? 'product_created' : 'hypothesis_reviewed',
+        publish ? (occupied ? 'product_updated' : 'product_created') : 'hypothesis_reviewed',
         publish
-          ? 'Конструктор выпустил тестовый сервис.'
+          ? occupied
+            ? 'Конструктор выпустил новую проверенную версию сервиса.'
+            : 'Конструктор выпустил тестовый сервис.'
           : 'Гипотеза проверена; решение сохранено.',
         {
           hypothesisId: id,
@@ -296,7 +330,9 @@ export function demoResult(template: Template, input: string) {
 }
 
 export async function runJob(job: Job) {
-  if (job.kind === 'research') await research(job)
-  else if (job.kind === 'fulfill') await fulfill(job)
-  else await evaluateWeek(`weekly:${job.id}`)
+  return activityContext.run({ jobId: job.id }, async () => {
+    if (job.kind === 'research') await research(job)
+    else if (job.kind === 'fulfill') await fulfill(job)
+    else await evaluateWeek(`weekly:${job.id}`)
+  })
 }

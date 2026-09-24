@@ -4,7 +4,14 @@ import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } 
 import { pool, query } from '../../core/db'
 import * as settings from '../../core/config'
 import { budgetSummary, meteredCall, reserveBudget } from '../../core/budget'
-import { claimJob, enqueue, finishJob, recoverJobs, expireResearchSlots } from '../../core/queue'
+import {
+  claimJob,
+  enqueue,
+  finishJob,
+  recoverJobs,
+  expireResearchSlots,
+  requestResearch,
+} from '../../core/queue'
 import { runJob } from '../../core/engine'
 import { createOrder } from '../../core/orders'
 import {
@@ -55,6 +62,49 @@ async function order() {
 }
 
 describe('durable autonomous pipeline', () => {
+  it('deduplicates manual runs, enforces cooldown and a daily quota', async () => {
+    const requested = await Promise.all([requestResearch(), requestResearch()])
+    expect(requested[0]!.id).toBe(requested[1]!.id)
+    await query("UPDATE jobs SET status='done',finished_at=now() WHERE status='queued'")
+    await expect(requestResearch()).rejects.toThrow('RESEARCH_COOLDOWN')
+    await query("UPDATE jobs SET created_at=created_at-interval '6 minutes' WHERE kind='research'")
+    expect((await requestResearch()).reused).toBe(false)
+    // Fill today's quota independently of whether the test happens within 6 minutes of midnight.
+    for (let i = 0; i < 3; i++) await enqueue('research', `manual-research:${randomUUID()}`)
+    await query("UPDATE jobs SET status='done',finished_at=now() WHERE status='queued'")
+    await expect(requestResearch()).rejects.toThrow('RESEARCH_DAILY_LIMIT')
+    await query("UPDATE system_state SET mode='paused'")
+    await expect(requestResearch()).rejects.toThrow('RESEARCH_PAUSED')
+  })
+  it('links finished role calls to a run and preserves old product and order versions', async () => {
+    const [product] = await research()
+    const o = await createOrder(product!.id, input, randomUUID())
+    await enqueue('research', 'version-two', { templates: JSON.stringify([product!.template]) })
+    const job = (await claimJob(['research']))!
+    await runJob(job)
+    await finishJob(job)
+    const calls = await query('SELECT * FROM tool_calls WHERE job_id=$1', [job.id])
+    expect(calls).toHaveLength(6)
+    expect(
+      calls.every(
+        (c) => c.status === 'done' && c.finished_at && c.task_label && c.provider === 'demo',
+      ),
+    ).toBe(true)
+    expect(
+      (await query('SELECT version FROM products WHERE id=$1', [product!.id]))[0]!.version,
+    ).toBe(2)
+    expect(
+      await query('SELECT version FROM product_versions WHERE product_id=$1', [product!.id]),
+    ).toHaveLength(2)
+    expect(
+      (await query('SELECT product_snapshot FROM orders WHERE id=$1', [o.id]))[0]!.product_snapshot
+        .version,
+    ).toBe(1)
+    await runJob(job)
+    expect(
+      await query('SELECT version FROM product_versions WHERE product_id=$1', [product!.id]),
+    ).toHaveLength(2)
+  })
   it('skips expired daily research slots instead of spending on a backlog after pause', async () => {
     const old = await enqueue('research', 'research:2026-09-22')
     await reserveBudget(`research:${old.id}`, 'research')

@@ -8,8 +8,15 @@ const schema = z.object({
   OWNER_PASSWORD: z.string().min(20),
   SESSION_SECRET: z.string().min(40),
   SECURE_COOKIE: flag.default(false),
-  MODEL_PROVIDER: z.enum(['demo', 'yandex']).default('demo'),
-  SEARCH_PROVIDER: z.enum(['demo', 'yandex']).default('demo'),
+  MODEL_PROVIDER: z.enum(['demo', 'yandex', 'ollama']).default('demo'),
+  SEARCH_PROVIDER: z.enum(['demo', 'yandex', 'searxng']).default('demo'),
+  OLLAMA_URL: z.url().default('http://127.0.0.1:11434'),
+  OLLAMA_MODEL: z
+    .string()
+    .regex(/^[a-zA-Z0-9._:/-]+$/)
+    .default('qwen3:4b'),
+  OLLAMA_TIMEOUT_MS: positive(300000).refine((n) => n <= 600000),
+  SEARXNG_URL: z.url().default('http://127.0.0.1:8088'),
   YANDEX_API_KEY: z.string().default(''),
   YANDEX_FOLDER_ID: z.string().default(''),
   YANDEX_MODEL: z.string().default('yandexgpt/latest'),
@@ -33,9 +40,25 @@ let cached: Config | undefined
 export function config(): Config {
   if (cached) return cached
   const c = schema.parse(process.env)
-  if (c.MODEL_PROVIDER !== c.SEARCH_PROVIDER) throw new Error('PROVIDERS_MUST_MATCH')
-  if (c.MODEL_PROVIDER === 'yandex' && (!c.YANDEX_API_KEY || !c.YANDEX_FOLDER_ID))
+  if ((c.MODEL_PROVIDER === 'demo') !== (c.SEARCH_PROVIDER === 'demo'))
+    throw new Error('DEMO_PROVIDERS_MUST_MATCH')
+  if (
+    (c.MODEL_PROVIDER === 'yandex' || c.SEARCH_PROVIDER === 'yandex') &&
+    (!c.YANDEX_API_KEY || !c.YANDEX_FOLDER_ID)
+  )
     throw new Error('YANDEX_CREDENTIALS_REQUIRED')
+  for (const endpoint of [c.OLLAMA_URL, c.SEARXNG_URL]) {
+    const u = new URL(endpoint)
+    if (
+      !['http:', 'https:'].includes(u.protocol) ||
+      u.username ||
+      u.password ||
+      u.search ||
+      u.hash ||
+      u.pathname !== '/'
+    )
+      throw new Error('INVALID_LOCAL_PROVIDER_URL')
+  }
   if (c.PAYMENT_MODE === 'sepolia') {
     if (!/^0x[0-9a-fA-F]{40}$/.test(c.SEPOLIA_RECEIVER) || /^0x0{40}$/.test(c.SEPOLIA_RECEIVER))
       throw new Error('SEPOLIA_RECEIVER_REQUIRED')

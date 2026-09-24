@@ -1,7 +1,7 @@
 import { defineEventHandler } from 'h3'
 import { z } from 'zod'
 import { audit, query, transaction } from '../../core/db'
-import { enqueue } from '../../core/queue'
+import { enqueue, requestResearch } from '../../core/queue'
 import { simulateEvolution } from '../../core/evolution'
 import { body, respond } from '../utils/api'
 export default defineEventHandler((event) =>
@@ -26,8 +26,7 @@ export default defineEventHandler((event) =>
           .strict(),
       ]),
     )
-    if (input.action === 'research')
-      return enqueue('research', `research:${new Date().toISOString().slice(0, 10)}`)
+    if (input.action === 'research') return requestResearch()
     if (input.action === 'evaluate')
       return enqueue('evaluate', `evaluate:${Math.floor(Date.now() / (7 * 86400000))}`)
     if (input.action === 'simulate') return simulateEvolution(input.generation)

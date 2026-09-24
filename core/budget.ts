@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
+import { activityContext, type CallActivity } from './activity'
 
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
@@ -32,7 +33,7 @@ export async function reserveBudget(
   }
   const c = config()
   const limit =
-    c.MODEL_PROVIDER === 'demo'
+    c.MODEL_PROVIDER !== 'yandex' && (category === 'order' || c.SEARCH_PROVIDER !== 'yandex')
       ? 0
       : category === 'order'
         ? c.ORDER_RESERVE_KOPECKS
@@ -65,6 +66,7 @@ export async function meteredCall<T>(args: {
   role: string
   maximum: number
   demo: boolean
+  activity?: CallActivity
   invoke: () => Promise<{ value: T; cost: number }>
 }): Promise<T> {
   const claim = await transaction(async (db) => {
@@ -102,8 +104,22 @@ export async function meteredCall<T>(args: {
       throw new Error('BUDGET_BLOCKED')
     const id = randomUUID()
     await query(
-      "INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo) VALUES($1,$2,$3,$4,'pending',$5,$5,$6)",
-      [id, args.key, args.reservationId, args.role, args.maximum, args.demo],
+      `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo,
+        job_id,template,task_label,provider,model,heartbeat_at)
+       VALUES($1,$2,$3,$4,'pending',$5,$5,$6,$7,$8,$9,$10,$11,now())`,
+      [
+        id,
+        args.key,
+        args.reservationId,
+        args.role,
+        args.maximum,
+        args.demo,
+        activityContext.getStore()?.jobId,
+        args.activity?.template,
+        args.activity?.taskLabel,
+        args.activity?.provider,
+        args.activity?.model,
+      ],
       db,
     )
     await query(
@@ -121,7 +137,7 @@ export async function meteredCall<T>(args: {
     await transaction(async (db) => {
       await query('SELECT pg_advisory_xact_lock(735093)', [], db)
       await query(
-        "UPDATE tool_calls SET status='done', output=$2, charged_kopecks=$3 WHERE id=$1",
+        "UPDATE tool_calls SET status='done', output=$2, charged_kopecks=$3,finished_at=now(),heartbeat_at=now() WHERE id=$1",
         [claim.id, JSON.stringify(result.value), result.cost],
         db,
       )
@@ -133,7 +149,14 @@ export async function meteredCall<T>(args: {
     })
     return result.value
   } catch (error) {
-    await query("UPDATE tool_calls SET status='uncertain' WHERE id=$1", [claim.id])
+    const code =
+      error instanceof Error && /^[A-Z][A-Z0-9_]{2,80}$/.test(error.message)
+        ? error.message
+        : 'PROVIDER_CALL_FAILED'
+    await query(
+      "UPDATE tool_calls SET status='uncertain',error_code=$2,finished_at=now() WHERE id=$1",
+      [claim.id, code],
+    )
     await audit(
       'tool_uncertain',
       'Исход API-вызова неясен. Верхняя оценка расхода сохранена; автоматическое повторное списание запрещено.',
