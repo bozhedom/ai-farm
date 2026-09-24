@@ -12,7 +12,7 @@ import {
   expireResearchSlots,
   requestResearch,
 } from '../../core/queue'
-import { runJob } from '../../core/engine'
+import { runJob } from '../../core/jobs/run'
 import * as providers from '../../core/providers'
 import { createOrder } from '../../core/orders'
 import {

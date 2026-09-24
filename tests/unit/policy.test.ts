@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { demoResult } from '../../core/engine'
-import { demoSpecs, parseSearchXml } from '../../core/providers'
+import { demoResult, demoSpecs } from '../../core/providers/demo'
+import { parseSearchXml } from '../../core/providers'
 import {
   outputSchema,
   validateContent,

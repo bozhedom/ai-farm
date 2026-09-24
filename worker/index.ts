@@ -9,7 +9,7 @@ import {
   expireResearchSlots,
   type Job,
 } from '../core/queue'
-import { runJob } from '../core/engine'
+import { runJob } from '../core/jobs/run'
 import { reconcilePayments } from '../core/payments'
 
 let stopping = false

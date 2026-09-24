@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { XMLParser } from 'fast-xml-parser'
 import { z } from 'zod'
-import { config } from './config'
-import { meteredCall } from './budget'
-import { POLICY, safeSourceUrl, type Evidence, type Template } from './policy'
-import { localModel, localSearch } from './local-providers'
+import { config } from '../config'
+import { meteredCall } from '../budget'
+import { POLICY, safeSourceUrl, type Evidence, type Template } from '../policy'
+import { localModel, localSearch } from './local'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
 const searchQueries: Record<Template, string> = {
@@ -12,30 +12,6 @@ const searchQueries: Record<Template, string> = {
   faq: 'создание FAQ для сайта компании вопросы клиентов услуга',
   social: 'написание коротких постов по материалам компании стоимость',
 }
-export const demoSpecs = {
-  description: {
-    template: 'description',
-    name: 'Карточка без лишних слов',
-    audience: 'Небольшие магазины и мастерские',
-    promise: 'Структурированное описание товара по вашим характеристикам. Без выдуманных свойств.',
-    inputLabel: 'Название, характеристики и особенности товара',
-  },
-  faq: {
-    template: 'faq',
-    name: 'Ответы до первого вопроса',
-    audience: 'Сервисные компании и студии',
-    promise: 'Вопросы и ответы для сайта по предоставленным условиям работы.',
-    inputLabel: 'Опишите услуги, сроки, доставку и ограничения',
-  },
-  social: {
-    template: 'social',
-    name: 'Из материала в публикации',
-    audience: 'Авторы и небольшие команды',
-    promise: 'Три коротких черновика публикаций по вашему исходному материалу.',
-    inputLabel: 'Исходный текст, на который у вас есть права',
-  },
-} as const
-
 async function requestJson(url: string, body: unknown, headers: Record<string, string>) {
   const response = await fetch(url, {
     method: 'POST',

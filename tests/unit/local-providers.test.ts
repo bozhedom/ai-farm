@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { localModel, localSearch, parseSearxResults } from '../../core/local-providers'
+import { localModel, localSearch, parseSearxResults } from '../../core/providers/local'
 import * as activity from '../../core/activity'
 
 afterEach(() => {

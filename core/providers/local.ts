@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { config } from './config'
-import { reportProgress, reportValidation } from './activity'
-import { safeSourceUrl, type Evidence } from './policy'
+import { config } from '../config'
+import { reportProgress, reportValidation } from '../activity'
+import { safeSourceUrl, type Evidence } from '../policy'
 
 export function parseSearxResults(data: unknown): Evidence[] {
   const parsed = z
