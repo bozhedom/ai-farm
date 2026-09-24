@@ -77,6 +77,14 @@ export async function research(job: Job) {
       strategy: strategy.approach,
       evidence,
       memory,
+      costContext: {
+        definition:
+          'estimatedCostRub — оценка собственных прямых расходов на генерацию и проверку ОДНОГО заказа в рублях. Это НЕ цена продажи услуги и НЕ цена конкурента из поиска.',
+        maximumOrderCostRub: config().ORDER_RESERVE_KOPECKS / 100,
+        localApiCostRub: config().MODEL_PROVIDER === 'ollama' ? 0 : undefined,
+        instruction:
+          'Серверные расходы отдельно неизвестны: укажи это в uncertainties. Не подгоняй оценку под лимит. Если она выше лимита, гипотеза сохранится, но не будет выпущена.',
+      },
       task: 'Оцени небольшой тест текстового сервиса. Ссылки — только из evidence, минимум два независимых домена. Поисковые фрагменты показывают предложения конкурентов, но не доказанные продажи. Не объявляй спрос подтверждённым.',
     }
     const idea = await model({
@@ -108,7 +116,7 @@ export async function research(job: Job) {
       },
     })
     validateEvidence(idea.sources, evidence, config().MODEL_PROVIDER === 'demo')
-    const critique = await model({
+    let critique = await model({
       role: 'Критик',
       key: `${job.id}:${template}:critic`,
       reservationId,
@@ -124,6 +132,11 @@ export async function research(job: Job) {
           'Допустим тестовый эксперимент. Есть бесплатные альтернативы; спрос остаётся непроверенным.',
       },
     })
+    if (idea.estimatedCostRub > config().ORDER_RESERVE_KOPECKS / 100)
+      critique = {
+        verdict: 'BLOCKED',
+        reason: `Оценка прямых расходов ${idea.estimatedCostRub} ₽ за заказ превышает лимит ${config().ORDER_RESERVE_KOPECKS / 100} ₽. Оценка сохранена без уменьшения; выпуск запрещён контролёром бюджета.`,
+      }
     let spec: ProductSpec | undefined
     let checks: Record<string, string> | undefined
     let blockedReason: string | undefined

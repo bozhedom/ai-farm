@@ -138,8 +138,9 @@ async function generate<T>(args: LocalModelArgs<T>, attempt: number): Promise<T>
                 message: 'Верни корректный JSON без пояснений вокруг объекта.',
               },
             ]
-      await reportValidation(args.key, issues, attempt === 0)
-      if (attempt > 0) throw new Error('MODEL_SCHEMA_INVALID')
+      const retry = attempt === 0 && !issues.some((issue) => issue.path === 'estimatedCostRub')
+      await reportValidation(args.key, issues, retry)
+      if (!retry) throw new Error('MODEL_SCHEMA_INVALID')
       // This bounded repair is local-only and has no API charge. No candidate is published before validation.
       return generate(
         {

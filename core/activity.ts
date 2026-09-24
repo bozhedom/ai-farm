@@ -22,7 +22,7 @@ export async function reportValidation(key: string, issues: unknown[], retry: bo
     'model_schema_validation',
     retry
       ? 'Локальная модель исправляет формат ответа. Разрешена одна повторная попытка.'
-      : 'Повторный ответ локальной модели не прошёл проверку формата.',
+      : 'Ответ локальной модели отклонён валидатором; допустимых попыток исправления нет.',
     { callKey: key, issues, retry },
   )
   if (retry)

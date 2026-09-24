@@ -41,7 +41,7 @@ export const researchSchema = z
     hypothesis: plain(10, 700),
     counterargument: plain(10, 700),
     experiment: plain(10, 500),
-    estimatedCostRub: z.number().min(0).max(40),
+    estimatedCostRub: z.number().min(0).max(1000000),
     sources: z.array(z.url()).max(6),
     uncertainties: z.array(plain(3, 300)).min(1).max(6),
   })

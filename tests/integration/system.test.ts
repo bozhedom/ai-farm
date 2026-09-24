@@ -13,6 +13,7 @@ import {
   requestResearch,
 } from '../../core/queue'
 import { runJob } from '../../core/engine'
+import * as providers from '../../core/providers'
 import { createOrder } from '../../core/orders'
 import {
   sandboxPayment,
@@ -62,6 +63,26 @@ async function order() {
 }
 
 describe('durable autonomous pipeline', () => {
+  it('preserves expensive estimates and blocks publication instead of lowering the amount', async () => {
+    const original = providers.model
+    vi.spyOn(providers, 'model').mockImplementation(async (args: any) =>
+      args.role === 'Исследователь'
+        ? args.schema.parse({ ...args.demoValue, estimatedCostRub: 4000 })
+        : original(args),
+    )
+    expect(await research()).toHaveLength(0)
+    const ideas = await query('SELECT research,critique,status FROM hypotheses')
+    expect(ideas).toHaveLength(2)
+    expect(
+      ideas.every(
+        (h) =>
+          h.status === 'rejected' &&
+          h.research.estimatedCostRub === 4000 &&
+          h.critique.verdict === 'BLOCKED',
+      ),
+    ).toBe(true)
+    expect(await query("SELECT id FROM tool_calls WHERE role='Архитектор'")).toHaveLength(0)
+  })
   it('deduplicates manual runs, enforces cooldown and a daily quota', async () => {
     const requested = await Promise.all([requestResearch(), requestResearch()])
     expect(requested[0]!.id).toBe(requested[1]!.id)

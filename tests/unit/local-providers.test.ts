@@ -8,6 +8,33 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 describe('local providers', () => {
+  it('does not repair a monetary estimate to fit a schema limit', async () => {
+    vi.spyOn(activity, 'reportProgress').mockResolvedValue()
+    const validation = vi.spyOn(activity, 'reportValidation').mockResolvedValue()
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockImplementation(
+          async () =>
+            new Response(
+              JSON.stringify({ message: { content: '{"estimatedCostRub":4000}' }, done: true }) +
+                '\n',
+            ),
+        ),
+    )
+    await expect(
+      localModel({
+        key: 'cost',
+        system: 'rules',
+        context: 'facts',
+        schema: z.object({ estimatedCostRub: z.number().max(40) }),
+        maxTokens: 100,
+      }),
+    ).rejects.toThrow('MODEL_SCHEMA_INVALID')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(validation).toHaveBeenLastCalledWith('cost', expect.any(Array), false)
+  })
   it('filters unsafe and duplicate sources and removes markup', () => {
     const result = parseSearxResults({
       results: [
