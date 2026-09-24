@@ -2,13 +2,18 @@ export function useFarm() {
   const request = useRequestFetch()
   const state = useState<any>('farm-dashboard', () => null)
   const failure = useState('farm-error', () => '')
+  const refreshing = useState('farm-refreshing', () => false)
   async function refresh() {
+    if (refreshing.value) return
+    refreshing.value = true
     try {
-      state.value = await request('/api/dashboard')
+      state.value = await request('/api/dashboard', { timeout: 10000 })
       failure.value = ''
     } catch (error: any) {
       if (error.statusCode === 401 || error.status === 401) await navigateTo('/login')
       else failure.value = 'Не удалось обновить данные. Проверьте соединение.'
+    } finally {
+      refreshing.value = false
     }
   }
   return { state, failure, refresh }
@@ -61,6 +66,11 @@ export const labels: Record<string, string> = {
 export function errorText(error: any) {
   const code = error?.data?.statusMessage || error?.statusMessage || ''
   const errors: Record<string, string> = {
+    RESEARCH_COOLDOWN: 'Между дополнительными исследованиями нужно подождать 5 минут.',
+    RESEARCH_DAILY_LIMIT:
+      'На сегодня использованы все 3 дополнительных запуска. Расписание продолжит работу завтра.',
+    RESEARCH_PAUSED: 'Сначала возобновите работу системы.',
+    RESEARCH_WINDOW_CLOSED: 'Окно исследований закрыто. Откройте новое окно наблюдения.',
     LOGIN_FAILED: 'Неверный пароль.',
     LOGIN_RATE_LIMIT: 'Слишком много попыток. Повторите через 10 минут.',
     ORIGIN_REJECTED: 'Адрес сайта не совпадает с APP_ORIGIN в настройках.',

@@ -5,7 +5,7 @@ const view = computed(() => String(route.query.view || 'overview'))
 const title = computed(
   () =>
     ({
-      overview: 'Лаборатория в работе',
+      overview: 'Лаборатория продуктов',
       hypotheses: 'От предположения к проверке',
       strategies: 'Четыре подхода. Один эксперимент.',
       orders: 'Каждый заказ под наблюдением',
@@ -20,14 +20,16 @@ async function control(action: string) {
   actionError.value = ''
   message.value = ''
   try {
-    await $fetch('/api/control', {
+    const response = await $fetch<any>('/api/control', {
       method: 'POST',
       body: action === 'simulate' ? { action, generation: d.value.state.generation } : { action },
     })
     await refresh()
     message.value =
       action === 'research'
-        ? 'Суточное исследование поставлено в очередь. Повторный запуск не создаёт вторую задачу.'
+        ? response.reused
+          ? 'Открыто уже выполняющееся исследование.'
+          : 'Новое исследование поставлено в очередь. Этапы появятся в пульте лаборатории.'
         : 'Изменения сохранены.'
   } catch (e) {
     actionError.value = errorText(e)
@@ -38,13 +40,6 @@ async function control(action: string) {
 const activeStrategies = computed(
   () => d.value?.strategies?.filter((s: any) => s.status === 'active') || [],
 )
-const stages = [
-  ['⌕', 'Исследование', 'Найти проблему'],
-  ['◇', 'Критика', 'Проверить допущения'],
-  ['▦', 'Конструктор', 'Собрать сервис'],
-  ['↗', 'Тестовый заказ', 'Проверить оплату'],
-  ['✓', 'Исполнение', 'Выдать результат'],
-]
 const roleNames: Record<string, string> = {
   search: 'Поиск',
   Исследователь: 'Исследователь',
@@ -66,7 +61,9 @@ const sourceHost = (url: string) => new URL(url).hostname
         <p>От идеи до результата — с понятными правилами и сохранённой историей.</p>
       </div>
       <span v-if="d" class="status-pill" :class="d.state.mode === 'running' ? 'good' : 'warn'"
-        ><span class="dot" />{{ labels[d.state.mode] }}</span
+        ><span class="dot" />{{
+          d.state.mode === 'running' ? 'Автономный режим включён' : labels[d.state.mode]
+        }}</span
       >
     </div>
     <div v-if="message" class="notice" role="status">{{ message }}</div>
@@ -86,13 +83,19 @@ const sourceHost = (url: string) => new URL(url).hostname
           <strong>{{
             d.config.modelProvider === 'demo'
               ? 'Демонстрационный режим'
-              : 'Исследование через Yandex API'
+              : d.config.modelProvider === 'ollama'
+                ? 'Локальная модель · живой поиск'
+                : 'Исследование через Yandex API'
           }}</strong
           ><span
             >{{
               d.config.modelProvider === 'demo'
                 ? 'Гипотезы и тексты создаёт демонстрационный провайдер. Интернет пока не исследуется.'
-                : 'Модель и поиск используют подключённый API; расходы учитываются в общем бюджете.'
+                : d.config.modelProvider === 'ollama'
+                  ? 'Ответы генерирует ' +
+                    d.config.model +
+                    '. Источники приходят из интернета. Качество небольшого локального ИИ требует проверки.'
+                  : 'Модель и поиск используют подключённый API; расходы учитываются в общем бюджете.'
             }}
             Платежи —
             {{
@@ -104,6 +107,11 @@ const sourceHost = (url: string) => new URL(url).hostname
         </div>
         <NuxtLink to="/catalog">Открыть витрину ↗</NuxtLink>
       </div>
+      <LiveActivity
+        v-if="view === 'overview' || view === 'hypotheses'"
+        :busy="busy"
+        @research="control('research')"
+      />
       <template v-if="view === 'overview'">
         <section class="metrics" aria-label="Показатели">
           <article>
@@ -127,43 +135,6 @@ const sourceHost = (url: string) => new URL(url).hostname
             <span>Реальная выручка</span><strong>{{ rub(d.realRevenueKopecks) }}</strong>
             <p>Тестовые средства исключены</p>
           </article>
-        </section>
-        <section class="panel cycle-panel">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">АВТОНОМНЫЙ ЦИКЛ</span>
-              <h2>От поиска к полезному результату</h2>
-            </div>
-            <span class="subtle-tag">{{
-              d.config.autonomyEnabled ? 'Расписание включено' : 'Ручной запуск'
-            }}</span>
-          </div>
-          <div class="pipeline">
-            <div v-for="(stage, i) in stages" :key="stage[1]" class="pipeline-step">
-              <span class="stage-count">0{{ i + 1 }}</span>
-              <div class="stage-icon">{{ stage[0] }}</div>
-              <h3>{{ stage[1] }}</h3>
-              <p>{{ stage[2] }}</p>
-              <span v-if="i < 4" class="stage-arrow" aria-hidden="true">→</span>
-            </div>
-          </div>
-          <div class="cycle-bottom">
-            <p>
-              <span class="dot green" />
-              {{
-                d.jobs.find((j: any) => j.status === 'running')
-                  ? 'Выполняется: ' + labels[d.jobs.find((j: any) => j.status === 'running').kind]
-                  : 'Задания запускаются по расписанию или при оплате заказа'
-              }}
-            </p>
-            <button
-              class="button primary small"
-              :disabled="busy || d.state.mode !== 'running' || !d.state.research_enabled"
-              @click="control('research')"
-            >
-              Запустить исследование ↗
-            </button>
-          </div>
         </section>
         <div class="two-columns">
           <section class="panel">
@@ -260,7 +231,7 @@ const sourceHost = (url: string) => new URL(url).hostname
           </button>
         </div>
         <div v-if="!d.hypotheses.length" class="panel empty large">
-          Пока нет гипотез. Запустите суточное исследование.
+          Пока нет гипотез. Нажмите «Новое исследование» в пульте лаборатории.
         </div>
         <article v-for="h in d.hypotheses" :key="h.id" class="panel hypothesis">
           <div class="section-heading">

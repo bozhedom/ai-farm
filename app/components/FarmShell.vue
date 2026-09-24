@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const { state, failure, refresh } = useFarm()
+const now = ref(Date.now())
 const route = useRoute()
 const menu = [
   ['/', '◈', 'Обзор'],
@@ -13,7 +14,10 @@ const active = (url: string) => route.fullPath === url
 let timer: ReturnType<typeof setInterval>
 onMounted(() => {
   void refresh()
-  timer = setInterval(() => void refresh(), 5000)
+  timer = setInterval(() => {
+    now.value = Date.now()
+    void refresh()
+  }, 2000)
 })
 onUnmounted(() => clearInterval(timer))
 async function logout() {
@@ -23,8 +27,9 @@ async function logout() {
 }
 const workerOk = computed(
   () =>
+    !failure.value &&
     state.value?.state?.worker_heartbeat &&
-    Date.now() - new Date(state.value.state.worker_heartbeat).getTime() < 90000,
+    now.value - new Date(state.value.state.worker_heartbeat).getTime() < 30000,
 )
 </script>
 <template>
@@ -59,7 +64,11 @@ const workerOk = computed(
         <span>Рабочая среда <span class="slash">/</span> <strong>Лаборатория</strong></span>
         <div class="topbar-right">
           <span class="mode-badge">{{
-            state?.config?.modelProvider === 'yandex' ? 'Yandex · API' : 'Демонстрация · без API'
+            state?.config?.modelProvider === 'yandex'
+              ? 'Yandex · API'
+              : state?.config?.modelProvider === 'ollama'
+                ? state.config.model + ' · локально'
+                : 'Демонстрация · без API'
           }}</span
           ><span class="avatar">В</span>
         </div>
