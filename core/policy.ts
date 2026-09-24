@@ -5,8 +5,6 @@ export const POLICY = Object.freeze({
   maxProducts: 3,
   maxStrategies: 4,
   scheduledResearchPerDay: 1,
-  manualResearchPerDay: 3,
-  manualResearchCooldownMs: 300000,
   maxInputChars: 4000,
   maxOutputChars: 12000,
   maxAttempts: 3,

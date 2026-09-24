@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
-import { POLICY } from './policy'
 
 export type Job = {
   id: string
@@ -45,7 +44,7 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
   })
 }
 
-/** Manual demonstrations have a separate, bounded quota; parallel clicks share the active job. */
+/** Owners may start a new run when the previous one ends; parallel clicks share the active job. */
 export async function requestResearch() {
   return transaction(async (db) => {
     const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
@@ -57,19 +56,6 @@ export async function requestResearch() {
       db,
     )
     if (active) return { id: active.id as string, status: active.status as string, reused: true }
-    const rows = await query(
-      `SELECT created_at FROM jobs WHERE dedupe_key LIKE 'manual-research:%'
-       AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-       ORDER BY created_at DESC`,
-      [],
-      db,
-    )
-    if (rows.length >= POLICY.manualResearchPerDay) throw new Error('RESEARCH_DAILY_LIMIT')
-    if (
-      rows[0] &&
-      Date.now() - new Date(rows[0].created_at).getTime() < POLICY.manualResearchCooldownMs
-    )
-      throw new Error('RESEARCH_COOLDOWN')
     const job = await enqueue('research', `manual-research:${randomUUID()}`, {}, db)
     await audit(
       'research_requested',

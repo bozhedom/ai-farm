@@ -51,9 +51,6 @@ const calls = computed(
       .reverse() || [],
 )
 const current = computed(() => pending.value[0])
-const researchRemaining = computed(() =>
-  Math.max(0, d.value.config.manualResearchLimit - d.value.workload.manual_research_today),
-)
 const currentStrategy = computed(() => {
   if (!current.value) return ''
   const run = d.value.jobs.find((j: any) => j.id === current.value.job_id)
@@ -167,7 +164,8 @@ const roleStatus: Record<string, string> = {
       <p>
         <strong>{{ online ? d.workload.running : '—' }}</strong> задач в работе <span>·</span>
         {{ d.workload.queued }} в очереди<br /><small
-          >Дополнительных исследований осталось: {{ researchRemaining }}</small
+          >Ручных запусков сегодня: {{ d.workload.manual_research_today }} · без суточного
+          лимита</small
         >
       </p>
       <button
@@ -177,7 +175,6 @@ const roleStatus: Record<string, string> = {
           !online ||
           d.state.mode !== 'running' ||
           !d.state.research_enabled ||
-          researchRemaining === 0 ||
           d.jobs.some((j: any) => j.kind === 'research' && ['queued', 'running'].includes(j.status))
         "
         @click="emit('research')"
@@ -185,9 +182,7 @@ const roleStatus: Record<string, string> = {
         {{
           d.jobs.some((j: any) => j.kind === 'research' && ['queued', 'running'].includes(j.status))
             ? 'Исследование выполняется…'
-            : researchRemaining === 0
-              ? 'Лимит дополнительных запусков использован'
-              : 'Новое исследование ↗'
+            : 'Новое исследование ↗'
         }}
       </button>
     </div>
@@ -273,7 +268,10 @@ const roleStatus: Record<string, string> = {
               ? dateTime(d.nextResearchAt)
               : 'Расписание приостановлено'
           }}</strong>
-          <p>Дополнительно можно запустить до 3 исследований в сутки, с интервалом от 5 минут.</p>
+          <p>
+            Новое исследование можно запустить сразу после завершения текущего. Лимиты расходов
+            сохраняются.
+          </p>
         </div>
       </aside>
     </div>

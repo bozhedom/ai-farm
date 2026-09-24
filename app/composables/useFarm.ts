@@ -66,9 +66,6 @@ export const labels: Record<string, string> = {
 export function errorText(error: any) {
   const code = error?.data?.statusMessage || error?.statusMessage || ''
   const errors: Record<string, string> = {
-    RESEARCH_COOLDOWN: 'Между дополнительными исследованиями нужно подождать 5 минут.',
-    RESEARCH_DAILY_LIMIT:
-      'На сегодня использованы все 3 дополнительных запуска. Расписание продолжит работу завтра.',
     RESEARCH_PAUSED: 'Сначала возобновите работу системы.',
     RESEARCH_WINDOW_CLOSED: 'Окно исследований закрыто. Откройте новое окно наблюдения.',
     LOGIN_FAILED: 'Неверный пароль.',

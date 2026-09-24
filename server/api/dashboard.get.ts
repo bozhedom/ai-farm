@@ -3,7 +3,6 @@ import { config } from '../../core/config'
 import { query } from '../../core/db'
 import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
-import { POLICY } from '../../core/policy'
 export default defineEventHandler(async () => {
   const [
     state,
@@ -77,7 +76,6 @@ export default defineEventHandler(async () => {
       monthlyLimit: c.MONTHLY_BUDGET_KOPECKS,
       dailyLimit: c.DAILY_BUDGET_KOPECKS,
       autonomyEnabled: c.AUTONOMY_ENABLED,
-      manualResearchLimit: POLICY.manualResearchPerDay,
     },
     realRevenueKopecks: 0,
   }

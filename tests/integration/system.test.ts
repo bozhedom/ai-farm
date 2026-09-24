@@ -103,19 +103,32 @@ describe('durable autonomous pipeline', () => {
     ).toBe(true)
     expect(await query("SELECT id FROM tool_calls WHERE role='Архитектор'")).toHaveLength(0)
   })
-  it('deduplicates manual runs, enforces cooldown and a daily quota', async () => {
-    const requested = await Promise.all([requestResearch(), requestResearch()])
-    expect(requested[0]!.id).toBe(requested[1]!.id)
-    await query("UPDATE jobs SET status='done',finished_at=now() WHERE status='queued'")
-    await expect(requestResearch()).rejects.toThrow('RESEARCH_COOLDOWN')
-    await query("UPDATE jobs SET created_at=created_at-interval '6 minutes' WHERE kind='research'")
-    expect((await requestResearch()).reused).toBe(false)
-    // Fill today's quota independently of whether the test happens within 6 minutes of midnight.
-    for (let i = 0; i < 3; i++) await enqueue('research', `manual-research:${randomUUID()}`)
-    await query("UPDATE jobs SET status='done',finished_at=now() WHERE status='queued'")
-    await expect(requestResearch()).rejects.toThrow('RESEARCH_DAILY_LIMIT')
-    await query("UPDATE system_state SET mode='paused'")
-    await expect(requestResearch()).rejects.toThrow('RESEARCH_PAUSED')
+  it('allows immediate manual runs beyond the old daily quota while deduplicating concurrent clicks', async () => {
+    const ids = new Set<string>()
+    for (let i = 0; i < 5; i++) {
+      const requested = await Promise.all(Array.from({ length: 8 }, () => requestResearch()))
+      expect(new Set(requested.map((job) => job.id)).size).toBe(1)
+      expect(requested.filter((job) => !job.reused)).toHaveLength(1)
+      ids.add(requested[0]!.id)
+      const job = (await claimJob(['research']))!
+      expect(await requestResearch()).toMatchObject({ id: job.id, reused: true, status: 'running' })
+      await finishJob(job, i % 2 ? new Error('OUTPUT_REVIEW_REQUIRED') : undefined)
+    }
+    expect(ids.size).toBe(5)
+    expect(await query("SELECT id FROM audit_events WHERE kind='research_requested'")).toHaveLength(
+      5,
+    )
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(5)
+  })
+  it('reuses scheduled research and respects pause, emergency stop and the closed window', async () => {
+    const scheduled = await enqueue('research', 'research:2026-09-24')
+    expect(await requestResearch()).toMatchObject({ id: scheduled.id, reused: true })
+    for (const mode of ['paused', 'emergency_stop']) {
+      await query('UPDATE system_state SET mode=$1', [mode])
+      await expect(requestResearch()).rejects.toThrow('RESEARCH_PAUSED')
+    }
+    await query("UPDATE system_state SET mode='running',research_enabled=false")
+    await expect(requestResearch()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
   })
   it('links finished role calls to a run and preserves old product and order versions', async () => {
     const [product] = await research()
