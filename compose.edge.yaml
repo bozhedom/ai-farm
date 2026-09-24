@@ -1,0 +1,20 @@
+# Use only on your own VPS after DNS, APP_ORIGIN and SECURE_COOKIE are configured.
+services:
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+volumes:
+  caddy-data:
+  caddy-config:
