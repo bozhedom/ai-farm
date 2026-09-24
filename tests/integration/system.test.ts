@@ -130,6 +130,43 @@ describe('durable autonomous pipeline', () => {
     await query("UPDATE system_state SET mode='running',research_enabled=false")
     await expect(requestResearch()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
   })
+  it.each(['over-budget', 'invalid-output'])(
+    'rotates to another template after a missing product fails with %s',
+    async (failure) => {
+      await research()
+      const original = providers.model
+      vi.spyOn(providers, 'model').mockImplementation(async (args: any) => {
+        if (args.role === 'Исследователь' && args.context.template === 'social') {
+          if (failure === 'invalid-output') throw new Error('MODEL_SCHEMA_INVALID')
+          return args.schema.parse({ ...args.demoValue, estimatedCostRub: 4000 })
+        }
+        return original(args)
+      })
+      await requestResearch()
+      const rejected = (await claimJob(['research']))!
+      if (failure === 'invalid-output') {
+        await expect(runJob(rejected)).rejects.toThrow('MODEL_SCHEMA_INVALID')
+        await finishJob(rejected, new Error('MODEL_SCHEMA_INVALID'))
+      } else {
+        await runJob(rejected)
+        await finishJob(rejected)
+      }
+      expect(await query("SELECT id FROM products WHERE template='social'")).toHaveLength(0)
+      await requestResearch()
+      const next = (await claimJob(['research']))!
+      await runJob(next)
+      await finishJob(next)
+      expect(
+        (await query('SELECT template,status FROM hypotheses WHERE job_id=$1', [next.id]))[0],
+      ).toEqual({
+        template: 'description',
+        status: 'accepted',
+      })
+      expect(
+        (await query("SELECT version FROM products WHERE template='description'"))[0]!.version,
+      ).toBe(2)
+    },
+  )
   it('links finished role calls to a run and preserves old product and order versions', async () => {
     const [product] = await research()
     const o = await createOrder(product!.id, input, randomUUID())

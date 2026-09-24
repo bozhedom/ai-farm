@@ -31,15 +31,28 @@ export async function research(job: Job) {
   let plan: { template: Template; strategy: { id: string; approach: string } }[]
   if (savedJob!.payload.plan) plan = JSON.parse(savedJob!.payload.plan)
   else {
-    const existing = await query(
-      'SELECT template FROM products ORDER BY is_demo DESC,updated_at,template',
+    const existing = await query('SELECT template FROM products')
+    // Search calls record attempts even when the model fails before saving a hypothesis.
+    // Repeated rejection of a missing product must not starve the other templates.
+    const attempts = await query(
+      `SELECT template,max(created_at) AS last_attempt FROM tool_calls
+       WHERE role='search' AND template=ANY($1) AND job_id IS DISTINCT FROM $2
+       GROUP BY template`,
+      [templates, job.id],
     )
-    const wanted = templates.filter((t) => !existing.some((p) => p.template === t))
+    const lastAttempt = (template: Template) => {
+      const attempt = attempts.find((row) => row.template === template)
+      return attempt ? new Date(attempt.last_attempt).getTime() : 0
+    }
+    const hasProduct = (template: Template) => existing.some((p) => p.template === template)
     const selected: Template[] = savedJob!.payload.templates
       ? JSON.parse(savedJob!.payload.templates)
-      : wanted.length
-        ? wanted.slice(0, 2)
-        : [existing[0]!.template as Template]
+      : [...templates]
+          .sort(
+            (a, b) =>
+              lastAttempt(a) - lastAttempt(b) || Number(hasProduct(a)) - Number(hasProduct(b)),
+          )
+          .slice(0, existing.length ? 1 : 2)
     plan = selected.map((template, i) => {
       const strategy = strategies[(new Date().getUTCDate() + i) % 4]!
       return { template, strategy: { id: strategy.id, approach: strategy.approach } }
