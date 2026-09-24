@@ -1,0 +1,221 @@
+import { readFileSync } from 'node:fs'
+import { XMLParser } from 'fast-xml-parser'
+import { z } from 'zod'
+import { config } from './config'
+import { meteredCall } from './budget'
+import { POLICY, safeSourceUrl, type Evidence, type Template } from './policy'
+
+const master = () => readFileSync('prompts/master.md', 'utf8')
+const searchQueries: Record<Template, string> = {
+  description: 'описания карточек товаров услуги цена характеристики малого бизнеса',
+  faq: 'создание FAQ для сайта компании вопросы клиентов услуга',
+  social: 'написание коротких постов по материалам компании стоимость',
+}
+export const demoSpecs = {
+  description: {
+    template: 'description',
+    name: 'Карточка без лишних слов',
+    audience: 'Небольшие магазины и мастерские',
+    promise: 'Структурированное описание товара по вашим характеристикам. Без выдуманных свойств.',
+    inputLabel: 'Название, характеристики и особенности товара',
+  },
+  faq: {
+    template: 'faq',
+    name: 'Ответы до первого вопроса',
+    audience: 'Сервисные компании и студии',
+    promise: 'Вопросы и ответы для сайта по предоставленным условиям работы.',
+    inputLabel: 'Опишите услуги, сроки, доставку и ограничения',
+  },
+  social: {
+    template: 'social',
+    name: 'Из материала в публикации',
+    audience: 'Авторы и небольшие команды',
+    promise: 'Три коротких черновика публикаций по вашему исходному материалу.',
+    inputLabel: 'Исходный текст, на который у вас есть права',
+  },
+} as const
+
+async function requestJson(url: string, body: unknown, headers: Record<string, string>) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(45000),
+    redirect: 'error',
+  })
+  if (!response.ok) throw new Error(`PROVIDER_HTTP_${response.status}`)
+  const raw = await response.text()
+  if (raw.length > 2_000_000) throw new Error('PROVIDER_RESPONSE_TOO_LARGE')
+  return JSON.parse(raw)
+}
+
+export async function search(
+  template: Template,
+  key: string,
+  reservationId: string,
+): Promise<Evidence[]> {
+  const c = config()
+  const demo = c.SEARCH_PROVIDER === 'demo'
+  return meteredCall({
+    key,
+    reservationId,
+    role: 'search',
+    maximum: demo ? 0 : c.SEARCH_COST_KOPECKS,
+    demo,
+    invoke: async () => {
+      if (demo)
+        return {
+          cost: 0,
+          value: [
+            {
+              url: 'https://example.com/demo-demand',
+              title: 'Демонстрация: предполагаемая потребность',
+              snippet: 'Синтетический пример. Спрос не проверен, веб-поиск не выполнялся.',
+              observedAt: new Date().toISOString(),
+              demo: true,
+            },
+            {
+              url: 'https://example.org/demo-alternative',
+              title: 'Демонстрация: бесплатная альтернатива',
+              snippet: 'Встроенные редакторы и самостоятельная работа могут заменить услугу.',
+              observedAt: new Date().toISOString(),
+              demo: true,
+            },
+          ],
+        }
+      const data = await requestJson(
+        'https://searchapi.api.cloud.yandex.net/v2/web/search',
+        {
+          query: {
+            searchType: 'SEARCH_TYPE_RU',
+            queryText: searchQueries[template],
+            familyMode: 'FAMILY_MODE_STRICT',
+          },
+          folderId: c.YANDEX_FOLDER_ID,
+          responseFormat: 'FORMAT_XML',
+          groupSpec: { groupMode: 'GROUP_MODE_DEEP', groupsOnPage: 6, docsInGroup: 1 },
+        },
+        { Authorization: `Api-Key ${c.YANDEX_API_KEY}` },
+      )
+      const value = parseSearchXml(
+        Buffer.from(z.string().parse(data.rawData), 'base64').toString('utf8'),
+      )
+      if (!value.length) throw new Error('SEARCH_EMPTY')
+      return { value, cost: c.SEARCH_COST_KOPECKS }
+    },
+  })
+}
+
+export function parseSearchXml(xml: string): Evidence[] {
+  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('XML_ENTITIES_FORBIDDEN')
+  const parsed = new XMLParser({
+    ignoreAttributes: true,
+    removeNSPrefix: true,
+    processEntities: false,
+  }).parse(xml)
+  const result: Evidence[] = []
+  const text = (value: unknown): string =>
+    typeof value === 'string'
+      ? value
+      : Array.isArray(value)
+        ? value.map(text).join(' ')
+        : value && typeof value === 'object'
+          ? Object.values(value).map(text).join(' ')
+          : ''
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object' || result.length >= 6) return
+    if (Array.isArray(node)) {
+      node.forEach(walk)
+      return
+    }
+    const n = node as Record<string, unknown>
+    if (typeof n.url === 'string' && safeSourceUrl(n.url))
+      result.push({
+        url: n.url,
+        title: text(n.title).slice(0, 200),
+        snippet: text(n.passages ?? n.headline).slice(0, 700),
+        observedAt: new Date().toISOString(),
+        demo: false,
+      })
+    else Object.values(n).forEach(walk)
+  }
+  walk(parsed)
+  return result
+}
+
+export async function model<T>(args: {
+  role: string
+  key: string
+  reservationId: string
+  context: Record<string, unknown>
+  schema: z.ZodType<T>
+  demoValue: T
+}): Promise<T> {
+  const c = config()
+  const system =
+    master() +
+    `\nТекущая роль: ${args.role}. Верни только JSON по схеме:\n` +
+    JSON.stringify(z.toJSONSchema(args.schema))
+  const context = JSON.stringify({
+    policy_version: POLICY.version,
+    task_id: args.key,
+    ...args.context,
+  })
+  // UTF-8 bytes plus fixed overhead safely overestimate input token count for this small text context.
+  const maxTokens = 2000
+  const upperInput = Buffer.byteLength(system + context, 'utf8') + 2048
+  if (upperInput > 100000) throw new Error('CONTEXT_TOO_LARGE')
+  const demo = c.MODEL_PROVIDER === 'demo'
+  const maximum = demo
+    ? 0
+    : Math.ceil(
+        (upperInput * c.MODEL_INPUT_KOPECKS_PER_1K) / 1000 +
+          (maxTokens * c.MODEL_OUTPUT_KOPECKS_PER_1K) / 1000,
+      )
+  return meteredCall({
+    key: args.key,
+    reservationId: args.reservationId,
+    role: args.role,
+    maximum,
+    demo,
+    invoke: async () => {
+      if (demo) return { value: args.schema.parse(args.demoValue), cost: 0 }
+      const response = await requestJson(
+        'https://llm.api.cloud.yandex.net/foundationModels/v1/completion',
+        {
+          modelUri: `gpt://${c.YANDEX_FOLDER_ID}/${c.YANDEX_MODEL}`,
+          completionOptions: {
+            stream: false,
+            temperature: 0.2,
+            maxTokens: String(maxTokens),
+            reasoningOptions: { mode: 'DISABLED' },
+          },
+          messages: [
+            { role: 'system', text: system },
+            { role: 'user', text: context },
+          ],
+          jsonObject: true,
+        },
+        {
+          Authorization: `Api-Key ${c.YANDEX_API_KEY}`,
+          'x-folder-id': c.YANDEX_FOLDER_ID,
+          'x-data-logging-enabled': 'false',
+        },
+      )
+      const result = response.result ?? response
+      const alternative = result.alternatives?.[0]
+      if (alternative?.status !== 'ALTERNATIVE_STATUS_FINAL')
+        throw new Error('MODEL_OUTPUT_INCOMPLETE')
+      const value = args.schema.parse(JSON.parse(z.string().parse(alternative.message?.text)))
+      const input = z.coerce.number().int().nonnegative().parse(result.usage?.inputTextTokens)
+      const output = z.coerce.number().int().nonnegative().parse(result.usage?.completionTokens)
+      return {
+        value,
+        cost: Math.ceil(
+          (input * c.MODEL_INPUT_KOPECKS_PER_1K) / 1000 +
+            (output * c.MODEL_OUTPUT_KOPECKS_PER_1K) / 1000,
+        ),
+      }
+    },
+  })
+}

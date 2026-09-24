@@ -1,0 +1,9 @@
+node_modules
+.nuxt
+.output
+output
+coverage
+package-lock.json
+*.docx
+.env
+backups
