@@ -276,6 +276,25 @@ describe('durable autonomous pipeline', () => {
     ).toBe(true)
     expect(await query('SELECT * FROM product_versions')).toHaveLength(0)
   })
+  it('excludes catalog identity and audience from customer text generation and review', async () => {
+    const o = await order()
+    await sandboxPayment(o.id)
+    const [saved] = await query('SELECT product_snapshot FROM orders WHERE id=$1', [o.id])
+    const original = providers.model
+    const calls: Record<string, unknown>[] = []
+    vi.spyOn(providers, 'model').mockImplementation(async (args: any) => {
+      calls.push(args.context)
+      return original(args)
+    })
+    await runJob((await claimJob(['fulfill']))!)
+    expect(calls).toHaveLength(2)
+    for (const context of calls) {
+      expect(context.input).toBe(input)
+      expect(context.formatPromise).toBe(saved!.product_snapshot.promise)
+      expect(JSON.stringify(context)).not.toContain(saved!.product_snapshot.name)
+      expect(JSON.stringify(context)).not.toContain(saved!.product_snapshot.audience)
+    }
+  })
   it('keeps rejected order output private and marks the obligation for review', async () => {
     const o = await order()
     await sandboxPayment(o.id)

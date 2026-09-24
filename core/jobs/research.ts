@@ -21,6 +21,7 @@ import {
   type ProductSpec,
 } from '../policy'
 import type { Job } from '../queue'
+import { generationContext, reviewContext } from './text-context'
 
 export async function research(job: Job) {
   const strategies = await query(
@@ -193,12 +194,7 @@ export async function research(job: Job) {
           role: 'Исполнитель',
           key: `${job.id}:${template}:fixture`,
           reservationId,
-          context: {
-            product: spec,
-            input: fixture,
-            strategy: strategy.approach,
-            task: recipes[template].task,
-          },
+          context: generationContext(spec, fixture, strategy.approach),
           schema: outputSchema,
           demoValue: { text: demoResult(template, fixture) },
         })
@@ -207,13 +203,7 @@ export async function research(job: Job) {
           role: 'Проверяющий',
           key: `${job.id}:${template}:fixture-review`,
           reservationId,
-          context: {
-            product: spec,
-            input: fixture,
-            output: sample.text,
-            recipe: recipes[template].task,
-            task: 'Сравни ответ с исходным материалом и рецептом. Проверь числа, условия, отсутствие выдуманных фактов и полноту результата. Верни решение проверки, а не новый текст.',
-          },
+          context: reviewContext(spec, fixture, sample.text),
           schema: reviewSchema,
           demoValue: {
             verdict: 'PASS',
