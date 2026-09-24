@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { query } from './db'
+import { audit, query } from './db'
 
 export const activityContext = new AsyncLocalStorage<{ jobId: string }>()
 export type CallActivity = {
@@ -15,6 +15,21 @@ export async function reportProgress(key: string, characters: number) {
     "UPDATE tool_calls SET progress_chars=$2,heartbeat_at=now() WHERE call_key=$1 AND status='pending'",
     [key, characters],
   )
+}
+
+export async function reportValidation(key: string, issues: unknown[], retry: boolean) {
+  await audit(
+    'model_schema_validation',
+    retry
+      ? 'Локальная модель исправляет формат ответа. Разрешена одна повторная попытка.'
+      : 'Повторный ответ локальной модели не прошёл проверку формата.',
+    { callKey: key, issues, retry },
+  )
+  if (retry)
+    await query(
+      "UPDATE tool_calls SET task_label='Исправляет формат ответа по замечаниям валидатора (попытка 2 из 2)',progress_chars=0,heartbeat_at=now() WHERE call_key=$1 AND status='pending'",
+      [key],
+    )
 }
 
 export function resultSummary(value: unknown): string {

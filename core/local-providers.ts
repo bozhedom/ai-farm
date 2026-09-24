@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { config } from './config'
-import { reportProgress } from './activity'
+import { reportProgress, reportValidation } from './activity'
 import { safeSourceUrl, type Evidence } from './policy'
 
 export function parseSearxResults(data: unknown): Evidence[] {
@@ -52,13 +52,19 @@ export async function localSearch(queryText: string) {
 }
 
 /** Stream only counters to the dashboard. Parse and validate the complete answer before use. */
-export async function localModel<T>(args: {
+type LocalModelArgs<T> = {
   key: string
   system: string
   context: string
   schema: z.ZodType<T>
   maxTokens: number
-}): Promise<T> {
+}
+
+export async function localModel<T>(args: LocalModelArgs<T>): Promise<T> {
+  return generate(args, 0)
+}
+
+async function generate<T>(args: LocalModelArgs<T>, attempt: number): Promise<T> {
   const c = config()
   const response = await fetch(new URL('/api/chat', c.OLLAMA_URL), {
     method: 'POST',
@@ -117,8 +123,35 @@ export async function localModel<T>(args: {
     await reportProgress(args.key, output.length)
     try {
       return args.schema.parse(JSON.parse(output))
-    } catch {
-      throw new Error('MODEL_SCHEMA_INVALID')
+    } catch (error) {
+      const issues =
+        error instanceof z.ZodError
+          ? error.issues.slice(0, 12).map((issue) => ({
+              path: issue.path.map(String).join('.'),
+              code: issue.code,
+              message: issue.message,
+            }))
+          : [
+              {
+                path: '',
+                code: 'invalid_json',
+                message: 'Верни корректный JSON без пояснений вокруг объекта.',
+              },
+            ]
+      await reportValidation(args.key, issues, attempt === 0)
+      if (attempt > 0) throw new Error('MODEL_SCHEMA_INVALID')
+      // This bounded repair is local-only and has no API charge. No candidate is published before validation.
+      return generate(
+        {
+          ...args,
+          context: JSON.stringify({
+            task: 'Исправь только указанные ошибки формата в candidate. Верни полный JSON по схеме из system. Не меняй факты и ссылки. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.',
+            candidate: output,
+            validation_errors: issues,
+          }),
+        },
+        1,
+      )
     }
   } finally {
     await reader.cancel().catch(() => {})
