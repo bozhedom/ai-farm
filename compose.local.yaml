@@ -11,6 +11,8 @@ services:
       OLLAMA_MAX_QUEUE: '2'
       OLLAMA_KEEP_ALIVE: 5m
       OLLAMA_NO_CLOUD: '1'
+      # llama-server defaults to an 8 GiB prompt cache, exceeding this container's RAM limit.
+      LLAMA_ARG_CACHE_RAM: '0'
     ports:
       - '127.0.0.1:11434:11434'
     volumes:
