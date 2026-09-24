@@ -11,3 +11,4 @@ backups/
 .DS_Store
 .playwright-cli/
 test-results/
+.secrets/

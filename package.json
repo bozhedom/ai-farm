@@ -18,7 +18,8 @@
     "test:integration": "node --env-file=.env node_modules/vitest/vitest.mjs run tests/integration --maxWorkers=1",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "wallet:test": "tsx scripts/test-wallet.ts --check-rpc"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.3.0",
@@ -32,6 +33,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@noble/hashes": "2.4.0",
     "@types/node": "26.6.2",
     "@types/pg": "8.23.1",
     "prettier": "3.9.9",

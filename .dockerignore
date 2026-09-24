@@ -10,3 +10,4 @@ backups
 *.docx
 test-results
 .playwright-cli
+.secrets
