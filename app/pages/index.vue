@@ -73,6 +73,13 @@ const sourceHost = (url: string) => new URL(url).hostname
     <div v-if="actionError" class="notice error" role="alert">{{ actionError }}</div>
     <div v-if="!d" class="empty large">Загружаем состояние лаборатории…</div>
     <template v-else>
+      <div v-if="!d.state.research_enabled" class="notice">
+        28-дневное окно закрыто без подтверждённых продаж. Новые исследования остановлены; заказы
+        сохраняются.
+        <button class="quiet" :disabled="busy" @click="control('restart_research')">
+          Открыть новое окно наблюдения →
+        </button>
+      </div>
       <div class="test-banner">
         <span class="banner-symbol">◎</span>
         <div>
@@ -151,7 +158,7 @@ const sourceHost = (url: string) => new URL(url).hostname
             </p>
             <button
               class="button primary small"
-              :disabled="busy || d.state.mode !== 'running'"
+              :disabled="busy || d.state.mode !== 'running' || !d.state.research_enabled"
               @click="control('research')"
             >
               Запустить исследование ↗
@@ -246,7 +253,7 @@ const sourceHost = (url: string) => new URL(url).hostname
           <p class="muted">Каждая идея хранит основания, возражения и способ опровержения.</p>
           <button
             class="button primary"
-            :disabled="busy || d.state.mode !== 'running'"
+            :disabled="busy || d.state.mode !== 'running' || !d.state.research_enabled"
             @click="control('research')"
           >
             Запустить исследование

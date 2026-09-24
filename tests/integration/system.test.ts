@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } 
 import { pool, query } from '../../core/db'
 import * as settings from '../../core/config'
 import { budgetSummary, meteredCall, reserveBudget } from '../../core/budget'
-import { claimJob, enqueue, finishJob, recoverJobs } from '../../core/queue'
+import { claimJob, enqueue, finishJob, recoverJobs, expireResearchSlots } from '../../core/queue'
 import { runJob } from '../../core/engine'
 import { createOrder } from '../../core/orders'
 import {
@@ -55,6 +55,40 @@ async function order() {
 }
 
 describe('durable autonomous pipeline', () => {
+  it('skips expired daily research slots instead of spending on a backlog after pause', async () => {
+    const old = await enqueue('research', 'research:2026-09-22')
+    await reserveBudget(`research:${old.id}`, 'research')
+    const fresh = await enqueue('research', 'research:2026-09-24')
+    await expireResearchSlots('2026-09-24')
+    expect((await claimJob(['research']))?.id).toBe(fresh.id)
+    expect(
+      (await query('SELECT status,error_code FROM jobs WHERE id=$1', [old.id]))[0],
+    ).toMatchObject({ status: 'failed', error_code: 'RESEARCH_SLOT_EXPIRED' })
+    expect(
+      (
+        await query('SELECT status FROM budget_reservations WHERE dedupe_key=$1', [
+          `research:${old.id}`,
+        ])
+      )[0]!.status,
+    ).toBe('closed')
+  })
+  it('closes an inconclusive research window without abandoning paid orders', async () => {
+    const o = await order()
+    await sandboxPayment(o.id)
+    await query("UPDATE system_state SET generation_started_at=now()-interval '29 days'")
+    await evaluateWeek('closed-week')
+    await enqueue('research', 'closed-research')
+    expect(await claimJob(['research'])).toBeUndefined()
+    expect((await query('SELECT research_enabled FROM system_state'))[0]!.research_enabled).toBe(
+      false,
+    )
+    expect((await query('SELECT decision FROM evaluations'))[0]!.decision).toBe('CLOSED')
+    const job = (await claimJob(['fulfill']))!
+    await runJob(job)
+    expect((await query('SELECT status FROM orders WHERE id=$1', [o.id]))[0]!.status).toBe(
+      'delivered',
+    )
+  })
   it('researches, checks fixtures, creates two products and delivers once after a test payment', async () => {
     const products = await research()
     expect(products).toHaveLength(2)

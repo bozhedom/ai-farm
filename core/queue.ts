@@ -27,7 +27,7 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
     const [row] = await query<Job>(
       `SELECT j.* FROM jobs j CROSS JOIN system_state s
       WHERE j.kind=ANY($1) AND j.status='queued' AND j.run_after<=now() AND j.attempts<j.max_attempts
-      AND (j.kind='evaluate' OR (j.kind='research' AND s.mode='running') OR (j.kind='fulfill' AND s.mode<>'emergency_stop'))
+      AND (j.kind='evaluate' OR (j.kind='research' AND s.mode='running' AND s.research_enabled) OR (j.kind='fulfill' AND s.mode<>'emergency_stop'))
       ORDER BY CASE j.kind WHEN 'fulfill' THEN 0 ELSE 1 END,j.created_at
       FOR UPDATE OF j SKIP LOCKED LIMIT 1`,
       [kinds],
@@ -127,6 +127,31 @@ export async function recoverJobs() {
           db,
         )
       }
+    }
+  })
+}
+
+export async function expireResearchSlots(day: string) {
+  await transaction(async (db) => {
+    const stale = await query(
+      `UPDATE jobs SET status='failed',error_code='RESEARCH_SLOT_EXPIRED',finished_at=now()
+      WHERE kind='research' AND status='queued' AND dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      AND right(dedupe_key,10)<$1 RETURNING id`,
+      [day],
+      db,
+    )
+    for (const job of stale) {
+      await query(
+        "UPDATE budget_reservations SET status='closed' WHERE dedupe_key=$1",
+        [`research:${job.id}`],
+        db,
+      )
+      await audit(
+        'research_slot_expired',
+        'Пропущен устаревший суточный слот; исследования не накапливаются после паузы.',
+        { jobId: job.id },
+        db,
+      )
     }
   })
 }

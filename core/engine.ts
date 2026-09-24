@@ -27,26 +27,45 @@ export async function research(job: Job) {
   )
   if (strategies.length !== 4) throw new Error('INVALID_POPULATION')
   const [savedJob] = await query('SELECT payload FROM jobs WHERE id=$1', [job.id])
-  let selected: Template[]
-  if (savedJob!.payload.templates) selected = JSON.parse(savedJob!.payload.templates)
+  let plan: { template: Template; strategy: { id: string; approach: string } }[]
+  if (savedJob!.payload.plan) plan = JSON.parse(savedJob!.payload.plan)
   else {
     const existing = await query('SELECT template FROM products')
     const wanted = templates.filter((t) => !existing.some((p) => p.template === t))
-    selected = wanted.length ? wanted.slice(0, 2) : [templates[new Date().getUTCDate() % 3]!]
+    const selected: Template[] = savedJob!.payload.templates
+      ? JSON.parse(savedJob!.payload.templates)
+      : wanted.length
+        ? wanted.slice(0, 2)
+        : [templates[new Date().getUTCDate() % 3]!]
+    plan = selected.map((template, i) => {
+      const strategy = strategies[(new Date().getUTCDate() + i) % 4]!
+      return { template, strategy: { id: strategy.id, approach: strategy.approach } }
+    })
     await query('UPDATE jobs SET payload=payload||$2::jsonb WHERE id=$1', [
       job.id,
-      JSON.stringify({ templates: JSON.stringify(selected) }),
+      JSON.stringify({ plan: JSON.stringify(plan) }),
     ])
   }
-  for (const [i, template] of selected.entries()) {
+  for (const { template, strategy } of plan) {
     if (
       (await query('SELECT id FROM hypotheses WHERE job_id=$1 AND template=$2', [job.id, template]))
         .length
     )
       continue
-    const strategy = strategies[(new Date().getUTCDate() + i) % 4]!
     const evidence = await search(template, `${job.id}:${template}:search`, reservationId)
-    const context = { template, strategy_id: strategy.id, strategy: strategy.approach, evidence }
+    const memory = await query(
+      `SELECT title,status,research->>'counterargument' AS counterargument,
+      research->>'experiment' AS experiment,critique->>'reason' AS critique,is_demo
+      FROM hypotheses WHERE template=$1 AND job_id<>$2 ORDER BY created_at DESC LIMIT 3`,
+      [template, job.id],
+    )
+    const context = {
+      template,
+      strategy_id: strategy.id,
+      strategy: strategy.approach,
+      evidence,
+      memory,
+    }
     const idea = await model({
       role: 'Исследователь',
       key: `${job.id}:${template}:research`,
@@ -156,7 +175,11 @@ export async function research(job: Job) {
       const occupied =
         (await query('SELECT id FROM products WHERE template=$1', [template], db)).length > 0
       const publish =
-        accepted && !occupied && count < POLICY.maxProducts && state?.mode === 'running'
+        accepted &&
+        !occupied &&
+        count < POLICY.maxProducts &&
+        state?.mode === 'running' &&
+        state.research_enabled
       const id = randomUUID()
       const rows = await query(
         'INSERT INTO hypotheses(id,job_id,template,strategy_id,title,status,evidence,research,critique,is_demo) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(job_id,template) DO NOTHING RETURNING id',

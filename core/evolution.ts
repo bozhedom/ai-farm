@@ -68,6 +68,9 @@ export async function evaluateWeek(key: string) {
       (Date.now() - new Date(state!.generation_started_at).getTime()) / 86400000,
     )
     const decision = age >= 28 ? 'CLOSED' : 'HOLD'
+    if (decision === 'CLOSED') {
+      await query('UPDATE system_state SET research_enabled=false WHERE id=true', [], db)
+    }
     const reason =
       age >= 28
         ? 'Эксперимент завершён без денежного победителя: за 28 дней нет реальных сопоставимых продаж.'
@@ -142,7 +145,7 @@ export async function simulateEvolution(expectedGeneration: number) {
       children.push(child)
     }
     await query(
-      'UPDATE system_state SET generation=generation+1,generation_started_at=now() WHERE id=true',
+      'UPDATE system_state SET generation=generation+1,generation_started_at=now(),research_enabled=true WHERE id=true',
       [],
       db,
     )

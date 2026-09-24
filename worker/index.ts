@@ -1,6 +1,14 @@
 import { config } from '../core/config'
 import { audit, pool, query } from '../core/db'
-import { claimJob, enqueue, finishJob, heartbeatJob, recoverJobs, type Job } from '../core/queue'
+import {
+  claimJob,
+  enqueue,
+  finishJob,
+  heartbeatJob,
+  recoverJobs,
+  expireResearchSlots,
+  type Job,
+} from '../core/queue'
 import { runJob } from '../core/engine'
 import { reconcilePayments } from '../core/payments'
 
@@ -51,6 +59,7 @@ while (!stopping) {
   try {
     await query('UPDATE system_state SET worker_heartbeat=now() WHERE id=true')
     await recoverJobs()
+    await expireResearchSlots(new Date().toISOString().slice(0, 10))
     if (!paymentsBusy) {
       paymentsBusy = true
       const paymentTask = reconcilePayments()
@@ -66,7 +75,8 @@ while (!stopping) {
     if (config().AUTONOMY_ENABLED) {
       const day = new Date().toISOString().slice(0, 10)
       const week = Math.floor(Date.now() / (7 * 86400000))
-      await enqueue('research', `research:${day}`)
+      const [state] = await query('SELECT research_enabled FROM system_state WHERE id=true')
+      if (state?.research_enabled) await enqueue('research', `research:${day}`)
       await enqueue('evaluate', `evaluate:${week}`)
     }
     if (!ordersBusy) {

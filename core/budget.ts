@@ -72,7 +72,11 @@ export async function meteredCall<T>(args: {
     const [old] = await query('SELECT * FROM tool_calls WHERE call_key=$1', [args.key], db)
     if (old?.status === 'done') return { cached: true as const, value: old.output as T }
     if (old) throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
-    const [state] = await query('SELECT mode FROM system_state WHERE id=true', [], db)
+    const [state] = await query(
+      'SELECT mode,research_enabled FROM system_state WHERE id=true',
+      [],
+      db,
+    )
     if (state?.mode === 'emergency_stop') throw new Error('STOPPED')
     const [reservation] = await query(
       'SELECT * FROM budget_reservations WHERE id=$1 FOR UPDATE',
@@ -81,6 +85,8 @@ export async function meteredCall<T>(args: {
     )
     if (!reservation || reservation.status !== 'open') throw new Error('RESERVATION_CLOSED')
     if (state?.mode === 'paused' && reservation.category === 'research') throw new Error('PAUSED')
+    if (!state?.research_enabled && reservation.category === 'research')
+      throw new Error('RESEARCH_WINDOW_CLOSED')
     if (
       !Number.isSafeInteger(args.maximum) ||
       args.maximum < 0 ||
