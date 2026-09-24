@@ -63,6 +63,26 @@ async function order() {
 }
 
 describe('durable autonomous pipeline', () => {
+  it('never relabels cached demo output as a live model response after a provider switch', async () => {
+    const reservationId = await reserveBudget('provider-switch', 'research')
+    const common = { key: 'provider-switch', reservationId, role: 'Исследователь', maximum: 0 }
+    await meteredCall({
+      ...common,
+      demo: true,
+      activity: { provider: 'demo', taskLabel: 'test' },
+      invoke: async () => ({ value: { text: 'demo' }, cost: 0 }),
+    })
+    const invoke = vi.fn(async () => ({ value: { text: 'live' }, cost: 0 }))
+    await expect(
+      meteredCall({
+        ...common,
+        demo: false,
+        activity: { provider: 'ollama', model: 'local-model', taskLabel: 'test' },
+        invoke,
+      }),
+    ).rejects.toThrow('PROVIDER_CHANGED_DURING_JOB')
+    expect(invoke).not.toHaveBeenCalled()
+  })
   it('preserves expensive estimates and blocks publication instead of lowering the amount', async () => {
     const original = providers.model
     vi.spyOn(providers, 'model').mockImplementation(async (args: any) =>

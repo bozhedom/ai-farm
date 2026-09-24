@@ -72,7 +72,15 @@ export async function meteredCall<T>(args: {
   const claim = await transaction(async (db) => {
     await query('SELECT pg_advisory_xact_lock(735093)', [], db)
     const [old] = await query('SELECT * FROM tool_calls WHERE call_key=$1', [args.key], db)
-    if (old?.status === 'done') return { cached: true as const, value: old.output as T }
+    if (old?.status === 'done') {
+      if (
+        old.is_demo !== args.demo ||
+        (old.provider && args.activity?.provider && old.provider !== args.activity.provider) ||
+        (old.model && args.activity?.model && old.model !== args.activity.model)
+      )
+        throw new Error('PROVIDER_CHANGED_DURING_JOB')
+      return { cached: true as const, value: old.output as T }
+    }
     if (old) throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
     const [state] = await query(
       'SELECT mode,research_enabled FROM system_state WHERE id=true',
