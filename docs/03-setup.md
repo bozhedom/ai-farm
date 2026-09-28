@@ -4,6 +4,8 @@
 
 Приватный репозиторий: [bozhedom/ai-farm](https://github.com/bozhedom/ai-farm). Стенд поддерживает деморежим и настоящие исследования без внешних ключей через локальные Ollama + SearXNG. Все роли входят в приложение: отдельные подписки на «директора», «архитектора» и четыре стратегии покупать не нужно. Yandex — дополнительный облачный вариант модели и поиска, а не обязательный доступ для локального прогона.
 
+Для текущего VPS FirstVDS 1 vCPU / 2 GB уже выдан SSH-доступ и подготовлена копия приложения. Для первого теста с облачной моделью оставляем этот сервер; характеристики ниже — ориентир для нового стенда. [Текущее состояние размещения](08-temporary-demo.md).
+
 ## Что нужно от владельца
 
 | Что                          | Как получить / что передать                                                                                                                                                                                                      |
@@ -59,6 +61,8 @@ docker compose -f compose.yaml -f compose.local.yaml --profile app ps
 docker compose -f compose.yaml -f compose.local.yaml --profile app up -d --build web worker backup
 ```
 
+Перед взятием задания worker проверяет доступность локальных служб: модель — `/api/version`, поиск — `/healthz`. Это работает и после перезагрузки Docker, когда порядок `depends_on` сам по себе не гарантирован. Пока поиск недоступен, исследования остаются в очереди без расхода попыток; готовая модель может выполнять уже оплаченные заказы. Переходы доступности записываются в журнал. Healthcheck подтверждает доступность службы, а не достаточность источников или качество модели.
+
 Для VPS с доменом добавьте `-f compose.edge.yaml`; не публикуйте порты Ollama, SearXNG или PostgreSQL наружу. Порядок показа работы — [сценарий демонстрации](04-live-demo.md).
 
 Основания интеграции: [Ollama Docker](https://docs.ollama.com/docker), [структурированные ответы](https://docs.ollama.com/capabilities/structured-outputs), [Qwen3 4B](https://ollama.com/library/qwen3:4b), [SearXNG Search API](https://docs.searxng.org/dev/search_api.html). Ресурсы выше — выбранные ограничения нашего стенда, не обещание скорости провайдера.
@@ -84,6 +88,8 @@ npm run worker
 Nuxt dev читает `.env`; команды worker и миграций используют `--env-file=.env`. Production Node сам `.env` не читает; Compose передаёт его через `env_file`.
 
 ## Облачная альтернатива: Yandex
+
+Yandex — уже реализованный адаптер, а не обещание максимального качества. Для выбора более сильной модели и первого платного теста прочитайте [отдельный гайд](07-paid-ai.md); OpenAI / Claude пока требуют нового адаптера.
 
 1. Откройте [консоль Yandex Cloud](https://console.yandex.cloud/), создайте облако / каталог и платёжный аккаунт. Сохраните ID каталога.
 2. Создайте отдельный сервисный аккаунт проекта. Назначьте на каталог `ai.languageModels.user` для Text Generation API и `search-api.webSearch.user` для поиска. Подтверждённые инструкции: [аутентификация модели](https://aistudio.yandex.ru/ru/docs/ai-studio/api-ref/authentication), [аутентификация поиска](https://aistudio.yandex.ru/ru/docs/search-api/api-ref/authentication).
