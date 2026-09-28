@@ -64,11 +64,13 @@ const workerOk = computed(
         <span>Рабочая среда <span class="slash">/</span> <strong>Лаборатория</strong></span>
         <div class="topbar-right">
           <span class="mode-badge">{{
-            state?.config?.modelProvider === 'yandex'
-              ? 'Yandex · API'
-              : state?.config?.modelProvider === 'ollama'
-                ? state.config.model + ' · локально'
-                : 'Демонстрация · без API'
+            state?.config?.modelProvider === 'openai'
+              ? state.config.model + ' · платный API'
+              : state?.config?.modelProvider === 'yandex'
+                ? 'Yandex · API'
+                : state?.config?.modelProvider === 'ollama'
+                  ? state.config.model + ' · локально'
+                  : 'Демонстрация · без API'
           }}</span
           ><span class="avatar">В</span>
         </div>

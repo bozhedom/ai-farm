@@ -20,7 +20,12 @@ export default defineEventHandler(async () => {
     query('SELECT * FROM system_state WHERE id=true'),
     query(`SELECT s.*,count(o.id) FILTER(WHERE o.status='delivered')::int AS test_delivered FROM strategies s
       LEFT JOIN orders o ON o.strategy_id=s.id GROUP BY s.id ORDER BY s.status,s.created_at,s.id`),
-    query('SELECT * FROM hypotheses ORDER BY created_at DESC LIMIT 30'),
+    query(`SELECT h.*,v.version AS released_version,v.product_id AS released_product_id,
+      (SELECT t.model FROM tool_calls t WHERE t.job_id=h.job_id AND t.template=h.template
+       AND t.role='Исследователь' LIMIT 1) AS generated_by_model
+      FROM hypotheses h LEFT JOIN LATERAL (
+        SELECT version,product_id FROM product_versions WHERE hypothesis_id=h.id ORDER BY version DESC LIMIT 1
+      ) v ON true ORDER BY h.created_at DESC LIMIT 30`),
     query('SELECT * FROM products ORDER BY created_at'),
     query(
       'SELECT id,status,payment_mode,amount_wei,created_at,product_snapshot,strategy_snapshot FROM orders ORDER BY created_at DESC LIMIT 30',
@@ -33,7 +38,8 @@ export default defineEventHandler(async () => {
     budgetSummary(),
     query(
       `SELECT id,job_id,template,task_label,provider,model,role,status,charged_kopecks,is_demo,
-       created_at,finished_at,heartbeat_at,progress_chars,input_tokens,output_tokens,error_code,output
+       created_at,finished_at,heartbeat_at,progress_chars,input_tokens,output_tokens,error_code,output,
+       cached_tokens,cache_write_tokens,reasoning_tokens,actual_microusd,charged_microusd
       FROM tool_calls ORDER BY created_at DESC LIMIT 120`,
     ),
     query(
@@ -81,14 +87,17 @@ export default defineEventHandler(async () => {
       model:
         c.MODEL_PROVIDER === 'ollama'
           ? c.OLLAMA_MODEL
-          : c.MODEL_PROVIDER === 'yandex'
-            ? c.YANDEX_MODEL
-            : 'Шаблонный демопровайдер',
+          : c.MODEL_PROVIDER === 'openai'
+            ? c.OPENAI_MODEL
+            : c.MODEL_PROVIDER === 'yandex'
+              ? c.YANDEX_MODEL
+              : 'Шаблонный демопровайдер',
       searchProvider: c.SEARCH_PROVIDER,
       paymentMode: c.PAYMENT_MODE,
       monthlyLimit: c.MONTHLY_BUDGET_KOPECKS,
       dailyLimit: c.DAILY_BUDGET_KOPECKS,
       autonomyEnabled: c.AUTONOMY_ENABLED,
+      openaiTotalLimitMicrousd: c.OPENAI_TOTAL_BUDGET_MICROUSD,
     },
     realRevenueKopecks: 0,
   }

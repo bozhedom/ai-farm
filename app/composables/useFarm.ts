@@ -24,6 +24,13 @@ export const rub = (kopecks: number) =>
     currency: 'RUB',
     maximumFractionDigits: 2,
   }).format(kopecks / 100)
+export const usd = (microusd: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 6,
+  }).format(microusd / 1000000)
 export const dateTime = (date: string) =>
   new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
@@ -72,6 +79,8 @@ export function errorText(error: any) {
     LOGIN_RATE_LIMIT: 'Слишком много попыток. Повторите через 10 минут.',
     ORIGIN_REJECTED: 'Адрес сайта не совпадает с APP_ORIGIN в настройках.',
     BUDGET_BLOCKED: 'Лимит расходов исчерпан. Задача остановлена.',
+    OPENAI_BUDGET_BLOCKED:
+      'Общий предел платной модели не позволяет следующий запрос. Расходы сохранены; автоматического пополнения нет.',
     NEW_ORDERS_PAUSED: 'Новые заказы приостановлены.',
     OPEN_OBLIGATIONS: 'Сначала завершите принятые заказы.',
     POLICY_CONTENT_BLOCKED: 'Материал выходит за разрешённые темы пилота.',

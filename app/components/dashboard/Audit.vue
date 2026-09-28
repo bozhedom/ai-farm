@@ -48,7 +48,10 @@ const roleNames: Record<string, string> = {
               ? 'Исход неизвестен, резерв учтён'
               : 'API'
         }}
-        · {{ rub(call.charged_kopecks) }}</span
+        ·
+        {{
+          call.provider === 'openai' ? usd(call.charged_microusd) : rub(call.charged_kopecks)
+        }}</span
       ><time>{{ dateTime(call.created_at) }}</time>
     </div>
   </section>

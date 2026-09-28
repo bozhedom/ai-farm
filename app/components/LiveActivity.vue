@@ -127,7 +127,11 @@ const usage = computed(() => ({
   input: measuredCalls.value.reduce((n: number, c: any) => n + c.input_tokens, 0),
   output: measuredCalls.value.reduce((n: number, c: any) => n + c.output_tokens, 0),
   cost: calls.value.reduce((n: number, c: any) => n + c.charged_kopecks, 0),
+  dollars: calls.value.reduce((n: number, c: any) => n + c.charged_microusd, 0),
+  actualDollars: calls.value.reduce((n: number, c: any) => n + (c.actual_microusd ?? 0), 0),
+  reasoning: calls.value.reduce((n: number, c: any) => n + (c.reasoning_tokens ?? 0), 0),
 }))
+const cloudCalls = computed(() => calls.value.some((c: any) => c.provider === 'openai'))
 const sources = computed(() =>
   calls.value
     .flatMap((c: any) => c.sources || [])
@@ -288,14 +292,27 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
         }}</small>
       </div>
       <div>
-        <span>Расходы API запуска</span><strong>{{ rub(usage.cost) }}</strong
+        <span>{{ cloudCalls ? 'Стоимость по usage' : 'Расходы API запуска' }}</span
+        ><strong>{{ cloudCalls ? usd(usage.actualDollars) : rub(usage.cost) }}</strong
         ><small>{{
-          calls.some((c: any) => c.status !== 'done')
-            ? 'Включая резервы вызовов'
-            : 'По настроенному тарифу'
+          cloudCalls
+            ? 'С резервом: ' + usd(usage.dollars)
+            : calls.some((c: any) => c.status !== 'done')
+              ? 'Включая резервы вызовов'
+              : 'По настроенному тарифу'
         }}</small>
       </div>
     </div>
+    <p v-if="cloudCalls" class="muted small-text">
+      По полученному usage: {{ usd(usage.actualDollars) }}. Выход включает
+      {{ count(usage.reasoning) }} токенов рассуждения; повторно они не прибавляются. Незавершённые
+      и неопределённые запросы отдельно входят в сумму «С резервом».
+    </p>
+    <p class="muted small-text">
+      После исследования откройте <NuxtLink to="/?view=hypotheses">«Гипотезы»</NuxtLink>: там
+      сохраняются идея и решение критика. Принятая идея выпускает версию сервиса в
+      <NuxtLink to="/catalog">«Продуктах»</NuxtLink>. Отклонённая остаётся в истории с причиной.
+    </p>
     <div class="live-toolbar">
       <p>
         <strong>{{ online ? d.workload.running : '—' }}</strong> задач в работе <span>·</span>
@@ -374,7 +391,12 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
               <p>{{ call.task_label }}</p>
               <p v-if="call.input_tokens != null && call.output_tokens != null" class="call-usage">
                 {{ count(call.input_tokens) }} токенов вход · {{ count(call.output_tokens) }} выход
-                · {{ rub(call.charged_kopecks) }}
+                ·
+                {{
+                  call.provider === 'openai'
+                    ? usd(call.charged_microusd)
+                    : rub(call.charged_kopecks)
+                }}
               </p>
               <p v-if="call.status === 'done'" class="call-result">{{ call.resultSummary }}</p>
               <p v-else-if="call.status === 'uncertain'" class="error-text">

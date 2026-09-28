@@ -52,6 +52,17 @@ const activeStrategies = computed(
         <h2>Контроль эксперимента</h2>
         <span class="tiny-label">POLICY V1</span>
       </div>
+      <div v-if="d.config.modelProvider === 'openai'" class="evaluation-callout">
+        <span>Платная модель · общий предел</span>
+        <strong
+          >{{ usd(d.budget.openaiSpentMicrousd) }} /
+          {{ usd(d.config.openaiTotalLimitMicrousd) }}</strong
+        >
+        <p>
+          По usage: {{ usd(d.budget.openaiActualMicrousd) }}. Первый показатель включает резервы.
+          Предел общий для всех запросов в этой базе и не сбрасывается завтра.
+        </p>
+      </div>
       <div class="budget-line">
         <span>API сегодня</span
         ><strong>{{ rub(d.budget.daySpent) }} / {{ rub(d.config.dailyLimit) }}</strong>

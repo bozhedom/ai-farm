@@ -7,7 +7,10 @@ const sourceHost = (url: string) => new URL(url).hostname
 
 <template>
   <div class="section-heading">
-    <p class="muted">Каждая идея хранит основания, возражения и способ опровержения.</p>
+    <p class="muted">
+      Здесь хранятся результаты исследований. Принятые идеи выпускают версию текстового сервиса;
+      отклонённые сохраняются с причиной.
+    </p>
     <button
       class="button primary"
       :disabled="props.busy || d.state.mode !== 'running' || !d.state.research_enabled"
@@ -32,6 +35,21 @@ const sourceHost = (url: string) => new URL(url).hostname
       }}</span>
     </div>
     <p>{{ h.research.hypothesis }}</p>
+    <p class="muted small-text">
+      {{ dateTime(h.created_at) }} ·
+      {{
+        h.is_demo ? 'Демопровайдер' : h.generated_by_model || 'Модель в старой записи не сохранена'
+      }}
+    </p>
+    <p v-if="h.released_version" class="notice">
+      По этой гипотезе выпущена версия {{ h.released_version }} сервиса.
+      <NuxtLink to="/catalog">Открыть витрину →</NuxtLink>
+      Сейчас витрина показывает последнюю версию; прежние заказы сохраняют свою.
+    </p>
+    <p v-else class="muted small-text">
+      Сервис по этой гипотезе не выпущен. Причина — в «Итоговой проверке» ниже. Новое исследование
+      создаст отдельную запись и не удалит эту.
+    </p>
     <div class="hypothesis-grid">
       <div>
         <h3>Покупатель и проблема</h3>

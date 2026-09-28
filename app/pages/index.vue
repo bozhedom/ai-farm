@@ -63,7 +63,11 @@ async function control(action: string, template?: Template) {
       </div>
       <span v-if="d" class="status-pill" :class="d.state.mode === 'running' ? 'good' : 'warn'"
         ><span class="dot" />{{
-          d.state.mode === 'running' ? 'Автономный режим включён' : labels[d.state.mode]
+          d.state.mode === 'running'
+            ? d.config.autonomyEnabled
+              ? 'Расписание включено'
+              : 'Ручной запуск · расписание выключено'
+            : labels[d.state.mode]
         }}</span
       >
     </div>
@@ -86,7 +90,9 @@ async function control(action: string, template?: Template) {
               ? 'Демонстрационный режим'
               : d.config.modelProvider === 'ollama'
                 ? 'Локальная модель · живой поиск'
-                : 'Исследование через Yandex API'
+                : d.config.modelProvider === 'openai'
+                  ? 'Облачная модель · ' + d.config.model
+                  : 'Исследование через Yandex API'
           }}</strong
           ><span
             >{{
@@ -96,7 +102,7 @@ async function control(action: string, template?: Template) {
                   ? 'Ответы генерирует ' +
                     d.config.model +
                     '. Источники приходят из интернета. Качество небольшого локального ИИ требует проверки.'
-                  : 'Модель и поиск используют подключённый API; расходы учитываются в общем бюджете.'
+                  : 'Ответы создаёт платная модель. Источники передаёт отдельный поиск; расходы видны в пульте.'
             }}
             Платежи —
             {{
