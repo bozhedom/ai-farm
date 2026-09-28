@@ -1,0 +1,18 @@
+# Cloud model + local web search; no inference container on a small VPS.
+services:
+  search:
+    extends:
+      file: compose.local.yaml
+      service: search
+  web:
+    environment:
+      SEARXNG_URL: http://search:8080
+  worker:
+    environment:
+      SEARXNG_URL: http://search:8080
+    depends_on:
+      search:
+        condition: service_healthy
+volumes:
+  farm-db:
+    name: ${FARM_DB_VOLUME:?Set the volume for the canonical cloud database}
