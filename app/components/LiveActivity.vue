@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Template } from '../../core/policy'
+import { stageState, stageLabels } from '~/utils/activity'
 
 const { state: d, failure } = useFarm()
 const props = defineProps<{ busy?: boolean }>()
@@ -34,6 +35,7 @@ const pending = computed(
     d.value?.toolCalls.filter(
       (c: any) =>
         c.status === 'pending' &&
+        c.job_id === job.value?.id &&
         running.value.some(
           (j: any) => j.id === c.job_id && new Date(j.locked_until).getTime() > now.value,
         ),
@@ -44,6 +46,7 @@ const job = computed(
   () =>
     d.value?.jobs.find((j: any) => j.id === selected.value) ||
     running.value[0] ||
+    queue.value.find((j: any) => j.kind !== 'evaluate') ||
     d.value?.jobs.find((j: any) => j.kind !== 'evaluate'),
 )
 const calls = computed(
@@ -95,7 +98,7 @@ const summary = computed(() =>
           : d.value.state.mode === 'paused'
             ? 'Работа приостановлена'
             : queue.value.length
-              ? 'Задание ожидает свободного исполнителя'
+              ? 'Задание в очереди · ожидает запуска'
               : 'Сейчас нет активных заданий',
 )
 function elapsed(start: string, end?: string) {
@@ -106,19 +109,42 @@ function elapsed(start: string, end?: string) {
   return seconds < 60 ? `${seconds} с` : `${Math.floor(seconds / 60)} мин ${seconds % 60} с`
 }
 function roleState(key: string) {
-  if (online.value && pending.value.some((c: any) => c.role === key)) return 'working'
-  const last = calls.value.filter((c: any) => c.role === key).at(-1)
-  return last?.status === 'done' ? 'complete' : last?.status === 'uncertain' ? 'issue' : 'waiting'
+  return stageState(
+    key,
+    calls.value,
+    pending.value.map((c: any) => c.role),
+    !!online.value,
+    ['done', 'failed'].includes(job.value?.status),
+  )
 }
 const jobHypotheses = computed(
   () => d.value?.hypotheses.filter((h: any) => h.job_id === job.value?.id) || [],
 )
-const roleStatus: Record<string, string> = {
-  working: 'Работает',
-  complete: 'Завершил этап',
-  issue: 'Нужна проверка',
-  waiting: 'Ожидает',
-}
+const measuredCalls = computed(() =>
+  calls.value.filter((c: any) => c.input_tokens != null && c.output_tokens != null),
+)
+const usage = computed(() => ({
+  input: measuredCalls.value.reduce((n: number, c: any) => n + c.input_tokens, 0),
+  output: measuredCalls.value.reduce((n: number, c: any) => n + c.output_tokens, 0),
+  cost: calls.value.reduce((n: number, c: any) => n + c.charged_kopecks, 0),
+}))
+const sources = computed(() =>
+  calls.value
+    .flatMap((c: any) => c.sources || [])
+    .filter(
+      (source: any, i: number, all: any[]) => all.findIndex((s: any) => s.url === source.url) === i,
+    ),
+)
+const draftIdea = computed(() => calls.value.findLast((c: any) => c.idea)?.idea)
+const critic = computed(() =>
+  calls.value.findLast((c: any) => c.role === 'Критик' && c.status === 'done'),
+)
+const shownRoles = computed(() => (job.value?.kind === 'fulfill' ? roles.slice(4) : roles))
+const count = (value: number) => new Intl.NumberFormat('ru-RU').format(value)
+const historical = computed(
+  () => !!selected.value && !['running', 'queued'].includes(job.value?.status),
+)
+const focusedSummary = computed(() => (historical.value ? 'Сохранённый запуск' : summary.value))
 </script>
 
 <template>
@@ -126,7 +152,7 @@ const roleStatus: Record<string, string> = {
     <div class="section-heading live-heading">
       <div>
         <span class="eyebrow">ПУЛЬТ ЛАБОРАТОРИИ</span>
-        <h2>Что происходит прямо сейчас</h2>
+        <h2>От источников — к проверенной идее</h2>
       </div>
       <span class="subtle-tag"
         ><span class="dot" :class="online ? 'green' : 'amber'" />{{
@@ -134,19 +160,64 @@ const roleStatus: Record<string, string> = {
         }}</span
       >
     </div>
+    <div class="lab-config">
+      <span
+        ><i class="dot" :class="d.config.modelProvider === 'demo' ? 'amber' : 'green'" />
+        {{ d.config.model }}
+        <small>{{
+          d.config.modelProvider === 'ollama'
+            ? 'настоящий ИИ · локально'
+            : d.config.modelProvider === 'demo'
+              ? 'шаблонные ответы'
+              : 'облачный ИИ'
+        }}</small>
+      </span>
+      <span
+        >Поиск
+        <strong>{{
+          d.config.searchProvider === 'searxng'
+            ? 'SearXNG · интернет'
+            : d.config.searchProvider === 'yandex'
+              ? 'Yandex Search API'
+              : 'демоисточники'
+        }}</strong></span
+      >
+      <span>{{
+        d.config.modelProvider === 'ollama' && d.config.searchProvider === 'searxng'
+          ? 'Без платы за API · используются ресурсы компьютера'
+          : d.config.modelProvider === 'demo'
+            ? 'Внешних запросов нет'
+            : 'Расходы ограничены общим бюджетом'
+      }}</span>
+    </div>
     <div class="live-focus" :class="{ 'is-working': online && pending.length }">
-      <div class="live-beacon" :class="{ spinning: online && pending.length }" aria-hidden="true">
-        {{ online && pending.length ? '◌' : '◎' }}
+      <div class="live-instrument" :class="{ active: online && pending.length }" aria-hidden="true">
+        <svg viewBox="0 0 120 120" fill="none">
+          <circle class="instrument-orbit" cx="60" cy="60" r="49" />
+          <circle class="instrument-ring" cx="60" cy="60" r="37" />
+          <path class="instrument-cross" d="M60 3v12M60 105v12M3 60h12M105 60h12" />
+          <g class="instrument-particle"><circle cx="60" cy="11" r="4" /></g>
+        </svg>
+        <span>{{
+          online && current
+            ? roles.find((r) => r.key === current.role)?.icon || '◎'
+            : job?.status === 'failed'
+              ? '!'
+              : '◎'
+        }}</span>
       </div>
       <div class="live-focus-copy">
-        <h3 aria-live="polite">{{ summary }}</h3>
+        <span class="focus-caption">{{ historical ? 'ИСТОРИЯ ЛАБОРАТОРИИ' : 'ПРЯМО СЕЙЧАС' }}</span>
+        <h3 aria-live="polite">{{ focusedSummary }}</h3>
         <p>
           {{
             online && current
               ? current.task_label
               : !online
                 ? 'Статусы ниже — последние сохранённые. Проверьте соединение и службу worker.'
-                : 'Исследование запускается по расписанию или кнопкой. Заказы исполняются после тестовой оплаты.'
+                : historical
+                  ? 'Показаны реальные этапы выбранного задания. Вернитесь к текущему запуску, чтобы наблюдать за работой.'
+                  : 'Запустите исследование ниже: поиск → гипотеза → критика → проверка сервиса.'
           }}
         </p>
         <span v-if="online && current" class="live-provider"
@@ -165,14 +236,64 @@ const roleStatus: Record<string, string> = {
               : 'Ожидаем ответ инструмента'
             : 'Нет выполняемого вызова'
         }}</span>
+        <div v-if="online && pending.length" class="signal-bars" aria-hidden="true">
+          <i /><i /><i /><i /><i />
+        </div>
       </div>
     </div>
-    <div class="agent-stations">
-      <div v-for="role in roles" :key="role.key" class="agent-station" :class="roleState(role.key)">
+    <div class="pipeline-heading">
+      <span
+        >{{ historical ? 'Выбранный запуск' : 'Текущий / последний запуск' }}
+        <strong v-if="job">№ {{ job.id.slice(0, 8) }} · {{ labels[job.kind] }}</strong></span
+      >
+      <span>Движение означает выполняющийся запрос</span>
+    </div>
+    <div class="agent-stations" :class="{ 'order-stations': job?.kind === 'fulfill' }">
+      <div
+        v-for="(role, i) in shownRoles"
+        :key="role.key"
+        class="agent-station"
+        :class="roleState(role.key)"
+        :aria-current="roleState(role.key) === 'working' ? 'step' : undefined"
+      >
+        <span class="station-number">{{ String(i + 1).padStart(2, '0') }}</span>
         <span class="station-symbol" aria-hidden="true">{{ role.icon }}</span
         ><strong>{{ role.name }}</strong>
         <p>{{ role.purpose }}</p>
-        <span class="station-state">{{ roleStatus[roleState(role.key)] }}</span>
+        <span class="station-state">{{ stageLabels[roleState(role.key)] }}</span>
+        <span v-if="i < shownRoles.length - 1" class="station-connector" aria-hidden="true"
+          ><i
+        /></span>
+      </div>
+    </div>
+    <div class="run-measurements" aria-label="Измерения выбранного запуска">
+      <div>
+        <span>Источники</span><strong>{{ sources.length || '—' }}</strong
+        ><small>Найдено поиском</small>
+      </div>
+      <div>
+        <span>Токены на входе</span
+        ><strong>{{ measuredCalls.length ? count(usage.input) : '—' }}</strong
+        ><small>Контекст и инструкции</small>
+      </div>
+      <div>
+        <span>Токены на выходе</span
+        ><strong>{{ measuredCalls.length ? count(usage.output) : '—' }}</strong
+        ><small>{{
+          measuredCalls.length
+            ? 'По полученным отчётам'
+            : ['done', 'failed'].includes(job?.status)
+              ? 'Нет измерений'
+              : 'Появятся после ответа API'
+        }}</small>
+      </div>
+      <div>
+        <span>Расходы API запуска</span><strong>{{ rub(usage.cost) }}</strong
+        ><small>{{
+          calls.some((c: any) => c.status !== 'done')
+            ? 'Включая резервы вызовов'
+            : 'По настроенному тарифу'
+        }}</small>
       </div>
     </div>
     <div class="live-toolbar">
@@ -200,6 +321,21 @@ const roleStatus: Record<string, string> = {
         </button>
       </div>
     </div>
+    <details v-if="sources.length" class="live-sources">
+      <summary>
+        Найденные источники <span>{{ sources.length }} · доступны до завершения исследования</span>
+      </summary>
+      <ul>
+        <li v-for="source in sources" :key="source.url">
+          <a :href="source.url" target="_blank" rel="noopener noreferrer"
+            >{{ source.title || source.url }} ↗</a
+          >
+        </li>
+      </ul>
+      <p>
+        Модель получает фрагменты поисковой выдачи. Эти ссылки сами по себе не доказывают спрос.
+      </p>
+    </details>
     <div class="live-details">
       <div class="run-history">
         <div class="run-history-heading">
@@ -236,6 +372,10 @@ const roleStatus: Record<string, string> = {
                 }}</time>
               </summary>
               <p>{{ call.task_label }}</p>
+              <p v-if="call.input_tokens != null && call.output_tokens != null" class="call-usage">
+                {{ count(call.input_tokens) }} токенов вход · {{ count(call.output_tokens) }} выход
+                · {{ rub(call.charged_kopecks) }}
+              </p>
               <p v-if="call.status === 'done'" class="call-result">{{ call.resultSummary }}</p>
               <p v-else-if="call.status === 'uncertain'" class="error-text">
                 {{ call.error_code || 'Исход вызова не подтверждён' }}. Этап не засчитан как
@@ -260,10 +400,35 @@ const roleStatus: Record<string, string> = {
             {{ labels[job.status] }} <small>№ {{ job.id.slice(0, 8) }}</small>
           </h3>
           <p v-if="job.error_code" class="error-text">Причина: {{ job.error_code }}</p>
+          <p v-if="job.status === 'failed'">
+            Запуск остановлен. Сохранённые этапы — ниже в истории. После устранения причины
+            запустите новое исследование.
+          </p>
+          <p v-if="!measuredCalls.length && ['done', 'failed'].includes(job.status)" class="muted">
+            Для этого запуска нет измерений токенов. Прочерк означает отсутствие данных, а не
+            нулевой расход.
+          </p>
           <p>
             {{ calls.filter((c: any) => c.status === 'done').length }} этапов завершено.
             {{ jobHypotheses.length }} гипотез сохранено.
           </p>
+          <div v-if="draftIdea && !jobHypotheses.length" class="forming-idea">
+            <span class="eyebrow">ГИПОТЕЗА СФОРМУЛИРОВАНА</span>
+            <h4>{{ draftIdea.title }}</h4>
+            <p>{{ draftIdea.hypothesis }}</p>
+            <details>
+              <summary>Возражение и способ проверки</summary>
+              <p>{{ draftIdea.counterargument }}</p>
+              <p>{{ draftIdea.experiment }}</p>
+            </details>
+            <p class="idea-verdict">
+              {{
+                critic
+                  ? critic.resultSummary
+                  : 'Ожидает отдельной проверки критиком. Решение о выпуске ещё не принято.'
+              }}
+            </p>
+          </div>
           <p v-for="h in jobHypotheses" :key="h.id" class="outcome-idea">
             <strong>{{ h.title }}</strong
             ><span>{{ labels[h.status] }} · {{ h.is_demo ? 'демо' : 'живое исследование' }}</span>

@@ -5,6 +5,7 @@ import { config } from '../config'
 import { meteredCall } from '../budget'
 import { POLICY, safeSourceUrl, type Evidence, type Template } from '../policy'
 import { localModel, localSearch } from './local'
+import { reportUsage } from '../activity'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
 const searchQueries: Record<Template, string> = {
@@ -219,12 +220,13 @@ export async function model<T>(args: {
         },
       )
       const result = response.result ?? response
+      const input = z.coerce.number().int().nonnegative().parse(result.usage?.inputTextTokens)
+      const output = z.coerce.number().int().nonnegative().parse(result.usage?.completionTokens)
+      await reportUsage(args.key, input, output)
       const alternative = result.alternatives?.[0]
       if (alternative?.status !== 'ALTERNATIVE_STATUS_FINAL')
         throw new Error('MODEL_OUTPUT_INCOMPLETE')
       const value = args.schema.parse(JSON.parse(z.string().parse(alternative.message?.text)))
-      const input = z.coerce.number().int().nonnegative().parse(result.usage?.inputTextTokens)
-      const output = z.coerce.number().int().nonnegative().parse(result.usage?.completionTokens)
       return {
         value,
         cost: Math.ceil(

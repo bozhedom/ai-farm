@@ -24,6 +24,7 @@ import {
 } from '../../core/payments'
 import { simulateEvolution, evaluateWeek } from '../../core/evolution'
 import { attemptLogin, validSession, digest } from '../../core/auth'
+import { reportUsage } from '../../core/activity'
 
 const input = 'Керамическая кружка 350 мл. Белая глазурь, ручная работа. Мыть вручную.'
 beforeAll(async () => {
@@ -64,6 +65,67 @@ async function order() {
 }
 
 describe('durable autonomous pipeline', () => {
+  it('persists measured token usage across repairs without charging local inference', async () => {
+    const reservationId = await reserveBudget('usage', 'research')
+    const invoke = vi.fn(async () => {
+      await reportUsage('usage', 120, 30)
+      await reportUsage('usage', 60, 20)
+      await reportUsage('usage', undefined, undefined)
+      await reportUsage('usage', -1, 1.5)
+      return { value: { text: 'validated' }, cost: 0 }
+    })
+    const args = {
+      key: 'usage',
+      reservationId,
+      role: 'Исследователь',
+      maximum: 0,
+      demo: false,
+      invoke,
+    }
+    await meteredCall(args)
+    await meteredCall(args)
+    await reportUsage('usage', 999, 999)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(
+      (await query('SELECT input_tokens,output_tokens,charged_kopecks FROM tool_calls'))[0],
+    ).toEqual({ input_tokens: 180, output_tokens: 50, charged_kopecks: 0 })
+  })
+  it('preserves known usage on invalid output and leaves legacy usage unknown', async () => {
+    const reservationId = await reserveBudget('invalid-usage', 'research')
+    await expect(
+      meteredCall({
+        key: 'invalid-usage',
+        reservationId,
+        role: 'Критик',
+        maximum: 0,
+        demo: false,
+        invoke: async () => {
+          await reportUsage('invalid-usage', 200, 40)
+          throw new Error('MODEL_SCHEMA_INVALID')
+        },
+      }),
+    ).rejects.toThrow('MODEL_SCHEMA_INVALID')
+    expect((await query('SELECT input_tokens,output_tokens,status FROM tool_calls'))[0]).toEqual({
+      input_tokens: 200,
+      output_tokens: 40,
+      status: 'uncertain',
+    })
+    await meteredCall({
+      key: 'missing-usage',
+      reservationId,
+      role: 'search',
+      maximum: 0,
+      demo: true,
+      invoke: async () => ({ value: [], cost: 0 }),
+    })
+    expect(
+      (
+        await query(
+          "SELECT input_tokens,output_tokens FROM tool_calls WHERE call_key='missing-usage'",
+        )
+      )[0],
+    ).toEqual({ input_tokens: null, output_tokens: null })
+  })
   it('never relabels cached demo output as a live model response after a provider switch', async () => {
     const reservationId = await reserveBudget('provider-switch', 'research')
     const common = { key: 'provider-switch', reservationId, role: 'Исследователь', maximum: 0 }

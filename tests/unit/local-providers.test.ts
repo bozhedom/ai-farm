@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { localModel, localSearch, parseSearxResults } from '../../core/providers/local'
 import * as activity from '../../core/activity'
+
+beforeEach(() => vi.spyOn(activity, 'reportUsage').mockResolvedValue())
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -56,16 +58,19 @@ describe('local providers', () => {
     const chunks = ['{"text":', '"Проверенный ответ"}']
     vi.stubGlobal(
       'fetch',
-      vi
-        .fn()
-        .mockResolvedValue(
-          new Response(
-            chunks.map((content) => JSON.stringify({ message: { content } })).join('\n') +
-              '\n' +
-              JSON.stringify({ done: true, done_reason: 'stop' }) +
-              '\n',
-          ),
+      vi.fn().mockResolvedValue(
+        new Response(
+          chunks.map((content) => JSON.stringify({ message: { content } })).join('\n') +
+            '\n' +
+            JSON.stringify({
+              done: true,
+              done_reason: 'stop',
+              prompt_eval_count: 108,
+              eval_count: 17,
+            }) +
+            '\n',
         ),
+      ),
     )
     const result = await localModel({
       key: 'test',
@@ -76,6 +81,7 @@ describe('local providers', () => {
     })
     expect(result.text).toBe('Проверенный ответ')
     expect(progress).toHaveBeenLastCalledWith('test', chunks.join('').length)
+    expect(activity.reportUsage).toHaveBeenCalledWith('test', 108, 17)
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string)).toMatchObject({
       stream: true,
       think: false,
@@ -108,7 +114,12 @@ describe('local providers', () => {
     const validation = vi.spyOn(activity, 'reportValidation').mockResolvedValue()
     const answer = (text: string) =>
       new Response(
-        JSON.stringify({ message: { content: JSON.stringify({ text }) }, done: true }) + '\n',
+        JSON.stringify({
+          message: { content: JSON.stringify({ text }) },
+          done: true,
+          prompt_eval_count: 50,
+          eval_count: 10,
+        }) + '\n',
       )
     vi.stubGlobal(
       'fetch',
@@ -124,6 +135,7 @@ describe('local providers', () => {
       }),
     ).toEqual({ text: 'Проверенный текст' })
     expect(fetch).toHaveBeenCalledTimes(2)
+    expect(activity.reportUsage).toHaveBeenCalledTimes(2)
     expect(validation).toHaveBeenCalledWith(
       'repair',
       [expect.objectContaining({ path: 'text', code: 'too_small' })],

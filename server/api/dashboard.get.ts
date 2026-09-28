@@ -33,7 +33,7 @@ export default defineEventHandler(async () => {
     budgetSummary(),
     query(
       `SELECT id,job_id,template,task_label,provider,model,role,status,charged_kopecks,is_demo,
-       created_at,finished_at,heartbeat_at,progress_chars,error_code,output
+       created_at,finished_at,heartbeat_at,progress_chars,input_tokens,output_tokens,error_code,output
       FROM tool_calls ORDER BY created_at DESC LIMIT 120`,
     ),
     query(
@@ -58,6 +58,19 @@ export default defineEventHandler(async () => {
     toolCalls: toolCalls.map(({ output, ...call }) => ({
       ...call,
       resultSummary: resultSummary(output),
+      sources:
+        call.role === 'search' && Array.isArray(output)
+          ? output.map(({ url, title }) => ({ url, title }))
+          : [],
+      idea:
+        call.role === 'Исследователь' && call.status === 'done' && output
+          ? {
+              title: output.title,
+              hypothesis: output.hypothesis,
+              counterargument: output.counterargument,
+              experiment: output.experiment,
+            }
+          : null,
     })),
     serverTime: new Date().toISOString(),
     nextResearchAt: new Date(

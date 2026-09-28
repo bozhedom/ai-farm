@@ -33,7 +33,7 @@
 .live-focus {
   margin: 22px 28px;
   padding: 22px;
-  background: #f0f3f8;
+  background: #f5f7fb;
   border: 1px solid #e0e7f0;
   border-radius: 14px;
   display: flex;
@@ -44,15 +44,79 @@
   background: #eef0ff;
   border-color: #cbd0fc;
 }
-.live-beacon {
-  flex: 0 0 48px;
-  font-size: 42px;
-  text-align: center;
-  color: #6a7890;
+.lab-config {
+  margin: 18px 28px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  font-size: 11px;
+  color: var(--muted);
 }
-.live-beacon.spinning {
-  color: #5965df;
-  animation: working-turn 3s linear infinite;
+.lab-config > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+.lab-config small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.lab-config strong {
+  font-weight: 500;
+  color: var(--ink);
+  margin-left: 5px;
+}
+.lab-config > span:last-child {
+  flex-basis: 100%;
+}
+.live-instrument {
+  position: relative;
+  flex: 0 0 116px;
+  height: 116px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.live-instrument svg {
+  width: 100%;
+  position: absolute;
+  inset: 0;
+}
+.instrument-orbit,
+.instrument-cross {
+  stroke: #cbd4e2;
+  stroke-width: 1;
+}
+.instrument-ring {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+  opacity: 0.4;
+  transform-origin: center;
+}
+.instrument-particle {
+  fill: currentColor;
+  transform-origin: center;
+}
+.live-instrument > span {
+  font-size: 36px;
+}
+.live-instrument.active {
+  color: var(--blue);
+}
+.live-instrument.active .instrument-ring {
+  animation: working-turn 16s linear infinite reverse;
+}
+.live-instrument.active .instrument-particle {
+  animation: working-turn 5s linear infinite;
+}
+.focus-caption {
+  display: block;
+  font: 10px var(--mono);
+  letter-spacing: 1.2px;
+  color: var(--muted);
+  margin-bottom: 10px;
 }
 @keyframes working-turn {
   to {
@@ -94,18 +158,109 @@
   font-size: 11px;
   color: #66768e;
 }
+.signal-bars {
+  display: flex;
+  height: 23px;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 4px;
+  margin-top: 12px;
+}
+.signal-bars i {
+  width: 4px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--blue);
+  transform-origin: bottom;
+  animation: request-signal 1.1s ease-in-out infinite alternate;
+}
+.signal-bars i:nth-child(2n) {
+  animation-delay: -0.4s;
+}
+.signal-bars i:nth-child(3n) {
+  animation-delay: -0.8s;
+}
+@keyframes request-signal {
+  from {
+    transform: scaleY(0.25);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+.pipeline-heading {
+  padding: 0 28px 13px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 10px;
+}
+.pipeline-heading strong {
+  color: var(--ink);
+  margin-left: 6px;
+  font-weight: 500;
+}
 .agent-stations {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  gap: 16px;
   padding: 0 28px;
 }
 .agent-station {
+  position: relative;
   border: 1px solid #e5eaf1;
   border-radius: 12px;
-  padding: 14px 9px;
+  padding: 23px 8px 15px;
   text-align: center;
   background: #fff;
+}
+.agent-stations.order-stations {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.station-number {
+  position: absolute;
+  top: 9px;
+  left: 10px;
+  color: #98a5b8;
+  font: 9px var(--mono);
+}
+.station-connector {
+  position: absolute;
+  width: 16px;
+  height: 1px;
+  background: var(--line);
+  left: 100%;
+  top: 43px;
+}
+.station-connector i {
+  display: none;
+}
+.working .station-connector i {
+  display: block;
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  top: -1.5px;
+  background: var(--blue);
+  border-radius: 50%;
+  animation: stage-transfer 1.8s linear infinite;
+}
+@keyframes stage-transfer {
+  from {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  to {
+    transform: translateX(13px);
+    opacity: 0;
+  }
 }
 .station-symbol {
   display: grid;
@@ -141,6 +296,16 @@
 .agent-station.working .station-symbol {
   background: #5965df;
   color: white;
+  animation: stage-pulse 2.5s ease-out infinite;
+}
+@keyframes stage-pulse {
+  0% {
+    box-shadow: 0 0 0 0 #5965df40;
+  }
+  75%,
+  100% {
+    box-shadow: 0 0 0 9px #5965df00;
+  }
 }
 .agent-station.working .station-state {
   color: #4a54c8;
@@ -158,6 +323,73 @@
 }
 .agent-station.issue .station-state {
   color: #9e6317;
+}
+.agent-station.skipped {
+  background: #f9fafc;
+  border-style: dashed;
+}
+.agent-station.unconfirmed {
+  border-color: #edcfa7;
+}
+.run-measurements {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 22px 28px 0;
+  padding: 17px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.run-measurements > div {
+  padding: 0 20px;
+  border-left: 1px solid var(--line);
+}
+.run-measurements > div:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.run-measurements span,
+.run-measurements small {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+}
+.run-measurements strong {
+  display: block;
+  font: 22px var(--mono);
+  margin: 7px 0 5px;
+  color: var(--ink);
+}
+.live-sources {
+  margin: 0 28px 22px;
+  padding: 14px 16px;
+  background: #f5f8fb;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+.live-sources summary {
+  cursor: pointer;
+  color: var(--ink);
+}
+.live-sources summary span {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.live-sources ul {
+  padding-left: 18px;
+}
+.live-sources li {
+  margin: 9px 0;
+  overflow-wrap: anywhere;
+}
+.live-sources p {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 0;
+}
+.call-timeline .call-usage {
+  font: 10px var(--mono);
 }
 .live-toolbar {
   padding: 19px 28px;
@@ -342,6 +574,29 @@
 .outcome-idea span {
   font-size: 11px;
 }
+.forming-idea {
+  margin-top: 18px;
+  padding: 18px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: 8px;
+}
+.forming-idea h4 {
+  margin: 12px 0 0;
+  font: 600 14px var(--heading);
+  color: var(--ink);
+}
+.forming-idea summary {
+  font-size: 11px;
+  color: var(--blue);
+  cursor: pointer;
+}
+.forming-idea .idea-verdict {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
 .next-run {
   margin-top: 23px;
   padding-top: 18px;
@@ -364,6 +619,9 @@
   .agent-station p {
     min-height: auto;
   }
+  .agent-station:nth-child(3n) .station-connector {
+    display: none;
+  }
 }
 @media (max-width: 700px) {
   .live-heading {
@@ -377,9 +635,12 @@
     padding: 16px;
     gap: 12px;
   }
-  .live-beacon {
-    flex-basis: 32px;
-    font-size: 32px;
+  .live-instrument {
+    flex-basis: 62px;
+    height: 62px;
+  }
+  .live-instrument > span {
+    font-size: 23px;
   }
   .live-focus h3 {
     font-size: 16px;
@@ -390,14 +651,66 @@
   .live-timer {
     width: 100%;
     text-align: left;
-    padding-left: 44px;
+    padding-left: 74px;
+  }
+  .signal-bars {
+    justify-content: flex-start;
+  }
+  .focus-caption {
+    font-size: 8px;
+    margin-bottom: 7px;
+  }
+  .lab-config {
+    margin: 18px 18px 0;
+  }
+  .lab-config > span:first-child {
+    flex-wrap: wrap;
+  }
+  .pipeline-heading {
+    padding: 0 18px 12px;
+    line-height: 1.7;
+  }
+  .pipeline-heading strong {
+    display: block;
+    margin-left: 0;
+  }
+  .pipeline-heading > span:last-child {
+    display: none;
+  }
+  .station-connector {
+    width: 6px;
+  }
+  .working .station-connector i {
+    display: none;
+  }
+  .run-measurements {
+    margin: 18px 18px 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 18px;
+  }
+  .run-measurements > div:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .run-measurements > div {
+    padding-right: 0;
+  }
+  .run-measurements strong {
+    font-size: 20px;
+  }
+  .live-sources {
+    margin: 0 18px 18px;
+  }
+  .live-sources summary span {
+    display: block;
+    margin: 5px 0 0;
   }
   .agent-stations {
     padding: 0 18px;
     gap: 6px;
   }
   .agent-station {
-    padding: 12px 5px;
+    padding: 22px 5px 12px;
   }
   .agent-station strong {
     font-size: 10px;
@@ -440,7 +753,11 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .live-beacon.spinning {
+  .live-instrument.active .instrument-ring,
+  .live-instrument.active .instrument-particle,
+  .agent-station.working .station-symbol,
+  .working .station-connector i,
+  .signal-bars i {
     animation: none;
   }
 }

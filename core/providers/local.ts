@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { config } from '../config'
-import { reportProgress, reportValidation } from '../activity'
+import { reportProgress, reportUsage, reportValidation } from '../activity'
 import { safeSourceUrl, type Evidence } from '../policy'
 
 export function parseSearxResults(data: unknown): Evidence[] {
@@ -110,6 +110,8 @@ async function generate<T>(args: LocalModelArgs<T>, attempt: number): Promise<T>
         output += typeof item.message?.content === 'string' ? item.message.content : ''
         if (output.length > 60000) throw new Error('MODEL_RESPONSE_TOO_LARGE')
         if (item.done) {
+          if (done) throw new Error('MODEL_STREAM_ERROR')
+          await reportUsage(args.key, item.prompt_eval_count, item.eval_count)
           if (item.done_reason === 'length') throw new Error('MODEL_OUTPUT_INCOMPLETE')
           done = true
         }

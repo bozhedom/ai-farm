@@ -17,6 +17,25 @@ export async function reportProgress(key: string, characters: number) {
   )
 }
 
+/** Provider-reported tokens, including a local format repair; never inferred from characters. */
+export async function reportUsage(key: string, input: unknown, output: unknown) {
+  if (
+    typeof input !== 'number' ||
+    !Number.isSafeInteger(input) ||
+    input < 0 ||
+    typeof output !== 'number' ||
+    !Number.isSafeInteger(output) ||
+    output < 0
+  )
+    return
+  await query(
+    `UPDATE tool_calls SET input_tokens=COALESCE(input_tokens,0)+$2,
+      output_tokens=COALESCE(output_tokens,0)+$3,heartbeat_at=now()
+     WHERE call_key=$1 AND status='pending'`,
+    [key, input, output],
+  )
+}
+
 export async function reportValidation(key: string, issues: unknown[], retry: boolean) {
   await audit(
     'model_schema_validation',
