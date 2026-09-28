@@ -8,7 +8,9 @@ export async function budgetSummary(db: Connection = pool) {
     `SELECT
     COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::int AS day_spent,
     COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::int AS month_spent,
-    COALESCE((SELECT sum(limit_kopecks-spent_kopecks) FROM budget_reservations WHERE status='open'),0)::int AS outstanding`,
+    COALESCE((SELECT sum(limit_kopecks-spent_kopecks) FROM budget_reservations WHERE status='open'),0)::int AS outstanding,
+    COALESCE((SELECT sum(charged_microusd) FROM tool_calls WHERE provider='openai'),0)::bigint AS openai_spent,
+    COALESCE((SELECT sum(actual_microusd) FROM tool_calls WHERE provider='openai'),0)::bigint AS openai_actual`,
     [],
     db,
   )
@@ -16,6 +18,8 @@ export async function budgetSummary(db: Connection = pool) {
     daySpent: s!.day_spent as number,
     monthSpent: s!.month_spent as number,
     outstanding: s!.outstanding as number,
+    openaiSpentMicrousd: Number(s!.openai_spent),
+    openaiActualMicrousd: Number(s!.openai_actual),
   }
 }
 
@@ -33,7 +37,8 @@ export async function reserveBudget(
   }
   const c = config()
   const limit =
-    c.MODEL_PROVIDER !== 'yandex' && (category === 'order' || c.SEARCH_PROVIDER !== 'yandex')
+    !['yandex', 'openai'].includes(c.MODEL_PROVIDER) &&
+    (category === 'order' || c.SEARCH_PROVIDER !== 'yandex')
       ? 0
       : category === 'order'
         ? c.ORDER_RESERVE_KOPECKS
@@ -65,10 +70,18 @@ export async function meteredCall<T>(args: {
   reservationId: string
   role: string
   maximum: number
+  maximumMicrousd?: number
   demo: boolean
   activity?: CallActivity
-  invoke: () => Promise<{ value: T; cost: number }>
+  invoke: () => Promise<{ value: T; cost: number; microusd?: number }>
 }): Promise<T> {
+  const maximumUsd = args.maximumMicrousd ?? 0
+  if (
+    !Number.isSafeInteger(maximumUsd) ||
+    maximumUsd < 0 ||
+    (args.activity?.provider === 'openai' && maximumUsd === 0)
+  )
+    throw new Error('INVALID_DOLLAR_RESERVE')
   const claim = await transaction(async (db) => {
     await query('SELECT pg_advisory_xact_lock(735093)', [], db)
     const [old] = await query('SELECT * FROM tool_calls WHERE call_key=$1', [args.key], db)
@@ -106,6 +119,11 @@ export async function meteredCall<T>(args: {
     // Includes old outstanding reservations: crossing midnight cannot create a fresh hidden budget.
     const totals = await budgetSummary(db)
     if (
+      maximumUsd > 0 &&
+      totals.openaiSpentMicrousd + maximumUsd > config().OPENAI_TOTAL_BUDGET_MICROUSD
+    )
+      throw new Error('OPENAI_BUDGET_BLOCKED')
+    if (
       totals.daySpent + args.maximum > config().DAILY_BUDGET_KOPECKS ||
       totals.monthSpent + args.maximum > config().MONTHLY_BUDGET_KOPECKS
     )
@@ -113,8 +131,8 @@ export async function meteredCall<T>(args: {
     const id = randomUUID()
     await query(
       `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo,
-        job_id,template,task_label,provider,model,heartbeat_at)
-       VALUES($1,$2,$3,$4,'pending',$5,$5,$6,$7,$8,$9,$10,$11,now())`,
+        job_id,template,task_label,provider,model,heartbeat_at,reserved_microusd,charged_microusd)
+       VALUES($1,$2,$3,$4,'pending',$5,$5,$6,$7,$8,$9,$10,$11,now(),$12,$12)`,
       [
         id,
         args.key,
@@ -127,6 +145,7 @@ export async function meteredCall<T>(args: {
         args.activity?.taskLabel,
         args.activity?.provider,
         args.activity?.model,
+        maximumUsd,
       ],
       db,
     )
@@ -140,13 +159,21 @@ export async function meteredCall<T>(args: {
   if (claim.cached) return claim.value
   try {
     const result = await args.invoke()
+    const costUsd = result.microusd ?? 0
+    if (
+      !Number.isSafeInteger(costUsd) ||
+      costUsd < 0 ||
+      costUsd > maximumUsd ||
+      (args.activity?.provider === 'openai' && result.microusd === undefined)
+    )
+      throw new Error('PROVIDER_COST_EXCEEDS_RESERVE')
     if (!Number.isSafeInteger(result.cost) || result.cost < 0 || result.cost > args.maximum)
       throw new Error('PROVIDER_COST_EXCEEDS_RESERVE')
     await transaction(async (db) => {
       await query('SELECT pg_advisory_xact_lock(735093)', [], db)
       await query(
-        "UPDATE tool_calls SET status='done', output=$2, charged_kopecks=$3,finished_at=now(),heartbeat_at=now() WHERE id=$1",
-        [claim.id, JSON.stringify(result.value), result.cost],
+        "UPDATE tool_calls SET status='done', output=$2, charged_kopecks=$3,charged_microusd=$4,finished_at=now(),heartbeat_at=now() WHERE id=$1",
+        [claim.id, JSON.stringify(result.value), result.cost, costUsd],
         db,
       )
       await query(

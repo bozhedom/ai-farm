@@ -104,6 +104,18 @@ export async function research(job: Job) {
         modelProvider: config().MODEL_PROVIDER,
         maximumOrderCostRub: config().ORDER_RESERVE_KOPECKS / 100,
         localApiCostRub: config().MODEL_PROVIDER === 'ollama' ? 0 : undefined,
+        cloudTariff:
+          config().MODEL_PROVIDER === 'openai'
+            ? {
+                model: config().OPENAI_MODEL,
+                inputMicrousdPerToken: 10,
+                cacheReadMicrousdPerToken: 1,
+                cacheWriteTenthsMicrousdPerToken: 125,
+                outputMicrousdPerToken: 50,
+                kopecksPerDollar: config().OPENAI_USD_KOPECKS,
+                note: 'Один доллар = 1000000 микродолларов. Два вызова на заказ: генерация и проверка. Выход включает рассуждение; фактическое число токенов будущего заказа неизвестно. Курс — настройка учёта, не рыночная котировка.',
+              }
+            : undefined,
         instruction:
           'Серверные расходы отдельно неизвестны: укажи это в uncertainties. Не подгоняй оценку под лимит. Если она выше лимита, гипотеза сохранится, но не будет выпущена.',
       },

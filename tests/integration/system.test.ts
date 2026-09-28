@@ -65,6 +65,80 @@ async function order() {
 }
 
 describe('durable autonomous pipeline', () => {
+  it('reserves paid cloud work and enforces one lifetime dollar cap across concurrent requests', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'openai',
+      SEARCH_PROVIDER: 'searxng',
+      OPENAI_TOTAL_BUDGET_MICROUSD: 1000000,
+    })
+    const reservationId = await reserveBudget('cloud-cap', 'research')
+    expect(
+      (
+        await query('SELECT limit_kopecks FROM budget_reservations WHERE id=$1', [reservationId])
+      )[0]!.limit_kopecks,
+    ).toBe(10000)
+    const invoke = vi.fn(async () => ({ value: 'ok', cost: 1, microusd: 700000 }))
+    const args = {
+      reservationId,
+      role: 'test',
+      maximum: 1,
+      maximumMicrousd: 700000,
+      demo: false,
+      activity: { provider: 'openai', model: 'gpt-6-astra', taskLabel: 'test' },
+      invoke,
+    }
+    const results = await Promise.allSettled([
+      meteredCall({ ...args, key: 'cloud-a' }),
+      meteredCall({ ...args, key: 'cloud-b' }),
+    ])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(
+      (results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason.message,
+    ).toBe('OPENAI_BUDGET_BLOCKED')
+    const [done] = await query('SELECT call_key FROM tool_calls')
+    await meteredCall({ ...args, key: done!.call_key })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    await query("UPDATE tool_calls SET created_at=now()-interval '2 months'")
+    await expect(meteredCall({ ...args, key: 'next-month' })).rejects.toThrow(
+      'OPENAI_BUDGET_BLOCKED',
+    )
+    expect((await budgetSummary()).openaiSpentMicrousd).toBe(700000)
+  })
+  it('retains the dollar reserve after uncertainty and blocks unpaid cloud bypasses', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'openai',
+      SEARCH_PROVIDER: 'searxng',
+      OPENAI_TOTAL_BUDGET_MICROUSD: 1000000,
+    })
+    const reservationId = await reserveBudget('cloud-uncertain', 'research')
+    const invoke = vi.fn(async () => {
+      throw new Error('MODEL_OUTPUT_INCOMPLETE')
+    })
+    const args = {
+      key: 'cloud-uncertain',
+      reservationId,
+      role: 'test',
+      maximum: 1,
+      maximumMicrousd: 600000,
+      demo: false,
+      activity: { provider: 'openai', taskLabel: 'test' },
+      invoke,
+    }
+    await expect(meteredCall(args)).rejects.toThrow('MODEL_OUTPUT_INCOMPLETE')
+    await expect(meteredCall(args)).rejects.toThrow('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    await expect(meteredCall({ ...args, key: 'again' })).rejects.toThrow('OPENAI_BUDGET_BLOCKED')
+    await expect(meteredCall({ ...args, key: 'no-reserve', maximumMicrousd: 0 })).rejects.toThrow(
+      'INVALID_DOLLAR_RESERVE',
+    )
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect((await query('SELECT status,charged_microusd FROM tool_calls'))[0]).toEqual({
+      status: 'uncertain',
+      charged_microusd: 600000,
+    })
+  })
   it('persists measured token usage across repairs without charging local inference', async () => {
     const reservationId = await reserveBudget('usage', 'research')
     const invoke = vi.fn(async () => {

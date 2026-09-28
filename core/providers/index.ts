@@ -6,6 +6,8 @@ import { meteredCall } from '../budget'
 import { POLICY, safeSourceUrl, type Evidence, type Template } from '../policy'
 import { localModel, localSearch } from './local'
 import { reportUsage } from '../activity'
+import { openaiModel } from './openai'
+import { openaiMaximum, usdToKopecks } from './openai-cost'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
 const searchQueries: Record<Template, string> = {
@@ -131,6 +133,7 @@ export async function model<T>(args: {
   context: Record<string, unknown>
   schema: z.ZodType<T>
   demoValue: T
+  maxOutputTokens?: number
 }): Promise<T> {
   const c = config()
   const system =
@@ -143,31 +146,44 @@ export async function model<T>(args: {
     ...args.context,
   })
   // UTF-8 bytes plus fixed overhead safely overestimate input token count for this small text context.
-  const maxTokens = args.role === 'Исследователь' ? 2800 : 2000
-  const upperInput = Buffer.byteLength(system + context, 'utf8') + 2048
+  const maxTokens = args.maxOutputTokens ?? (args.role === 'Исследователь' ? 2800 : 2000)
+  // OpenAI also receives a schema separately from the system instructions.
+  const upperInput =
+    Buffer.byteLength(
+      system +
+        context +
+        (c.MODEL_PROVIDER === 'openai' ? JSON.stringify(z.toJSONSchema(args.schema)) : ''),
+      'utf8',
+    ) + 2048
   if (upperInput > 100000) throw new Error('CONTEXT_TOO_LARGE')
   const demo = c.MODEL_PROVIDER === 'demo'
+  const maximumMicrousd = c.MODEL_PROVIDER === 'openai' ? openaiMaximum(upperInput, maxTokens) : 0
   const maximum =
-    c.MODEL_PROVIDER !== 'yandex'
-      ? 0
-      : Math.ceil(
-          (upperInput * c.MODEL_INPUT_KOPECKS_PER_1K) / 1000 +
-            (maxTokens * c.MODEL_OUTPUT_KOPECKS_PER_1K) / 1000,
-        )
+    c.MODEL_PROVIDER === 'openai'
+      ? usdToKopecks(maximumMicrousd, c.OPENAI_USD_KOPECKS)
+      : c.MODEL_PROVIDER !== 'yandex'
+        ? 0
+        : Math.ceil(
+            (upperInput * c.MODEL_INPUT_KOPECKS_PER_1K) / 1000 +
+              (maxTokens * c.MODEL_OUTPUT_KOPECKS_PER_1K) / 1000,
+          )
   return meteredCall({
     key: args.key,
     reservationId: args.reservationId,
     role: args.role,
     maximum,
+    maximumMicrousd,
     demo,
     activity: {
       provider: c.MODEL_PROVIDER,
       model:
         c.MODEL_PROVIDER === 'ollama'
           ? c.OLLAMA_MODEL
-          : c.MODEL_PROVIDER === 'yandex'
-            ? c.YANDEX_MODEL
-            : undefined,
+          : c.MODEL_PROVIDER === 'openai'
+            ? c.OPENAI_MODEL
+            : c.MODEL_PROVIDER === 'yandex'
+              ? c.YANDEX_MODEL
+              : undefined,
       template: String(
         args.context.template ||
           (args.context.product as Record<string, unknown> | undefined)?.template ||
@@ -186,6 +202,8 @@ export async function model<T>(args: {
     },
     invoke: async () => {
       if (demo) return { value: args.schema.parse(args.demoValue), cost: 0 }
+      if (c.MODEL_PROVIDER === 'openai')
+        return openaiModel({ key: args.key, system, context, schema: args.schema, maxTokens })
       if (c.MODEL_PROVIDER === 'ollama')
         return {
           value: await localModel({

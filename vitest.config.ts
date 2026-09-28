@@ -11,6 +11,7 @@ export default defineConfig({
       SESSION_SECRET: 'test-session-secret-at-least-forty-characters-long',
       APP_ORIGIN: 'http://localhost:3210',
       MODEL_PROVIDER: 'demo',
+      OPENAI_API_KEY: 'test-only-key',
       SEARCH_PROVIDER: 'demo',
       PAYMENT_MODE: 'sandbox',
       SECURE_COOKIE: 'false',

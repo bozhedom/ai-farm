@@ -56,7 +56,12 @@ function launch(job: Job, lane: 'orders' | 'research') {
   running.add(promise)
 }
 
-await audit('worker_started', 'Worker запущен. Расписание и обработка заказов включены.')
+await audit(
+  'worker_started',
+  config().AUTONOMY_ENABLED
+    ? 'Worker запущен. Расписание и обработка заказов включены.'
+    : 'Worker запущен. Расписание выключено; выполняются ручные задания и принятые заказы.',
+)
 while (!stopping) {
   try {
     await query('UPDATE system_state SET worker_heartbeat=now() WHERE id=true')

@@ -8,8 +8,12 @@ const schema = z.object({
   OWNER_PASSWORD: z.string().min(20),
   SESSION_SECRET: z.string().min(40),
   SECURE_COOKIE: flag.default(false),
-  MODEL_PROVIDER: z.enum(['demo', 'yandex', 'ollama']).default('demo'),
+  MODEL_PROVIDER: z.enum(['demo', 'yandex', 'ollama', 'openai']).default('demo'),
   SEARCH_PROVIDER: z.enum(['demo', 'yandex', 'searxng']).default('demo'),
+  OPENAI_API_KEY: z.string().default(''),
+  OPENAI_MODEL: z.literal('gpt-6-astra').default('gpt-6-astra'),
+  OPENAI_TOTAL_BUDGET_MICROUSD: z.coerce.number().int().min(0).max(1000000000).default(1000000),
+  OPENAI_USD_KOPECKS: positive(12000).refine((n) => n <= 1000000),
   OLLAMA_URL: z.url().default('http://127.0.0.1:11434'),
   OLLAMA_MODEL: z
     .string()
@@ -42,6 +46,8 @@ export function config(): Config {
   const c = schema.parse(process.env)
   if ((c.MODEL_PROVIDER === 'demo') !== (c.SEARCH_PROVIDER === 'demo'))
     throw new Error('DEMO_PROVIDERS_MUST_MATCH')
+  if (c.MODEL_PROVIDER === 'openai' && !c.OPENAI_API_KEY)
+    throw new Error('OPENAI_CREDENTIALS_REQUIRED')
   if (
     (c.MODEL_PROVIDER === 'yandex' || c.SEARCH_PROVIDER === 'yandex') &&
     (!c.YANDEX_API_KEY || !c.YANDEX_FOLDER_ID)
