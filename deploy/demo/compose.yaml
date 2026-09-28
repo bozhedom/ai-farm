@@ -1,0 +1,16 @@
+# Run on the VPS. The tunnel listens only on its loopback interface.
+name: ai-farm-demo
+services:
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DEMO_DOMAIN: ${DEMO_DOMAIN:?Set the public demo domain}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - demo-caddy-data:/data
+      - demo-caddy-config:/config
+volumes:
+  demo-caddy-data:
+  demo-caddy-config:

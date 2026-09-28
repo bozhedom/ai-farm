@@ -1,0 +1,31 @@
+# Local HTTPS-facing web process for a temporary, SSH-tunnelled demonstration.
+# The existing local database, worker, model and search remain the source of truth.
+services:
+  demo-web:
+    image: ${DEMO_APP_IMAGE:-ai-farm-web:latest}
+    profiles: ['demo']
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://farm:${POSTGRES_PASSWORD}@db:5432/farm
+      APP_ORIGIN: ${DEMO_ORIGIN:?Set the public HTTPS demo origin}
+      SECURE_COOKIE: 'true'
+      HOST: 0.0.0.0
+      PORT: '3000'
+    ports:
+      - '127.0.0.1:3211:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['node', '.output/server/index.mjs']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

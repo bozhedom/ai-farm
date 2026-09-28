@@ -1,0 +1,6 @@
+# Build once on the development machine; run on the VPS with --no-build.
+services:
+  web:
+    image: ${FARM_IMAGE:?Set FARM_IMAGE to the uploaded application image}
+  worker:
+    image: ${FARM_IMAGE:?Set FARM_IMAGE to the uploaded application image}
