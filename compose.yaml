@@ -25,6 +25,9 @@ services:
       DATABASE_URL: postgres://farm:${POSTGRES_PASSWORD}@db:5432/farm
       HOST: 0.0.0.0
       PORT: '3000'
+      HEALTH_DIRECTORY: /health
+    volumes:
+      - ./.health:/health:ro
     ports:
       - '127.0.0.1:3210:3000'
     depends_on:
@@ -65,9 +68,11 @@ services:
     restart: unless-stopped
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD}
+      HEALTH_DIRECTORY: /health
     volumes:
       - ./backups:/backups
       - ./scripts/backup-loop.sh:/scripts/backup-loop.sh:ro
+      - ./.health:/health
     depends_on:
       db:
         condition: service_healthy
@@ -77,5 +82,24 @@ services:
       interval: 60s
       timeout: 5s
       retries: 2
+  observer:
+    build: .
+    user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
+    profiles: ['app']
+    restart: unless-stopped
+    environment:
+      HEALTH_DIRECTORY: /health
+      READINESS_URL: http://web:3000/api/readiness
+    volumes:
+      - ./.health:/health
+    depends_on:
+      web:
+        condition: service_healthy
+    command: ['node', '--import', 'tsx', 'scripts/observe.ts']
+    healthcheck:
+      test: ['CMD', 'node', '--import', 'tsx', 'scripts/observer-health.ts']
+      interval: 30s
+      timeout: 10s
+      retries: 3
 volumes:
   farm-db:

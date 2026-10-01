@@ -20,7 +20,7 @@ export default defineEventHandler(async (event) => {
     if (!/^\d+$/.test(length) || Number(length) > 24000)
       throw createError({ statusCode: 413, statusMessage: 'BODY_TOO_LARGE' })
   }
-  if (path === '/api/health' || path === '/api/auth/login') return
+  if (path === '/api/health' || path === '/api/readiness' || path === '/api/auth/login') return
   if (!(await validSession(getCookie(event, 'farm_session'))))
     throw createError({ statusCode: 401, statusMessage: 'AUTH_REQUIRED' })
 })

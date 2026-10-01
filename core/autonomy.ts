@@ -2,6 +2,7 @@ import { config } from './config'
 import { audit, query, transaction } from './db'
 import { enqueue } from './queue'
 import type { budgetSummary } from './budget'
+import { operationsStatus } from './operations'
 
 export async function setSchedule(enabled: boolean) {
   if (enabled && !config().AUTONOMY_ENABLED) throw new Error('SCHEDULE_DISABLED_ON_SERVER')
@@ -74,7 +75,7 @@ export async function autonomyStatus(
   budget: Awaited<ReturnType<typeof budgetSummary>>,
   now = new Date(),
 ) {
-  const [scheduled, active, today, obligations] = await Promise.all([
+  const [scheduled, active, today, obligations, operations] = await Promise.all([
     query<Run>(
       "SELECT id,status,error_code,created_at,finished_at FROM jobs WHERE kind='research' AND dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' ORDER BY created_at DESC LIMIT 1",
     ),
@@ -87,6 +88,7 @@ export async function autonomyStatus(
     query(
       "SELECT count(*) FILTER(WHERE status IN ('paid','running'))::int AS pending,count(*) FILTER(WHERE status='manual_review')::int AS review FROM orders",
     ),
+    operationsStatus(now),
   ])
   const c = config()
   const alive =
@@ -148,6 +150,7 @@ export async function autonomyStatus(
       : 'Исследование будет поставлено в ближайшем цикле обработчика.'
   }
   return {
+    operations,
     enabled,
     allowed: c.AUTONOMY_ENABLED,
     reason,

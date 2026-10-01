@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 mkdirSync('backups', { recursive: true, mode: 0o700 })
+mkdirSync('.health', { recursive: true, mode: 0o755 })
 
 if (existsSync('.env')) {
   console.log('.env уже существует; настройки сохранены.')

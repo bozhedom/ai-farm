@@ -4,3 +4,5 @@ services:
     image: ${FARM_IMAGE:?Set FARM_IMAGE to the uploaded application image}
   worker:
     image: ${FARM_IMAGE:?Set FARM_IMAGE to the uploaded application image}
+  observer:
+    image: ${FARM_IMAGE:?Set FARM_IMAGE to the uploaded application image}

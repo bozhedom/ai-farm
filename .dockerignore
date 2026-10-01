@@ -11,3 +11,4 @@ backups
 test-results
 .playwright-cli
 .secrets
+.health

@@ -115,6 +115,7 @@ async function control(action: string, template?: Template) {
         <NuxtLink to="/catalog">Открыть витрину ↗</NuxtLink>
       </div>
       <DashboardAutonomy v-if="view === 'overview'" :busy="busy" @control="control" />
+      <DashboardOperations v-if="view === 'overview'" :operations="d.autonomy.operations" />
       <LiveActivity
         v-if="view === 'overview' || view === 'hypotheses'"
         :busy="busy"
