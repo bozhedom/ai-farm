@@ -73,6 +73,8 @@ export const labels: Record<string, string> = {
 export function errorText(error: any) {
   const code = error?.data?.statusMessage || error?.statusMessage || ''
   const errors: Record<string, string> = {
+    SCHEDULE_DISABLED_ON_SERVER:
+      'Расписание отключено на сервере по решению владельца. Денежные лимиты сохраняются.',
     RESEARCH_PAUSED: 'Сначала возобновите работу системы.',
     RESEARCH_WINDOW_CLOSED: 'Окно исследований закрыто. Откройте новое окно наблюдения.',
     LOGIN_FAILED: 'Неверный пароль.',

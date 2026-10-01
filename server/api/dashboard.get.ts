@@ -5,6 +5,7 @@ import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
 import { recipes } from '../../core/templates'
 import { templateSchema } from '../../core/policy'
+import { autonomyStatus, type AutonomyState } from '../../core/autonomy'
 export default defineEventHandler(async () => {
   const [
     state,
@@ -19,7 +20,7 @@ export default defineEventHandler(async () => {
     toolCalls,
     workload,
   ] = await Promise.all([
-    query('SELECT * FROM system_state WHERE id=true'),
+    query<AutonomyState>('SELECT * FROM system_state WHERE id=true'),
     query(`SELECT s.*,count(o.id) FILTER(WHERE o.status='delivered')::int AS test_delivered FROM strategies s
       LEFT JOIN orders o ON o.strategy_id=s.id GROUP BY s.id ORDER BY s.status,s.created_at,s.id`),
     query(`SELECT h.*,v.version AS released_version,v.product_id AS released_product_id,
@@ -52,6 +53,7 @@ export default defineEventHandler(async () => {
     ),
   ])
   const c = config()
+  const autonomy = await autonomyStatus(state[0]!, budget)
   return {
     state: state[0],
     strategies,
@@ -65,6 +67,7 @@ export default defineEventHandler(async () => {
     audit,
     evaluations,
     budget,
+    autonomy,
     workload: workload[0],
     toolCalls: toolCalls.map(({ output, ...call }) => ({
       ...call,
@@ -84,9 +87,7 @@ export default defineEventHandler(async () => {
           : null,
     })),
     serverTime: new Date().toISOString(),
-    nextResearchAt: new Date(
-      Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1),
-    ).toISOString(),
+    nextResearchAt: autonomy.nextAt,
     config: {
       modelProvider: c.MODEL_PROVIDER,
       model:
@@ -101,7 +102,7 @@ export default defineEventHandler(async () => {
       paymentMode: c.PAYMENT_MODE,
       monthlyLimit: c.MONTHLY_BUDGET_KOPECKS,
       dailyLimit: c.DAILY_BUDGET_KOPECKS,
-      autonomyEnabled: c.AUTONOMY_ENABLED,
+      autonomyEnabled: autonomy.enabled,
       openaiTotalLimitMicrousd: c.OPENAI_TOTAL_BUDGET_MICROUSD,
     },
     realRevenueKopecks: 0,

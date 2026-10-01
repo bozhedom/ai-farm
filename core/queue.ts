@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { templateSchema, type Template } from './policy'
+import { config } from './config'
 
 export type Job = {
   id: string
@@ -25,13 +26,18 @@ export async function enqueue(
 }
 export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
   return transaction(async (db) => {
+    // Serialize research claims across workers, including a manual run racing the scheduler.
+    if (kinds.includes('research'))
+      await query('SELECT id FROM system_state WHERE id=true FOR UPDATE', [], db)
     const [row] = await query<Job>(
       `SELECT j.* FROM jobs j CROSS JOIN system_state s
       WHERE j.kind=ANY($1) AND j.status='queued' AND j.run_after<=now() AND j.attempts<j.max_attempts
       AND (j.kind='evaluate' OR (j.kind='research' AND s.mode='running' AND s.research_enabled) OR (j.kind='fulfill' AND s.mode<>'emergency_stop'))
+      AND (j.kind<>'research' OR NOT EXISTS (SELECT 1 FROM jobs active WHERE active.kind='research' AND active.status='running'))
+      AND (j.kind<>'research' OR j.dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' OR ($2 AND s.schedule_enabled))
       ORDER BY CASE j.kind WHEN 'fulfill' THEN 0 ELSE 1 END,j.created_at
       FOR UPDATE OF j SKIP LOCKED LIMIT 1`,
-      [kinds],
+      [kinds, config().AUTONOMY_ENABLED],
       db,
     )
     if (!row) return
@@ -53,8 +59,10 @@ export async function requestResearch(template?: Template) {
     if (state?.mode !== 'running') throw new Error('RESEARCH_PAUSED')
     if (!state.research_enabled) throw new Error('RESEARCH_WINDOW_CLOSED')
     const [active] = await query(
-      "SELECT id,status FROM jobs WHERE kind='research' AND status IN ('queued','running') ORDER BY created_at LIMIT 1",
-      [],
+      `SELECT id,status FROM jobs WHERE kind='research' AND status IN ('queued','running')
+       AND (status='running' OR dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' OR $1)
+       ORDER BY created_at LIMIT 1`,
+      [config().AUTONOMY_ENABLED && state.schedule_enabled],
       db,
     )
     if (active) return { id: active.id as string, status: active.status as string, reused: true }

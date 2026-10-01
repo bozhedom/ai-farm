@@ -465,13 +465,10 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
         <div class="next-run">
           <span>Следующий запуск по расписанию</span
           ><strong>{{
-            d.config.autonomyEnabled && d.state.mode === 'running' && d.state.research_enabled
-              ? dateTime(d.nextResearchAt)
-              : 'Расписание приостановлено'
+            !failure && d.nextResearchAt ? dateTime(d.nextResearchAt) : 'Не назначен'
           }}</strong>
           <p>
-            Новое исследование можно запустить сразу после завершения текущего. Лимиты расходов
-            сохраняются.
+            {{ d.autonomy.reason }}
           </p>
         </div>
       </aside>

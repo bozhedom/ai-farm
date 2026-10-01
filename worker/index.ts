@@ -2,7 +2,6 @@ import { config } from '../core/config'
 import { audit, pool, query } from '../core/db'
 import {
   claimJob,
-  enqueue,
   finishJob,
   heartbeatJob,
   recoverJobs,
@@ -12,6 +11,7 @@ import {
 import { runJob } from '../core/jobs/run'
 import { reconcilePayments } from '../core/payments'
 import { localProviderReadiness } from '../core/providers/readiness'
+import { scheduleWork } from '../core/autonomy'
 
 let stopping = false
 let researchBusy = false
@@ -64,7 +64,6 @@ await audit(
 )
 while (!stopping) {
   try {
-    await query('UPDATE system_state SET worker_heartbeat=now() WHERE id=true')
     await recoverJobs()
     await expireResearchSlots(new Date().toISOString().slice(0, 10))
     if (!paymentsBusy) {
@@ -79,13 +78,7 @@ while (!stopping) {
         })
       running.add(paymentTask)
     }
-    if (config().AUTONOMY_ENABLED) {
-      const day = new Date().toISOString().slice(0, 10)
-      const week = Math.floor(Date.now() / (7 * 86400000))
-      const [state] = await query('SELECT research_enabled FROM system_state WHERE id=true')
-      if (state?.research_enabled) await enqueue('research', `research:${day}`)
-      await enqueue('evaluate', `evaluate:${week}`)
-    }
+    await scheduleWork()
     const ready = await localProviderReadiness()
     const unavailable = [!ready.model && 'модель', !ready.search && 'поиск']
       .filter(Boolean)
@@ -103,10 +96,17 @@ while (!stopping) {
       const job = await claimJob(['fulfill'])
       if (job) launch(job, 'orders')
     }
-    if (!researchBusy && ready.model && ready.search) {
-      const job = await claimJob(['research', 'evaluate'])
+    if (!researchBusy) {
+      // Financial HOLD/window expiry needs neither a model nor a working search provider.
+      const job =
+        (await claimJob(['evaluate'])) ||
+        (ready.model && ready.search ? await claimJob(['research']) : undefined)
       if (job) launch(job, 'research')
     }
+    await query(
+      'UPDATE system_state SET worker_heartbeat=now(),provider_readiness=$1 WHERE id=true',
+      [{ ...ready, checkedAt: new Date().toISOString() }],
+    )
   } catch {
     // Never log provider URLs, request bodies or secrets.
     console.error('WORKER_TICK_FAILED')

@@ -27,6 +27,7 @@ import { attemptLogin, validSession, digest } from '../../core/auth'
 import { reportUsage } from '../../core/activity'
 import { productHistory } from '../../core/products'
 import { recipes } from '../../core/templates'
+import { scheduleWork, setSchedule, autonomyStatus, type AutonomyState } from '../../core/autonomy'
 
 const input = 'Керамическая кружка 350 мл. Белая глазурь, ручная работа. Мыть вручную.'
 beforeAll(async () => {
@@ -260,6 +261,7 @@ describe('durable autonomous pipeline', () => {
     expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(5)
   })
   it('reuses scheduled research and respects pause, emergency stop and the closed window', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
     const scheduled = await enqueue('research', 'research:2026-09-24')
     expect(await requestResearch()).toMatchObject({ id: scheduled.id, reused: true })
     for (const mode of ['paused', 'emergency_stop']) {
@@ -358,6 +360,7 @@ describe('durable autonomous pipeline', () => {
     ).toHaveLength(2)
   })
   it('skips expired daily research slots instead of spending on a backlog after pause', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
     const old = await enqueue('research', 'research:2026-09-22')
     await reserveBudget(`research:${old.id}`, 'research')
     const fresh = await enqueue('research', 'research:2026-09-24')
@@ -373,6 +376,86 @@ describe('durable autonomous pipeline', () => {
         ])
       )[0]!.status,
     ).toBe('closed')
+  })
+  it('schedules one daily run across concurrent workers, without a paid retry or pause backlog', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
+    const now = new Date()
+    await Promise.all(Array.from({ length: 6 }, () => scheduleWork(now)))
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(1)
+    expect(await query("SELECT id FROM audit_events WHERE kind='research_scheduled'")).toHaveLength(
+      1,
+    )
+    const claims = await Promise.all([claimJob(['research']), claimJob(['research'])])
+    expect(claims.filter(Boolean)).toHaveLength(1)
+    await finishJob(claims.find(Boolean)!, new Error('OPENAI_BUDGET_BLOCKED'))
+    await scheduleWork(now)
+    expect(await claimJob(['research'])).toBeUndefined()
+    const tomorrow = new Date(now.getTime() + 86400000)
+    await query("UPDATE system_state SET mode='paused'")
+    await scheduleWork(tomorrow)
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(1)
+    await query("UPDATE system_state SET mode='running'")
+    await scheduleWork(tomorrow)
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(2)
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(0)
+  })
+  it('keeps disabled scheduled jobs idle while allowing manual work and free weekly evaluation', async () => {
+    await expect(setSchedule(true)).rejects.toThrow('SCHEDULE_DISABLED_ON_SERVER')
+    await scheduleWork()
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(0)
+    const suspended = await enqueue('research', `research:${new Date().toISOString().slice(0, 10)}`)
+    expect(await claimJob(['research'])).toBeUndefined()
+    const manual = await requestResearch('social')
+    expect(manual.id).not.toBe(suspended.id)
+    expect((await claimJob(['research']))?.id).toBe(manual.id)
+    expect(await claimJob(['evaluate'])).toBeDefined()
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(0)
+  })
+  it('persists the owner schedule switch and avoids overlapping manual and scheduled research', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
+    await setSchedule(false)
+    await scheduleWork()
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(0)
+    await setSchedule(true)
+    const manual = await requestResearch()
+    await scheduleWork()
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(1)
+    const job = (await claimJob(['research']))!
+    expect(job.id).toBe(manual.id)
+    await enqueue('research', 'another-queued-run')
+    expect(await claimJob(['research'])).toBeUndefined()
+    await finishJob(job)
+    expect(await claimJob(['research'])).toBeDefined()
+  })
+  it('reports no next run while disabled, offline or out of budget and exposes the actual UTC slot', async () => {
+    const now = new Date()
+    await query('UPDATE system_state SET worker_heartbeat=$1,provider_readiness=$2', [
+      now,
+      { model: true, search: true, checkedAt: now.toISOString() },
+    ])
+    const [state] = await query<AutonomyState>('SELECT * FROM system_state')
+    const budget = await budgetSummary()
+    expect(await autonomyStatus(state!, budget, now)).toMatchObject({
+      enabled: false,
+      nextAt: null,
+      workerAlive: true,
+    })
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
+    expect((await autonomyStatus(state!, budget, now)).nextAt).toBe(now.toISOString())
+    await scheduleWork(now)
+    const job = (await claimJob(['research']))!
+    await finishJob(job)
+    const status = await autonomyStatus(state!, budget, now)
+    expect(status.lastScheduledRun).toMatchObject({ id: job.id, status: 'done' })
+    expect(status.nextAt).toBe(
+      new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
+      ).toISOString(),
+    )
+    expect(
+      (await autonomyStatus({ ...state!, worker_heartbeat: null }, budget, now)).nextAt,
+    ).toBeNull()
+    expect((await autonomyStatus(state!, { ...budget, daySpent: 999999 }, now)).nextAt).toBeNull()
   })
   it('closes an inconclusive research window without abandoning paid orders', async () => {
     const o = await order()
