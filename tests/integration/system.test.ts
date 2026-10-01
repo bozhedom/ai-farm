@@ -742,6 +742,11 @@ describe('durable autonomous pipeline', () => {
     expect(detail.steps.every((step) => !!step.at)).toBe(true)
     expect(detail.paymentAttempts).toHaveLength(1)
     expect(detail.progress.title).toBe('Результат выдан')
+    // Old delivered orders may predate the call timestamps and job association.
+    await query('UPDATE tool_calls SET job_id=null,finished_at=null WHERE job_id=$1', [job.id])
+    const historic = await orderDetails(o.id)
+    expect(historic.steps.every((step) => step.done)).toBe(true)
+    expect(historic.steps[2]!.at).toBeNull()
   })
   it('waits for invoice confirmations and recovers an abandoned payment lease', async () => {
     const o = await sepoliaOrder()

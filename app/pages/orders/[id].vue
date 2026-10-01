@@ -113,13 +113,19 @@ function download() {
           Повтор разрешён не раньше {{ dateTime(order.job.run_after) }}.
         </p>
         <ol class="order-steps">
-          <li v-for="(step, index) in order.steps" :key="step.label" :class="{ complete: step.at }">
+          <li
+            v-for="(step, index) in order.steps"
+            :key="step.label"
+            :class="{ complete: step.done }"
+          >
             <span class="step-number" aria-hidden="true">{{
-              step.at ? '✓' : Number(index) + 1
+              step.done ? '✓' : Number(index) + 1
             }}</span>
             <div>
               <strong>{{ step.label }}</strong
-              ><span>{{ step.at ? dateTime(step.at) : 'Не выполнено' }}</span>
+              ><span>{{
+                step.at ? dateTime(step.at) : step.done ? 'Время не сохранено' : 'Не выполнено'
+              }}</span>
             </div>
           </li>
         </ol>

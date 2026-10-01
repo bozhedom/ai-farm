@@ -99,18 +99,25 @@ export async function orderDetails(id: string) {
         [job.id],
       )
     : []
+  const generated = calls.find((c) => c.role === 'Исполнитель' && c.status === 'done')
+  const delivered = order.status === 'delivered'
   return {
     ...order,
     progress: orderProgress(order, job, states[0] || {}),
     job,
     steps: [
-      { label: 'Заказ создан', at: order.created_at },
-      { label: 'Тестовая оплата подтверждена', at: order.paid_at },
+      { label: 'Заказ создан', at: order.created_at, done: true },
+      {
+        label: 'Тестовая оплата подтверждена',
+        at: order.paid_at,
+        done: !!order.paid_at || delivered,
+      },
       {
         label: 'Текст подготовлен',
-        at: calls.find((c) => c.role === 'Исполнитель' && c.status === 'done')?.finished_at || null,
+        at: generated?.finished_at || null,
+        done: !!generated || delivered,
       },
-      { label: 'Проверка пройдена и результат выдан', at: order.delivered_at },
+      { label: 'Проверка пройдена и результат выдан', at: order.delivered_at, done: delivered },
     ],
     paymentAttempts: attempts.map((a) => ({
       ...a,
