@@ -1,60 +1,53 @@
 import { describe, expect, it } from 'vitest'
-import { verifySepoliaPayment, type Invoice, type Rpc } from '../../core/payments'
-const hash = '0x' + 'a'.repeat(64),
-  blockHash = '0x' + 'b'.repeat(64),
-  receiver = '0x' + 'c'.repeat(40)
-const invoice: Invoice = {
-  receiver,
-  amount_wei: '100000000000001',
-  created_at: '2026-09-24T00:00:00Z',
-  expires_at: '2026-09-24T01:00:00Z',
-}
-function fixture(overrides: Record<string, any> = {}): Rpc {
-  const values: Record<string, any> = {
-    eth_chainId: '0xaa36a7',
-    eth_getTransactionByHash: {
-      hash,
-      to: receiver,
-      value: '0x' + BigInt(invoice.amount_wei).toString(16),
-      input: '0x',
-      blockHash,
-      blockNumber: '0x64',
-      chainId: '0xaa36a7',
-    },
-    eth_getTransactionReceipt: {
-      transactionHash: hash,
-      to: receiver,
-      status: '0x1',
-      blockHash,
-      blockNumber: '0x64',
-    },
-    eth_getBlockByNumber: {
-      hash: blockHash,
-      number: '0x64',
-      timestamp: '0x' + Math.floor(new Date('2026-09-24T00:10:00Z').getTime() / 1000).toString(16),
-    },
-    eth_blockNumber: '0x66',
-  }
-  for (const [key, value] of Object.entries(overrides))
-    values[key] = value && typeof value === 'object' ? { ...values[key], ...value } : value
-  return async (method) => values[method]
-}
+import { verifySepoliaPayment } from '../../core/payments'
+import {
+  paymentHash as hash,
+  paymentReceiver as receiver,
+  paymentBlockHash as blockHash,
+  paymentInvoice as invoice,
+  paymentRpc as fixture,
+} from '../fixtures/sepolia'
 describe('Sepolia verification', () => {
   it('accepts only the matching canonical successful transfer', async () =>
     expect(await verifySepoliaPayment(invoice, hash, fixture(), 3)).toEqual({
       confirmed: true,
       confirmations: 3,
+      proof: {
+        chainId: 11155111,
+        hash,
+        receiver,
+        amountWei: invoice.amount_wei,
+        blockHash,
+        blockNumber: '100',
+        blockTime: '2026-09-24T00:00:00.000Z',
+        confirmations: 3,
+      },
     }))
+  it('uses the invoice confirmation threshold and refuses unsafe thresholds', async () => {
+    expect(await verifySepoliaPayment(invoice, hash, fixture(), 5)).toMatchObject({
+      confirmed: false,
+      confirmations: 3,
+    })
+    await expect(verifySepoliaPayment(invoice, hash, fixture(), 2)).rejects.toThrow(
+      'INVALID_CONFIRMATION_LIMIT',
+    )
+  })
   it('waits for confirmations', async () =>
     expect(
       await verifySepoliaPayment(invoice, hash, fixture({ eth_blockNumber: '0x65' }), 3),
-    ).toEqual({ confirmed: false, confirmations: 2 }))
+    ).toMatchObject({ confirmed: false, confirmations: 2, proof: { hash, confirmations: 2 } }))
   it('waits for a mined receipt', async () =>
     expect(
       await verifySepoliaPayment(invoice, hash, fixture({ eth_getTransactionReceipt: null }), 3),
-    ).toEqual({ confirmed: false, confirmations: 0 }))
+    ).toEqual({ confirmed: false, confirmations: 0, proof: null }))
   it.each([
     [{ eth_chainId: '0x1' }, 'WRONG_CHAIN'],
+    [{ eth_chainId: 11155111 }, 'RPC_INVALID_RESPONSE'],
+    [{ eth_getTransactionReceipt: { status: null } }, 'RPC_INVALID_RESPONSE'],
+    [{ eth_getTransactionByHash: { value: '0x00' } }, 'RPC_INVALID_RESPONSE'],
+    [{ eth_getTransactionReceipt: { blockNumber: false } }, 'RPC_INVALID_RESPONSE'],
+    [{ eth_getBlockByNumber: { timestamp: '2026' } }, 'RPC_INVALID_RESPONSE'],
+    [{ eth_blockNumber: '0x1' }, 'INVALID_BLOCK_HEIGHT'],
     [{ eth_getTransactionByHash: { chainId: '0x1' } }, 'WRONG_CHAIN'],
     [{ eth_getTransactionByHash: { to: '0x' + 'd'.repeat(40) } }, 'WRONG_RECEIVER'],
     [{ eth_getTransactionByHash: { value: '0x1' } }, 'WRONG_AMOUNT'],

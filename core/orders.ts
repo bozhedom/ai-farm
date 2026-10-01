@@ -3,6 +3,7 @@ import { config } from './config'
 import { audit, query, transaction } from './db'
 import { reserveBudget } from './budget'
 import { productSchema, validateInput } from './policy'
+import { orderProgress, paymentErrorText } from './order-progress'
 
 export async function createOrder(productId: string, input: string, requestKey: string) {
   validateInput(input)
@@ -41,8 +42,8 @@ export async function createOrder(productId: string, input: string, requestKey: 
       db,
     )
     await query(
-      `INSERT INTO orders(id,request_key,product_id,product_snapshot,strategy_id,strategy_snapshot,generation,input,payment_mode,amount_wei,receiver,reservation_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      `INSERT INTO orders(id,request_key,product_id,product_snapshot,strategy_id,strategy_snapshot,generation,input,payment_mode,amount_wei,receiver,reservation_id,required_confirmations)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         id,
         requestKey,
@@ -61,6 +62,7 @@ export async function createOrder(productId: string, input: string, requestKey: 
         amount!.wei,
         config().PAYMENT_MODE === 'sepolia' ? config().SEPOLIA_RECEIVER.toLowerCase() : 'sandbox',
         reservationId,
+        config().SEPOLIA_CONFIRMATIONS,
       ],
       db,
     )
@@ -72,4 +74,48 @@ export async function createOrder(productId: string, input: string, requestKey: 
     )
     return { id }
   })
+}
+
+export async function orderDetails(id: string) {
+  const [order] = await query('SELECT * FROM orders WHERE id=$1', [id])
+  if (!order) throw new Error('ORDER_NOT_FOUND')
+  const [jobs, states, attempts] = await Promise.all([
+    query(
+      'SELECT id,status,attempts,max_attempts,run_after,error_code,started_at,finished_at FROM jobs WHERE dedupe_key=$1',
+      [`fulfill:${id}`],
+    ),
+    query(
+      'SELECT mode,worker_heartbeat,payment_heartbeat,provider_readiness FROM system_state WHERE id=true',
+    ),
+    query(
+      'SELECT tx_hash,submitted_at,checked_at,confirmations,error_code,confirmed_at FROM payment_attempts WHERE order_id=$1 ORDER BY submitted_at DESC LIMIT 20',
+      [id],
+    ),
+  ])
+  const job = jobs[0] || null
+  const calls = job
+    ? await query(
+        'SELECT role,status,finished_at FROM tool_calls WHERE job_id=$1 ORDER BY created_at',
+        [job.id],
+      )
+    : []
+  return {
+    ...order,
+    progress: orderProgress(order, job, states[0] || {}),
+    job,
+    steps: [
+      { label: 'Заказ создан', at: order.created_at },
+      { label: 'Тестовая оплата подтверждена', at: order.paid_at },
+      {
+        label: 'Текст подготовлен',
+        at: calls.find((c) => c.role === 'Исполнитель' && c.status === 'done')?.finished_at || null,
+      },
+      { label: 'Проверка пройдена и результат выдан', at: order.delivered_at },
+    ],
+    paymentAttempts: attempts.map((a) => ({
+      ...a,
+      active: a.tx_hash === order.tx_hash,
+      errorText: paymentErrorText(a.error_code),
+    })),
+  }
 }

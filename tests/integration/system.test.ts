@@ -15,13 +15,10 @@ import {
 import { runJob } from '../../core/jobs/run'
 import type { Template } from '../../core/policy'
 import * as providers from '../../core/providers'
-import { createOrder } from '../../core/orders'
-import {
-  sandboxPayment,
-  submitTransaction,
-  confirmPayment,
-  reconcilePayments,
-} from '../../core/payments'
+import { createOrder, orderDetails } from '../../core/orders'
+import { paymentHash, paymentReceiver, paymentRpc } from '../fixtures/sepolia'
+import type { Invoice } from '../../core/payments'
+import { sandboxPayment, submitTransaction, reconcilePayments } from '../../core/payments'
 import { simulateEvolution, evaluateWeek } from '../../core/evolution'
 import { attemptLogin, validSession, digest } from '../../core/auth'
 import { reportUsage } from '../../core/activity'
@@ -687,14 +684,147 @@ describe('durable autonomous pipeline', () => {
     const products = await research()
     const a = await createOrder(products[0]!.id, input, randomUUID()),
       b = await createOrder(products[0]!.id, input, randomUUID())
-    await expect(confirmPayment(a.id, 'test', 3, 'sepolia')).rejects.toThrow(
-      'PAYMENT_MODE_MISMATCH',
+    await expect(submitTransaction(a.id, '0x' + 'a'.repeat(64))).rejects.toThrow(
+      'ORDER_NOT_PAYABLE',
     )
     await query("UPDATE orders SET payment_mode='sepolia' WHERE id=ANY($1::uuid[])", [[a.id, b.id]])
     const hash = '0x' + 'a'.repeat(64)
     await submitTransaction(a.id, hash)
-    await expect(submitTransaction(b.id, hash)).rejects.toMatchObject({ code: '23505' })
+    await expect(submitTransaction(b.id, hash)).rejects.toThrow('TX_ALREADY_USED')
+    await submitTransaction(a.id, '0x' + 'b'.repeat(64))
+    await expect(submitTransaction(b.id, hash.toUpperCase().replace('0X', '0x'))).rejects.toThrow(
+      'TX_ALREADY_USED',
+    )
+    expect(
+      await query('SELECT tx_hash FROM payment_attempts WHERE order_id=$1', [a.id]),
+    ).toHaveLength(2)
     await expect(sandboxPayment(a.id)).rejects.toThrow('PAYMENT_MODE_MISMATCH')
+  })
+  async function sepoliaOrder() {
+    const o = await order()
+    await query("UPDATE orders SET payment_mode='sepolia',receiver=$2 WHERE id=$1", [
+      o.id,
+      paymentReceiver,
+    ])
+    await submitTransaction(o.id, paymentHash)
+    return (await query('SELECT * FROM orders WHERE id=$1', [o.id]))[0]!
+  }
+  it('confirms one canonical payment atomically across workers and retains evidence', async () => {
+    const o = await sepoliaOrder()
+    const call = vi.fn(paymentRpc({}, o as Invoice))
+    await Promise.all([reconcilePayments(call), reconcilePayments(call)])
+    expect(call.mock.calls.filter(([method]) => method === 'eth_chainId')).toHaveLength(1)
+    expect((await query('SELECT * FROM orders WHERE id=$1', [o.id]))[0]).toMatchObject({
+      status: 'paid',
+      confirmations: 3,
+      payment_proof: { hash: paymentHash, chainId: 11155111, amountWei: o.amount_wei },
+      payment_lease_token: null,
+    })
+    expect(
+      (await query('SELECT * FROM payment_attempts WHERE order_id=$1', [o.id]))[0],
+    ).toMatchObject({
+      confirmations: 3,
+      proof: { hash: paymentHash, blockNumber: '100' },
+      confirmed_at: expect.any(Date),
+    })
+    await reconcilePayments(call)
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toHaveLength(1)
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='test_payment_confirmed'"),
+    ).toHaveLength(1)
+    const job = (await claimJob(['fulfill']))!
+    await runJob(job)
+    await finishJob(job)
+    expect((await query('SELECT status FROM orders WHERE id=$1', [o.id]))[0]!.status).toBe(
+      'delivered',
+    )
+    const detail = await orderDetails(o.id)
+    expect(detail.steps.every((step) => !!step.at)).toBe(true)
+    expect(detail.paymentAttempts).toHaveLength(1)
+    expect(detail.progress.title).toBe('Результат выдан')
+  })
+  it('waits for invoice confirmations and recovers an abandoned payment lease', async () => {
+    const o = await sepoliaOrder()
+    await query(
+      "UPDATE orders SET required_confirmations=5,payment_lease_token=$2,payment_locked_until=now()+interval '2 minutes' WHERE id=$1",
+      [o.id, randomUUID()],
+    )
+    const call = vi.fn(paymentRpc({}, o as Invoice))
+    await reconcilePayments(call)
+    expect(call).not.toHaveBeenCalled()
+    await query("UPDATE orders SET payment_locked_until=now()-interval '1 second' WHERE id=$1", [
+      o.id,
+    ])
+    await reconcilePayments(call)
+    expect((await query('SELECT status,confirmations FROM orders WHERE id=$1', [o.id]))[0]).toEqual(
+      { status: 'awaiting_payment', confirmations: 3 },
+    )
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toHaveLength(0)
+    await query("UPDATE orders SET last_payment_check=now()-interval '1 minute' WHERE id=$1", [
+      o.id,
+    ])
+    await reconcilePayments(paymentRpc({ eth_blockNumber: '0x68' }, o as Invoice))
+    expect((await query('SELECT status,confirmations FROM orders WHERE id=$1', [o.id]))[0]).toEqual(
+      { status: 'paid', confirmations: 5 },
+    )
+  })
+  it('ignores a stale verification after replacing the transaction hash', async () => {
+    const o = await sepoliaOrder()
+    let signalStarted!: () => void, releaseCall!: () => void
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      releaseCall = resolve
+    })
+    const fixture = paymentRpc({}, o as Invoice)
+    const pending = reconcilePayments(async (method, params) => {
+      if (method === 'eth_chainId') {
+        signalStarted()
+        await released
+      }
+      return fixture(method, params)
+    })
+    await started
+    try {
+      await submitTransaction(o.id, '0x' + 'd'.repeat(64))
+    } finally {
+      releaseCall()
+    }
+    await pending
+    expect(
+      (await query('SELECT status,confirmations,payment_proof FROM orders WHERE id=$1', [o.id]))[0],
+    ).toEqual({ status: 'awaiting_payment', confirmations: 0, payment_proof: null })
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toHaveLength(0)
+    expect(
+      (await query('SELECT checked_at FROM payment_attempts WHERE tx_hash=$1', [paymentHash]))[0]!
+        .checked_at,
+    ).toBeNull()
+  })
+  it('keeps rejected payment details and bounds the final verification window', async () => {
+    const o = await sepoliaOrder()
+    await reconcilePayments(
+      paymentRpc({ eth_getTransactionByHash: { value: '0x1' } }, o as Invoice),
+    )
+    expect((await query('SELECT status,payment_error FROM orders WHERE id=$1', [o.id]))[0]).toEqual(
+      { status: 'awaiting_payment', payment_error: 'WRONG_AMOUNT' },
+    )
+    expect(
+      (await query('SELECT error_code FROM payment_attempts WHERE order_id=$1', [o.id]))[0]!
+        .error_code,
+    ).toBe('WRONG_AMOUNT')
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toHaveLength(0)
+    await query("UPDATE orders SET expires_at=now()-interval '25 hours' WHERE id=$1", [o.id])
+    const call = vi.fn(paymentRpc({}, o as Invoice))
+    await reconcilePayments(call)
+    expect(call).not.toHaveBeenCalled()
+    expect((await query('SELECT status FROM orders WHERE id=$1', [o.id]))[0]!.status).toBe(
+      'manual_review',
+    )
+    expect(
+      (await query('SELECT status FROM budget_reservations WHERE id=$1', [o.reservation_id]))[0]!
+        .status,
+    ).toBe('closed')
   })
   it('expires unpaid invoices and releases their reservation', async () => {
     const o = await order()

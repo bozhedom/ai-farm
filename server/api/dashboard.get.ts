@@ -31,7 +31,7 @@ export default defineEventHandler(async () => {
       ) v ON true ORDER BY h.created_at DESC LIMIT 30`),
     query('SELECT * FROM products ORDER BY created_at'),
     query(
-      'SELECT id,status,payment_mode,amount_wei,created_at,product_snapshot,strategy_snapshot FROM orders ORDER BY created_at DESC LIMIT 30',
+      `SELECT id,status,payment_mode,amount_wei,created_at,product_snapshot,strategy_snapshot FROM orders ORDER BY CASE WHEN status='manual_review' THEN 0 WHEN status IN ('paid','running') THEN 1 WHEN status='awaiting_payment' THEN 2 ELSE 3 END,created_at DESC LIMIT 30`,
     ),
     query(
       "SELECT id,kind,status,attempts,error_code,created_at,started_at,finished_at,locked_until,payload FROM jobs ORDER BY (status='running') DESC,created_at DESC LIMIT 20",
