@@ -6,7 +6,7 @@ import {
   outputSchema,
   reviewSchema,
   templateSchema,
-  validateContent,
+  validateOutput,
   validateInput,
 } from '../policy'
 import type { Job } from '../queue'
@@ -32,7 +32,18 @@ export async function fulfill(job: Job) {
     schema: outputSchema,
     demoValue: { text: demoText },
   })
-  validateContent(output.text)
+  try {
+    validateOutput(template, output.text)
+  } catch (error) {
+    await query('UPDATE orders SET review=$2 WHERE id=$1', [
+      order.id,
+      {
+        verdict: 'BLOCKED',
+        reason: 'Ответ не прошёл серверную проверку формата или допустимого содержимого.',
+      },
+    ])
+    throw error
+  }
   const review = await model({
     role: 'Проверяющий',
     key: `${job.id}:verify`,
@@ -44,7 +55,10 @@ export async function fulfill(job: Job) {
       reason: 'Демонстрационный текст содержит исходный материал и явно обозначенные ограничения.',
     },
   })
-  if (review.verdict !== 'PASS') throw new Error('OUTPUT_REVIEW_REQUIRED')
+  if (review.verdict !== 'PASS') {
+    await query('UPDATE orders SET review=$2 WHERE id=$1', [order.id, review])
+    throw new Error('OUTPUT_REVIEW_REQUIRED')
+  }
   await transaction(async (db) => {
     const [state] = await query('SELECT mode FROM system_state WHERE id=true FOR UPDATE', [], db)
     if (state?.mode === 'emergency_stop') throw new Error('STOPPED')

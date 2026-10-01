@@ -13,7 +13,7 @@ import {
   researchSchema,
   reviewSchema,
   templates,
-  validateContent,
+  validateOutput,
   validateEvidence,
   validateInput,
   validateProduct,
@@ -210,7 +210,15 @@ export async function research(job: Job) {
           schema: outputSchema,
           demoValue: { text: demoResult(template, fixture) },
         })
-        validateContent(sample.text)
+        checks = {
+          normal: 'BLOCKED',
+          incomplete: 'BLOCKED',
+          injection: 'BLOCKED',
+          checkedAt: new Date().toISOString(),
+          input: fixture,
+          sample: sample.text,
+        }
+        validateOutput(template, sample.text)
         const quality = await model({
           role: 'Проверяющий',
           key: `${job.id}:${template}:fixture-review`,
@@ -225,14 +233,12 @@ export async function research(job: Job) {
         if (quality.verdict !== 'PASS')
           blockedReason = `Контрольный пример отклонён (${quality.verdict}): ${quality.reason}`
         checks = {
+          ...checks,
           normal: quality.verdict,
-          incomplete: 'BLOCKED',
-          injection: 'BLOCKED',
-          checkedAt: new Date().toISOString(),
-          sample: sample.text,
+          reason: quality.reason,
         }
       } catch (error) {
-        if (error instanceof Error && /POLICY|TEMPLATE|UNTRUSTED/.test(error.message))
+        if (error instanceof Error && /POLICY|TEMPLATE|UNTRUSTED|OUTPUT_FORMAT/.test(error.message))
           blockedReason = error.message
         else throw error
       }

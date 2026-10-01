@@ -133,6 +133,7 @@ function download() {
           <p v-else-if="order.status === 'manual_review'" class="error-text">
             Автоматическая обработка остановлена. Причина сохранена в журнале. Это тестовый заказ;
             реального списания не было.
+            <span v-if="order.review?.reason">{{ order.review.reason }}</span>
           </p>
           <p v-else class="muted">Срок счёта истёк. Создайте новый заказ в витрине.</p>
         </section>

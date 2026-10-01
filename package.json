@@ -20,7 +20,8 @@
     "format:check": "prettier --check .",
     "postinstall": "nuxt prepare",
     "wallet:test": "tsx scripts/test-wallet.ts --check-rpc",
-    "local:setup": "node scripts/local-setup.mjs"
+    "local:setup": "node scripts/local-setup.mjs",
+    "quality:local": "node --env-file=.env --import tsx scripts/check-quality.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.3.0",

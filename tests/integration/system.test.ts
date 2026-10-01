@@ -25,6 +25,8 @@ import {
 import { simulateEvolution, evaluateWeek } from '../../core/evolution'
 import { attemptLogin, validSession, digest } from '../../core/auth'
 import { reportUsage } from '../../core/activity'
+import { productHistory } from '../../core/products'
+import { recipes } from '../../core/templates'
 
 const input = 'Керамическая кружка 350 мл. Белая глазурь, ручная работа. Мыть вручную.'
 beforeAll(async () => {
@@ -343,6 +345,9 @@ describe('durable autonomous pipeline', () => {
     expect(
       await query('SELECT version FROM product_versions WHERE product_id=$1', [product!.id]),
     ).toHaveLength(2)
+    expect((await productHistory(product!.id)).versions.map((v) => v.version)).toEqual([2, 1])
+    expect((await productHistory(product!.id, 2)).versions.map((v) => v.version)).toEqual([1])
+    await expect(productHistory(randomUUID())).rejects.toThrow('PRODUCT_NOT_FOUND')
     expect(
       (await query('SELECT product_snapshot FROM orders WHERE id=$1', [o.id]))[0]!.product_snapshot
         .version,
@@ -466,12 +471,57 @@ describe('durable autonomous pipeline', () => {
     const job = (await claimJob(['fulfill']))!
     await expect(runJob(job)).rejects.toThrow('OUTPUT_REVIEW_REQUIRED')
     await finishJob(job, new Error('OUTPUT_REVIEW_REQUIRED'))
-    expect((await query('SELECT status,result FROM orders WHERE id=$1', [o.id]))[0]).toEqual({
-      status: 'manual_review',
-      result: null,
-    })
+    expect((await query('SELECT status,result,review FROM orders WHERE id=$1', [o.id]))[0]).toEqual(
+      {
+        status: 'manual_review',
+        result: null,
+        review: { verdict: 'BLOCKED', reason: 'В ответ добавлены неподтверждённые свойства.' },
+      },
+    )
     expect(await query("SELECT id FROM audit_events WHERE kind='order_delivered'")).toHaveLength(0)
     expect((await budgetSummary()).outstanding).toBe(0)
+  })
+  it('builds and fulfills all three server recipes through the same versioned pipeline', async () => {
+    for (const template of ['description', 'faq', 'social'] as const) {
+      await requestResearch(template)
+      const job = (await claimJob(['research']))!
+      await runJob(job)
+      await finishJob(job)
+      const [product] = await query('SELECT * FROM products WHERE template=$1', [template])
+      expect(product!.checks).toMatchObject({ input: recipes[template].fixture, normal: 'PASS' })
+      expect(product!.spec.promise).toBe(recipes[template].delivery)
+      const created = await createOrder(product!.id, recipes[template].fixture, randomUUID())
+      await sandboxPayment(created.id)
+      const delivery = (await claimJob(['fulfill']))!
+      await runJob(delivery)
+      await finishJob(delivery)
+      expect((await query('SELECT status FROM orders WHERE id=$1', [created.id]))[0]!.status).toBe(
+        'delivered',
+      )
+    }
+    expect(await query('SELECT id FROM products')).toHaveLength(3)
+    expect(await query('SELECT * FROM product_versions')).toHaveLength(3)
+    expect((await budgetSummary()).openaiSpentMicrousd).toBe(0)
+  })
+  it('blocks malformed social output before spending on QA or publishing a product', async () => {
+    const original = providers.model
+    const spy = vi
+      .spyOn(providers, 'model')
+      .mockImplementation(async (args: any) =>
+        args.role === 'Исполнитель'
+          ? { text: 'Один черновик вместо трёх. Исходные сведения сохранены.' }
+          : original(args),
+      )
+    await requestResearch('social')
+    const job = (await claimJob(['research']))!
+    await runJob(job)
+    await finishJob(job)
+    expect(await query('SELECT id FROM products')).toHaveLength(0)
+    expect((await query('SELECT status,critique FROM hypotheses'))[0]).toMatchObject({
+      status: 'rejected',
+      critique: { verdict: 'BLOCKED', reason: 'OUTPUT_FORMAT_REQUIRED' },
+    })
+    expect(spy.mock.calls.some(([args]) => args.role === 'Проверяющий')).toBe(false)
   })
   it('does not queue delivery for an unpaid order', async () => {
     const o = await order()

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { recipes } from './templates'
 
 export const POLICY = Object.freeze({
   version: 'v1',
@@ -81,7 +82,30 @@ export function validateProduct(value: unknown, expected: Template): ProductSpec
   const spec = productSchema.parse(value)
   if (spec.template !== expected) throw new Error('TEMPLATE_MISMATCH')
   validateContent(Object.values(spec).join(' '))
-  return spec
+  // The model proposes a niche, but the server defines what the service actually delivers.
+  // Its unedited proposal remains in tool_calls; unmeasured sales claims cannot become a contract.
+  return { ...spec, promise: recipes[expected].delivery }
+}
+export function validateOutput(template: Template, text: string) {
+  outputSchema.parse({ text })
+  validateContent(text)
+  if (template === 'description' && !/^[-*•]\s+\S/mu.test(text))
+    throw new Error('OUTPUT_FORMAT_REQUIRED')
+  if (template !== 'social') return
+  const headings = [
+    ...text.matchAll(
+      /^(?:#{1,3}\s*)?(?:\*\*)?(?:(?:Черновик|Пост|Публикация)\s+)?(\d+)[.)]\s+/gimu,
+    ),
+  ]
+  if (
+    headings.length !== 3 ||
+    headings.some(
+      (heading, i) =>
+        Number(heading[1]) !== i + 1 ||
+        text.slice(heading.index! + heading[0].length, headings[i + 1]?.index).trim().length < 10,
+    )
+  )
+    throw new Error('OUTPUT_FORMAT_REQUIRED')
 }
 export function validateEvidence(sources: string[], evidence: Evidence[], demo: boolean) {
   const allowed = new Set(evidence.map((e) => e.url))

@@ -84,22 +84,37 @@ async function order() {
             {{ p.is_demo ? 'ДЕМО-КОНФИГУРАЦИЯ' : 'СОБРАНО ИЗ ГИПОТЕЗЫ' }} · V{{ p.version }}
           </div>
           <h2>{{ p.spec.name }}</h2>
-          <p>{{ p.spec.promise }}</p>
+          <p>{{ p.delivery }}</p>
           <span class="product-audience">{{ p.spec.audience }}</span>
           <details v-if="p.checks?.sample" class="product-preview">
             <summary>Посмотреть контрольный результат</summary>
             <p>
               Проверка качества: {{ labels[p.checks.normal] }} · {{ dateTime(p.checks.checkedAt) }}
             </p>
+            <p v-if="p.checks.input">Исходный материал: {{ p.checks.input }}</p>
             <pre>{{ p.checks.sample }}</pre>
+            <p v-if="p.checks.reason">{{ p.checks.reason }}</p>
             <NuxtLink to="/?view=hypotheses">Гипотезы и источники ↗</NuxtLink>
           </details>
+          <ProductHistory :key="p.id + ':' + p.version" :product-id="p.id" />
           <div class="product-bottom">
             <div>
               <strong>≈ 0,0001 <small>TEST ETH</small></strong
               ><span>Учебная сумма · не деньги</span>
             </div>
-            <button class="button secondary small" @click="choose(p)">Попробовать →</button>
+            <button
+              class="button secondary small"
+              :disabled="p.status !== 'sandbox' || d.state.mode !== 'running'"
+              @click="choose(p)"
+            >
+              {{
+                p.status === 'archived'
+                  ? 'В архиве'
+                  : d.state.mode !== 'running'
+                    ? 'Приём заказов на паузе'
+                    : 'Попробовать →'
+              }}
+            </button>
           </div>
         </div>
       </article>

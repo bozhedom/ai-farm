@@ -1434,3 +1434,7 @@ footer {
     animation: none !important;
   }
 }
+.product-version {
+  padding: 16px 0;
+  border-top: 1px solid var(--line, #dce1da);
+}

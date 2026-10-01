@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { demoResult, demoSpecs } from '../../core/providers/demo'
 import { parseSearchXml } from '../../core/providers'
+import { recipes } from '../../core/templates'
+import { generationContext, reviewContext } from '../../core/jobs/text-context'
 import {
   outputSchema,
   validateContent,
   validateEvidence,
   validateInput,
   validateProduct,
+  validateOutput,
   safeSourceUrl,
 } from '../../core/policy'
 
@@ -31,6 +34,42 @@ describe('bounded product policy', () => {
   it('rejects executable product fields and mismatched template', () => {
     expect(() => validateProduct({ ...demoSpecs.faq, script: 'alert(1)' }, 'faq')).toThrow()
     expect(() => validateProduct(demoSpecs.faq, 'social')).toThrow('TEMPLATE_MISMATCH')
+  })
+  it('keeps unmeasured sales promises out of new products and legacy order prompts', () => {
+    const proposal = { ...demoSpecs.faq, promise: 'Уменьшим число отказов покупателей на 20%.' }
+    expect(validateProduct(proposal, 'faq').promise).toBe(recipes.faq.delivery)
+    for (const context of [
+      generationContext(proposal, 'Материал', 'Стиль'),
+      reviewContext(proposal, 'Материал', 'Ответ'),
+    ]) {
+      expect(context.formatPromise).toBe(recipes.faq.delivery)
+      expect(JSON.stringify(context)).not.toContain('20%')
+    }
+    expect(proposal.promise).toContain('20%')
+  })
+  it('requires three complete social drafts even if a model would approve another format', () => {
+    const drafts = [
+      '1. Первый черновик по исходным фактам.',
+      '2. Второй черновик по исходным фактам.',
+      '3. Третий черновик по исходным фактам.',
+    ]
+    expect(() => validateOutput('social', drafts.join('\n\n'))).not.toThrow()
+    for (const invalid of [
+      drafts.slice(0, 2).join('\n\n'),
+      [...drafts, '4. Лишний четвёртый черновик.'].join('\n\n'),
+      drafts.join('\n\n').replace('2.', '1.'),
+      drafts.slice(0, 2).join('\n\n') + '\n\n3. ',
+    ]) {
+      expect(() => validateOutput('social', invalid)).toThrow('OUTPUT_FORMAT_REQUIRED')
+    }
+  })
+  it('rejects a description without the promised list of characteristics', () => {
+    expect(() =>
+      validateOutput('description', 'Термокружка «Север». Объём 450 мл. Цвет синий.'),
+    ).toThrow('OUTPUT_FORMAT_REQUIRED')
+    expect(() =>
+      validateOutput('description', 'Термокружка «Север»\n- Объём 450 мл.\n- Цвет синий.'),
+    ).not.toThrow()
   })
   it('rejects fabricated and dependent evidence', () => {
     const evidence = [

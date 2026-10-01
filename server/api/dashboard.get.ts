@@ -3,6 +3,8 @@ import { config } from '../../core/config'
 import { query } from '../../core/db'
 import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
+import { recipes } from '../../core/templates'
+import { templateSchema } from '../../core/policy'
 export default defineEventHandler(async () => {
   const [
     state,
@@ -54,7 +56,10 @@ export default defineEventHandler(async () => {
     state: state[0],
     strategies,
     hypotheses,
-    products,
+    products: products.map((product) => ({
+      ...product,
+      delivery: recipes[templateSchema.parse(product.template)].delivery,
+    })),
     orders,
     jobs,
     audit,
