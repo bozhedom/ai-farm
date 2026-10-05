@@ -7,6 +7,7 @@ import { POLICY, safeSourceUrl, type Evidence, type Template } from '../policy'
 import { localModel, localSearch } from './local'
 import { reportUsage } from '../activity'
 import { openaiModel } from './openai'
+import { openrouterModel } from './openrouter'
 import { openaiMaximum, usdToKopecks } from './openai-cost'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
@@ -147,12 +148,14 @@ export async function model<T>(args: {
   })
   // UTF-8 bytes plus fixed overhead safely overestimate input token count for this small text context.
   const maxTokens = args.maxOutputTokens ?? (args.role === 'Исследователь' ? 2800 : 2000)
-  // OpenAI also receives a schema separately from the system instructions.
+  // Cloud JSON-schema providers also receive the schema separately from the system instructions.
   const upperInput =
     Buffer.byteLength(
       system +
         context +
-        (c.MODEL_PROVIDER === 'openai' ? JSON.stringify(z.toJSONSchema(args.schema)) : ''),
+        (['openai', 'openrouter'].includes(c.MODEL_PROVIDER)
+          ? JSON.stringify(z.toJSONSchema(args.schema))
+          : ''),
       'utf8',
     ) + 2048
   if (upperInput > 100000) throw new Error('CONTEXT_TOO_LARGE')
@@ -181,9 +184,11 @@ export async function model<T>(args: {
           ? c.OLLAMA_MODEL
           : c.MODEL_PROVIDER === 'openai'
             ? c.OPENAI_MODEL
-            : c.MODEL_PROVIDER === 'yandex'
-              ? c.YANDEX_MODEL
-              : undefined,
+            : c.MODEL_PROVIDER === 'openrouter'
+              ? c.OPENROUTER_MODEL
+              : c.MODEL_PROVIDER === 'yandex'
+                ? c.YANDEX_MODEL
+                : undefined,
       template: String(
         args.context.template ||
           (args.context.product as Record<string, unknown> | undefined)?.template ||
@@ -204,6 +209,8 @@ export async function model<T>(args: {
       if (demo) return { value: args.schema.parse(args.demoValue), cost: 0 }
       if (c.MODEL_PROVIDER === 'openai')
         return openaiModel({ key: args.key, system, context, schema: args.schema, maxTokens })
+      if (c.MODEL_PROVIDER === 'openrouter')
+        return openrouterModel({ key: args.key, system, context, schema: args.schema, maxTokens })
       if (c.MODEL_PROVIDER === 'ollama')
         return {
           value: await localModel({

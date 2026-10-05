@@ -101,6 +101,8 @@ export async function autonomyStatus(
     ['openai', 'yandex'].includes(c.MODEL_PROVIDER) || c.SEARCH_PROVIDER === 'yandex'
       ? c.RESEARCH_RESERVE_KOPECKS
       : 0
+  const openrouterCostBlocked =
+    c.MODEL_PROVIDER === 'openrouter' && budget.openrouterActualMicrousd > 0
   const budgetBlocked =
     budget.daySpent + budget.outstanding + researchReserve > c.DAILY_BUDGET_KOPECKS ||
     budget.monthSpent +
@@ -108,7 +110,9 @@ export async function autonomyStatus(
       researchReserve +
       Math.min(100000, Math.floor(c.MONTHLY_BUDGET_KOPECKS / 3)) >
       c.MONTHLY_BUDGET_KOPECKS ||
-    (c.MODEL_PROVIDER === 'openai' && budget.openaiSpentMicrousd >= c.OPENAI_TOTAL_BUDGET_MICROUSD)
+    (c.MODEL_PROVIDER === 'openai' &&
+      budget.openaiSpentMicrousd >= c.OPENAI_TOTAL_BUDGET_MICROUSD) ||
+    openrouterCostBlocked
   let reason: string
   let nextAt: string | null = null
   if (!enabled)
@@ -128,11 +132,15 @@ export async function autonomyStatus(
   else if (!fresh) reason = 'Обработчик ещё не сообщил о готовности служб.'
   else if (!readiness!.model || !readiness!.search)
     reason =
-      'Ожидание ' +
-      [!readiness!.model && 'локальной модели', !readiness!.search && 'поиска']
+      [
+        !readiness!.model && `Локальная модель «${c.OLLAMA_MODEL}» недоступна или ещё не скачана.`,
+        !readiness!.search && 'Поиск недоступен.',
+      ]
         .filter(Boolean)
-        .join(' и ') +
-      '. Попытки заданий не расходуются.'
+        .join(' ') + ' Попытки заданий не расходуются.'
+  else if (openrouterCostBlocked)
+    reason =
+      'OpenRouter сообщил плату за бесплатный запрос. Новые вызовы остановлены; проверьте расходы в кабинете OpenRouter.'
   else if (active.length)
     reason =
       'Исследование уже в очереди или выполняется. Дополнительный автоматический запуск ждёт его завершения.'
@@ -146,7 +154,7 @@ export async function autonomyStatus(
         ).toISOString()
       : now.toISOString()
     reason = today.length
-      ? 'Суточный слот использован. Следующий запуск — в новом дне UTC.'
+      ? 'Сегодня автоматическое исследование уже запускалось. Ожидаем следующего дня.'
       : 'Исследование будет поставлено в ближайшем цикле обработчика.'
   }
   return {

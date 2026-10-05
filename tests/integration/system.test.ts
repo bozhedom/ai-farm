@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { pool, query } from '../../core/db'
 import * as settings from '../../core/config'
 import { budgetSummary, meteredCall, reserveBudget } from '../../core/budget'
@@ -844,6 +845,122 @@ describe('durable autonomous pipeline', () => {
         await query('SELECT status FROM budget_reservations WHERE dedupe_key=$1', [`order:${o.id}`])
       )[0]!.status,
     ).toBe('closed')
+  })
+})
+
+describe('free OpenRouter accounting', () => {
+  function freeConfig() {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'openrouter',
+      SEARCH_PROVIDER: 'searxng',
+      OPENROUTER_API_KEY: 'test-only-key',
+      OPENROUTER_MODEL: 'openrouter/free',
+    })
+  }
+  function cloudResponse(cost = 0) {
+    return new Response(
+      JSON.stringify({
+        id: 'test-generation',
+        choices: [
+          { finish_reason: 'stop', message: { role: 'assistant', content: '{"text":"checked"}' } },
+        ],
+        usage: { prompt_tokens: 50, completion_tokens: 10, cost },
+      }),
+    )
+  }
+  it('uses a zero reservation and persists one external call under concurrent claims', async () => {
+    freeConfig()
+    const reservationId = await reserveBudget('free-cloud', 'research')
+    expect(
+      (await query('SELECT limit_kopecks FROM budget_reservations WHERE id=$1', [reservationId]))[0]
+        ?.limit_kopecks,
+    ).toBe(0)
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => cloudResponse())
+    const call = {
+      key: 'free-cloud',
+      reservationId,
+      role: 'Исследователь',
+      context: { input: 'facts' },
+      schema: z.object({ text: z.string() }),
+      demoValue: { text: 'demo' },
+    }
+    const results = await Promise.allSettled([providers.model(call), providers.model(call)])
+    expect(results.some((result) => result.status === 'fulfilled')).toBe(true)
+    for (const result of results)
+      if (result.status === 'rejected')
+        expect(result.reason.message).toBe('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    expect(await providers.model(call)).toEqual({ text: 'checked' })
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(
+      (
+        await query(
+          'SELECT status,provider,is_demo,input_tokens,output_tokens,charged_kopecks,charged_microusd,actual_microusd FROM tool_calls',
+        )
+      )[0],
+    ).toEqual({
+      status: 'done',
+      provider: 'openrouter',
+      is_demo: false,
+      input_tokens: 50,
+      output_tokens: 10,
+      charged_kopecks: 0,
+      charged_microusd: 0,
+      actual_microusd: 0,
+    })
+    expect(await budgetSummary()).toMatchObject({
+      outstanding: 0,
+      openrouterSpentMicrousd: 0,
+      openrouterActualMicrousd: 0,
+    })
+  })
+  it('rejects any paid reserve before invoking the provider', async () => {
+    freeConfig()
+    const reservationId = await reserveBudget('free-envelope', 'order')
+    const invoke = vi.fn(async () => ({ value: 'checked', cost: 0, microusd: 0 }))
+    const call = {
+      key: 'free-envelope',
+      reservationId,
+      role: 'Исполнитель',
+      demo: false,
+      activity: { provider: 'openrouter', model: 'openrouter/free', taskLabel: 'test' },
+      invoke,
+    }
+    await expect(meteredCall({ ...call, maximum: 1 })).rejects.toThrow(
+      'OPENROUTER_FREE_MODEL_REQUIRED',
+    )
+    await expect(meteredCall({ ...call, maximum: 0, maximumMicrousd: 1 })).rejects.toThrow(
+      'OPENROUTER_FREE_MODEL_REQUIRED',
+    )
+    expect(invoke).not.toHaveBeenCalled()
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(0)
+  })
+  it('preserves an unexpected charge and blocks subsequent calls without retrying', async () => {
+    freeConfig()
+    const reservationId = await reserveBudget('unexpected-cloud-charge', 'order')
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => cloudResponse(0.000001))
+    const call = {
+      key: 'unexpected-cloud-charge',
+      reservationId,
+      role: 'Исполнитель',
+      context: { input: 'facts' },
+      schema: z.object({ text: z.string() }),
+      demoValue: { text: 'demo' },
+    }
+    await expect(providers.model(call)).rejects.toThrow('OPENROUTER_COST_REVIEW_REQUIRED')
+    await expect(providers.model({ ...call, key: 'another-cloud-call' })).rejects.toThrow(
+      'OPENROUTER_COST_REVIEW_REQUIRED',
+    )
+    await expect(providers.model(call)).rejects.toThrow('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    expect(fetch).toHaveBeenCalledOnce()
+    expect((await query('SELECT status,actual_microusd,error_code FROM tool_calls'))[0]).toEqual({
+      status: 'uncertain',
+      actual_microusd: 1,
+      error_code: 'OPENROUTER_COST_REVIEW_REQUIRED',
+    })
+    expect((await budgetSummary()).openrouterActualMicrousd).toBe(1)
   })
 })
 

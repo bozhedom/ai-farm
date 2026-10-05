@@ -1,0 +1,147 @@
+import { z } from 'zod'
+import { config, isFreeOpenrouterModel } from '../config'
+import { query } from '../db'
+import { reportProgress } from '../activity'
+
+const tokens = z.number().int().nonnegative().max(100000)
+const usageSchema = z.object({
+  prompt_tokens: tokens,
+  completion_tokens: tokens,
+  prompt_tokens_details: z
+    .object({ cached_tokens: tokens.optional(), cache_write_tokens: tokens.optional() })
+    .optional(),
+  completion_tokens_details: z.object({ reasoning_tokens: tokens.optional() }).optional(),
+  cost: z.union([z.number().nonnegative(), z.string()]),
+  is_byok: z.boolean().optional(),
+})
+
+/** Convert a provider decimal to integer microdollars without floating-point accounting. */
+export function openrouterCost(value: number | string) {
+  const decimal = String(value)
+  const parts = /^(\d{1,16})(?:\.(\d{1,20}))?(?:[eE]([+-]?\d{1,2}))?$/.exec(decimal)
+  if (!parts) throw new Error('OPENROUTER_USAGE_INVALID')
+  const fraction = parts[2] || ''
+  const digits = BigInt(parts[1]! + fraction)
+  const power = 6 + Number(parts[3] || 0) - fraction.length
+  const divisor = power < 0 ? 10n ** BigInt(-power) : 1n
+  const microusd = power < 0 ? (digits + divisor - 1n) / divisor : digits * 10n ** BigInt(power)
+  if (microusd > 2147483647n) throw new Error('OPENROUTER_USAGE_INVALID')
+  return Number(microusd)
+}
+
+export async function openrouterModel<T>(args: {
+  key: string
+  system: string
+  context: string
+  schema: z.ZodType<T>
+  maxTokens: number
+}) {
+  const c = config()
+  if (!c.OPENROUTER_API_KEY) throw new Error('OPENROUTER_CREDENTIALS_REQUIRED')
+  if (!isFreeOpenrouterModel(c.OPENROUTER_MODEL)) throw new Error('OPENROUTER_FREE_MODEL_REQUIRED')
+  if (!Number.isSafeInteger(args.maxTokens) || args.maxTokens < 16 || args.maxTokens > 2800)
+    throw new Error('OPENROUTER_OUTPUT_LIMIT_INVALID')
+  const schema = z.toJSONSchema(args.schema)
+  delete schema.$schema
+  // Explicit free routes and zero price ceilings. Never retry or switch to a paid model.
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${c.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: c.OPENROUTER_MODEL,
+      messages: [
+        { role: 'system', content: args.system },
+        { role: 'user', content: args.context },
+      ],
+      max_tokens: args.maxTokens,
+      stream: false,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'farm_result', strict: true, schema },
+      },
+      provider: {
+        require_parameters: true,
+        allow_fallbacks: false,
+        data_collection: 'deny',
+        max_price: { prompt: 0, completion: 0, request: 0 },
+      },
+      plugins: [],
+    }),
+    redirect: 'error',
+    signal: AbortSignal.timeout(120000),
+  })
+  if (!response.ok) {
+    await response.body?.cancel()
+    throw new Error(`OPENROUTER_HTTP_${response.status}`)
+  }
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('OPENROUTER_RESPONSE_EMPTY')
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    while (true) {
+      const part = await reader.read()
+      if (part.done) break
+      size += part.value.byteLength
+      if (size > 2000000) {
+        await reader.cancel()
+        throw new Error('PROVIDER_RESPONSE_TOO_LARGE')
+      }
+      chunks.push(part.value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  let data
+  try {
+    data = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    throw new Error('OPENROUTER_RESPONSE_INVALID')
+  }
+  const usage = usageSchema.safeParse(data?.usage)
+  if (!usage.success) throw new Error('OPENROUTER_USAGE_INVALID')
+  const { prompt_tokens: input, completion_tokens: output } = usage.data
+  const cached = usage.data.prompt_tokens_details?.cached_tokens ?? null
+  const writes = usage.data.prompt_tokens_details?.cache_write_tokens ?? null
+  const reasoning = usage.data.completion_tokens_details?.reasoning_tokens ?? null
+  if ((cached ?? 0) + (writes ?? 0) > input || (reasoning ?? 0) > output || output > args.maxTokens)
+    throw new Error('OPENROUTER_USAGE_INVALID')
+  const microusd = openrouterCost(usage.data.cost)
+  // Retain usage even when the answer is truncated, refused, invalid or unexpectedly billed.
+  await query(
+    `UPDATE tool_calls SET input_tokens=$2,output_tokens=$3,cached_tokens=$4,cache_write_tokens=$5,
+      reasoning_tokens=$6,actual_microusd=$7,provider_response_id=$8,heartbeat_at=now()
+     WHERE call_key=$1 AND status='pending'`,
+    [
+      args.key,
+      input,
+      output,
+      cached,
+      writes,
+      reasoning,
+      microusd,
+      typeof data.id === 'string' ? data.id.slice(0, 200) : null,
+    ],
+  )
+  if (microusd !== 0) throw new Error('OPENROUTER_COST_REVIEW_REQUIRED')
+  if (usage.data.is_byok) throw new Error('POLICY_OPENROUTER_BYOK_UNSUPPORTED')
+  const choice = Array.isArray(data.choices) && data.choices.length === 1 ? data.choices[0] : null
+  if (data.error || choice?.error) throw new Error('OPENROUTER_RESPONSE_ERROR')
+  if (choice?.message?.refusal || choice?.finish_reason === 'content_filter')
+    throw new Error('MODEL_REFUSED')
+  if (choice?.finish_reason !== 'stop') throw new Error('MODEL_OUTPUT_INCOMPLETE')
+  if (choice.message?.tool_calls?.length) throw new Error('POLICY_MODEL_TOOLS_FORBIDDEN')
+  const text = choice.message?.content
+  if (typeof text !== 'string' || text.length > 60000) throw new Error('MODEL_SCHEMA_INVALID')
+  await reportProgress(args.key, text.length)
+  let value: T
+  try {
+    value = args.schema.parse(JSON.parse(text))
+  } catch {
+    throw new Error('MODEL_SCHEMA_INVALID')
+  }
+  return { value, microusd: 0, cost: 0 }
+}

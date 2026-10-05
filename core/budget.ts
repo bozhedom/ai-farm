@@ -10,7 +10,9 @@ export async function budgetSummary(db: Connection = pool) {
     COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::int AS month_spent,
     COALESCE((SELECT sum(limit_kopecks-spent_kopecks) FROM budget_reservations WHERE status='open'),0)::int AS outstanding,
     COALESCE((SELECT sum(charged_microusd) FROM tool_calls WHERE provider='openai'),0)::bigint AS openai_spent,
-    COALESCE((SELECT sum(actual_microusd) FROM tool_calls WHERE provider='openai'),0)::bigint AS openai_actual`,
+    COALESCE((SELECT sum(actual_microusd) FROM tool_calls WHERE provider='openai'),0)::bigint AS openai_actual,
+    COALESCE((SELECT sum(charged_microusd) FROM tool_calls WHERE provider='openrouter'),0)::bigint AS openrouter_spent,
+    COALESCE((SELECT sum(actual_microusd) FROM tool_calls WHERE provider='openrouter'),0)::bigint AS openrouter_actual`,
     [],
     db,
   )
@@ -20,6 +22,8 @@ export async function budgetSummary(db: Connection = pool) {
     outstanding: s!.outstanding as number,
     openaiSpentMicrousd: Number(s!.openai_spent),
     openaiActualMicrousd: Number(s!.openai_actual),
+    openrouterSpentMicrousd: Number(s!.openrouter_spent),
+    openrouterActualMicrousd: Number(s!.openrouter_actual),
   }
 }
 
@@ -82,6 +86,8 @@ export async function meteredCall<T>(args: {
     (args.activity?.provider === 'openai' && maximumUsd === 0)
   )
     throw new Error('INVALID_DOLLAR_RESERVE')
+  if (args.activity?.provider === 'openrouter' && (maximumUsd !== 0 || args.maximum !== 0))
+    throw new Error('OPENROUTER_FREE_MODEL_REQUIRED')
   const claim = await transaction(async (db) => {
     await query('SELECT pg_advisory_xact_lock(735093)', [], db)
     const [old] = await query('SELECT * FROM tool_calls WHERE call_key=$1', [args.key], db)
@@ -118,6 +124,8 @@ export async function meteredCall<T>(args: {
       throw new Error('BUDGET_BLOCKED')
     // Includes old outstanding reservations: crossing midnight cannot create a fresh hidden budget.
     const totals = await budgetSummary(db)
+    if (args.activity?.provider === 'openrouter' && totals.openrouterActualMicrousd > 0)
+      throw new Error('OPENROUTER_COST_REVIEW_REQUIRED')
     if (
       maximumUsd > 0 &&
       totals.openaiSpentMicrousd + maximumUsd > config().OPENAI_TOTAL_BUDGET_MICROUSD
@@ -164,7 +172,8 @@ export async function meteredCall<T>(args: {
       !Number.isSafeInteger(costUsd) ||
       costUsd < 0 ||
       costUsd > maximumUsd ||
-      (args.activity?.provider === 'openai' && result.microusd === undefined)
+      (['openai', 'openrouter'].includes(args.activity?.provider || '') &&
+        result.microusd === undefined)
     )
       throw new Error('PROVIDER_COST_EXCEEDS_RESERVE')
     if (!Number.isSafeInteger(result.cost) || result.cost < 0 || result.cost > args.maximum)

@@ -103,7 +103,9 @@ export async function research(job: Job) {
           'estimatedCostRub — оценка собственных прямых расходов на генерацию и проверку ОДНОГО заказа в рублях. Это НЕ цена продажи услуги и НЕ цена конкурента из поиска.',
         modelProvider: config().MODEL_PROVIDER,
         maximumOrderCostRub: config().ORDER_RESERVE_KOPECKS / 100,
-        localApiCostRub: config().MODEL_PROVIDER === 'ollama' ? 0 : undefined,
+        freeModelApiCostRub: ['ollama', 'openrouter'].includes(config().MODEL_PROVIDER)
+          ? 0
+          : undefined,
         cloudTariff:
           config().MODEL_PROVIDER === 'openai'
             ? {

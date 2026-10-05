@@ -95,15 +95,19 @@ export default defineEventHandler(async () => {
           ? c.OLLAMA_MODEL
           : c.MODEL_PROVIDER === 'openai'
             ? c.OPENAI_MODEL
-            : c.MODEL_PROVIDER === 'yandex'
-              ? c.YANDEX_MODEL
-              : 'Шаблонный демопровайдер',
+            : c.MODEL_PROVIDER === 'openrouter'
+              ? c.OPENROUTER_MODEL
+              : c.MODEL_PROVIDER === 'yandex'
+                ? c.YANDEX_MODEL
+                : 'Шаблонный демопровайдер',
       searchProvider: c.SEARCH_PROVIDER,
       paymentMode: c.PAYMENT_MODE,
       monthlyLimit: c.MONTHLY_BUDGET_KOPECKS,
       dailyLimit: c.DAILY_BUDGET_KOPECKS,
       autonomyEnabled: autonomy.enabled,
       openaiTotalLimitMicrousd: c.OPENAI_TOTAL_BUDGET_MICROUSD,
+      openrouterFreeOnly: true,
+      openrouterTotalLimitMicrousd: 0,
     },
     realRevenueKopecks: 0,
   }
