@@ -6,9 +6,12 @@ import { isFresh, observationSummary, parseSamples, type ServiceChecks } from '.
 export const healthDirectory = () => process.env.HEALTH_DIRECTORY || '.health'
 async function readStatus(name: string) {
   try {
-    return JSON.parse(await readFile(join(healthDirectory(), name), 'utf8'))
-  } catch {
-    return null
+    return JSON.parse(await readFile(join(healthDirectory(), name), 'utf8')) ?? { invalid: true }
+  } catch (error) {
+    // Only a missing file means observation has not started. An unreadable or
+    // malformed history must remain visible as a monitoring failure.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    return { invalid: true }
   }
 }
 export async function serviceReadiness(now = new Date()) {
