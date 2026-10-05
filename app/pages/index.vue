@@ -1,29 +1,33 @@
 <script setup lang="ts">
 import type { Template } from '../../core/policy'
-import DashboardOverview from '~/components/dashboard/Overview.vue'
-import DashboardHypotheses from '~/components/dashboard/Hypotheses.vue'
-import DashboardStrategies from '~/components/dashboard/Strategies.vue'
-import DashboardOrders from '~/components/dashboard/Orders.vue'
-import DashboardAudit from '~/components/dashboard/Audit.vue'
-
 const { state: d, refresh } = useFarm()
 const researchTemplate = useState<Template | ''>('research-template', () => '')
 const route = useRoute()
-const view = computed(() => String(route.query.view || 'overview'))
-const title = computed(
-  () =>
-    ({
-      overview: 'Лаборатория продуктов',
-      hypotheses: 'От предположения к проверке',
-      strategies: 'Четыре подхода. Один эксперимент.',
-      orders: 'Каждый заказ под наблюдением',
-      audit: 'История решений',
-    })[view.value] || 'Лаборатория',
+const pages: Record<string, { title: string; description: string }> = {
+  overview: { title: 'Обзор', description: 'Идеи, готовые услуги и результаты работы.' },
+  hypotheses: {
+    title: 'Исследования',
+    description: 'Что проверили, что получилось и почему отказались от идеи.',
+  },
+  strategies: {
+    title: 'Подходы к работе',
+    description: 'Четыре варианта инструкций и их результаты.',
+  },
+  orders: { title: 'Заказы', description: 'От исходного материала до готового текста.' },
+  audit: { title: 'Журнал', description: 'Задания, расходы и причины остановки.' },
+  settings: {
+    title: 'Настройки и состояние',
+    description: 'Подключения, расписание, лимиты и сохранность данных.',
+  },
+}
+const view = computed(() =>
+  typeof route.query.view === 'string' && pages[route.query.view] ? route.query.view : 'overview',
 )
 const busy = ref(false),
   message = ref(''),
   actionError = ref('')
 async function control(action: string, template?: Template) {
+  if (busy.value) return
   busy.value = true
   actionError.value = ''
   message.value = ''
@@ -41,9 +45,19 @@ async function control(action: string, template?: Template) {
     message.value =
       action === 'research'
         ? response.reused
-          ? 'Открыто уже выполняющееся исследование.'
-          : 'Новое исследование поставлено в очередь. Этапы появятся в пульте лаборатории.'
-        : 'Изменения сохранены.'
+          ? 'Это исследование уже запущено. Следите за ним в разделе «Исследования».'
+          : 'Идея поставлена на проверку. Ход работы появится в разделе «Исследования».'
+        : (
+            {
+              running: 'Работа возобновлена.',
+              paused: 'Новые задачи на паузе. Принятые заказы выполняются.',
+              emergency_stop: 'Новые обращения к модели остановлены.',
+              schedule_on: 'Автозапуск включён.',
+              schedule_off: 'Автозапуск выключен.',
+              restart_research: 'Начат новый эксперимент. История сохранена.',
+              simulate: 'Две стратегии заменены на учебных данных. Деньги не учитывались.',
+            } as Record<string, string>
+          )[action] || 'Изменения сохранены.'
   } catch (e) {
     actionError.value = errorText(e)
   } finally {
@@ -55,77 +69,42 @@ async function control(action: string, template?: Template) {
   <FarmShell>
     <div class="page-heading">
       <div>
-        <div class="eyebrow">
-          {{ view === 'overview' ? 'ОБЗОР СИСТЕМЫ' : labels[view] || 'РАБОЧЕЕ ПРОСТРАНСТВО' }}
-        </div>
-        <h1>{{ title }}</h1>
-        <p>От идеи до результата — с понятными правилами и сохранённой историей.</p>
+        <h1>{{ pages[view]!.title }}</h1>
+        <p>{{ pages[view]!.description }}</p>
       </div>
       <span v-if="d" class="status-pill" :class="d.state.mode === 'running' ? 'good' : 'warn'"
-        ><span class="dot" />{{
-          d.state.mode === 'running'
-            ? d.config.autonomyEnabled
-              ? 'Расписание включено'
-              : 'Ручной запуск · расписание выключено'
-            : labels[d.state.mode]
-        }}</span
+        ><span class="dot" />{{ labels[d.state.mode] }}</span
       >
     </div>
     <div v-if="message" class="notice" role="status">{{ message }}</div>
     <div v-if="actionError" class="notice error" role="alert">{{ actionError }}</div>
-    <div v-if="!d" class="empty large">Загружаем состояние лаборатории…</div>
+    <div v-if="!d" class="empty large">Загружаем данные…</div>
     <template v-else>
-      <div v-if="!d.state.research_enabled" class="notice">
-        28-дневное окно закрыто без подтверждённых продаж. Новые исследования остановлены; заказы
-        сохраняются.
-        <button class="quiet" :disabled="busy" @click="control('restart_research')">
-          Открыть новое окно наблюдения →
+      <div v-if="d.config.modelProvider === 'demo'" class="notice">
+        Демонстрация: ответы заданы заранее, поиск в интернете не выполняется.
+        <NuxtLink to="/?view=settings">Подключения</NuxtLink>
+      </div>
+      <div v-if="!d.state.research_enabled && view !== 'overview'" class="notice">
+        За 28 дней нет подтверждённых продаж. Пересмотрите идею и начните новый эксперимент.<button
+          class="quiet"
+          :disabled="busy"
+          @click="control('restart_research')"
+        >
+          Начать новый эксперимент
         </button>
       </div>
-      <div class="test-banner">
-        <span class="banner-symbol">◎</span>
-        <div>
-          <strong>{{
-            d.config.modelProvider === 'demo'
-              ? 'Демонстрационный режим'
-              : d.config.modelProvider === 'ollama'
-                ? 'Локальная модель · живой поиск'
-                : d.config.modelProvider === 'openai'
-                  ? 'Облачная модель · ' + d.config.model
-                  : 'Исследование через Yandex API'
-          }}</strong
-          ><span
-            >{{
-              d.config.modelProvider === 'demo'
-                ? 'Гипотезы и тексты создаёт демонстрационный провайдер. Интернет пока не исследуется.'
-                : d.config.modelProvider === 'ollama'
-                  ? 'Ответы генерирует ' +
-                    d.config.model +
-                    '. Источники приходят из интернета. Качество небольшого локального ИИ требует проверки.'
-                  : 'Ответы создаёт платная модель. Источники передаёт отдельный поиск; расходы видны в пульте.'
-            }}
-            Платежи —
-            {{
-              d.config.paymentMode === 'sandbox'
-                ? 'имитация без переводов'
-                : 'тестовый ETH в Sepolia'
-            }}.</span
-          >
-        </div>
-        <NuxtLink to="/catalog">Открыть витрину ↗</NuxtLink>
-      </div>
-      <DashboardAutonomy v-if="view === 'overview'" :busy="busy" @control="control" />
-      <DashboardOperations v-if="view === 'overview'" :operations="d.autonomy.operations" />
-      <LiveActivity
-        v-if="view === 'overview' || view === 'hypotheses'"
-        :busy="busy"
-        @research="(template) => control('research', template)"
-      />
       <DashboardOverview v-if="view === 'overview'" :busy="busy" @control="control" />
-      <DashboardHypotheses v-else-if="view === 'hypotheses'" :busy="busy" @control="control" />
+      <template v-else-if="view === 'hypotheses'"
+        ><details class="panel activity-details" :open="!!d.autonomy.activeRun">
+          <summary>Ход работы и предыдущие запуски</summary>
+          <LiveActivity :busy="busy" @research="(template) => control('research', template)" />
+        </details>
+        <DashboardHypotheses :busy="busy" @control="control"
+      /></template>
       <DashboardStrategies v-else-if="view === 'strategies'" :busy="busy" @control="control" />
       <DashboardOrders v-else-if="view === 'orders'" />
       <DashboardAudit v-else-if="view === 'audit'" />
+      <DashboardSettings v-else-if="view === 'settings'" :busy="busy" @control="control" />
     </template>
   </FarmShell>
 </template>

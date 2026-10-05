@@ -16,11 +16,11 @@ const sourceHost = (url: string) => new URL(url).hostname
       :disabled="props.busy || d.state.mode !== 'running' || !d.state.research_enabled"
       @click="emit('control', 'research')"
     >
-      Запустить исследование
+      Проверить идею
     </button>
   </div>
   <div v-if="!d.hypotheses.length" class="panel empty large">
-    Пока нет гипотез. Нажмите «Новое исследование» в пульте лаборатории.
+    Исследований пока нет. Нажмите «Проверить идею».
   </div>
   <article v-for="h in d.hypotheses" :key="h.id" class="panel hypothesis">
     <div class="section-heading">
@@ -47,45 +47,49 @@ const sourceHost = (url: string) => new URL(url).hostname
       Сейчас витрина показывает последнюю версию; прежние заказы сохраняют свою.
     </p>
     <p v-else class="muted small-text">
-      Сервис по этой гипотезе не выпущен. Причина — в «Итоговой проверке» ниже. Новое исследование
+      Сервис по этой гипотезе не выпущен. Причина указана в итоговой проверке. Новое исследование
       создаст отдельную запись и не удалит эту.
     </p>
-    <div class="hypothesis-grid">
-      <div>
-        <h3>Покупатель и проблема</h3>
-        <p>{{ h.research.audience }}. {{ h.research.problem }}</p>
+    <p><strong>Итог проверки:</strong> {{ h.critique.reason }}</p>
+    <details>
+      <summary>Аудитория, проверка и источники</summary>
+      <div class="hypothesis-grid">
+        <div>
+          <h3>Покупатель и проблема</h3>
+          <p>{{ h.research.audience }}. {{ h.research.problem }}</p>
+        </div>
+        <div>
+          <h3>Причина сомневаться</h3>
+          <p>{{ h.research.counterargument }}</p>
+        </div>
+        <div>
+          <h3>Как проверить</h3>
+          <p>{{ h.research.experiment }}</p>
+        </div>
+        <div>
+          <h3>Оценка прямых расходов</h3>
+          <p>
+            {{ rub(Math.round(h.research.estimatedCostRub * 100)) }} за заказ. Предварительная
+            оценка модели; сервер и привлечение покупателей считаются отдельно.
+          </p>
+        </div>
+        <div>
+          <h3>Итоговая проверка · {{ labels[h.critique.verdict] }}</h3>
+          <p>{{ h.critique.reason }}</p>
+        </div>
       </div>
-      <div>
-        <h3>Причина сомневаться</h3>
-        <p>{{ h.research.counterargument }}</p>
+      <div class="evidence-list">
+        <strong>Источники</strong
+        ><a
+          v-for="e in h.evidence"
+          :key="e.url"
+          :href="e.url"
+          target="_blank"
+          rel="noopener noreferrer"
+          >{{ e.title }} ↗ <small>{{ sourceHost(e.url) }} · {{ dateTime(e.observedAt) }}</small></a
+        >
       </div>
-      <div>
-        <h3>Как проверить</h3>
-        <p>{{ h.research.experiment }}</p>
-      </div>
-      <div>
-        <h3>Оценка прямых расходов</h3>
-        <p>
-          {{ rub(Math.round(h.research.estimatedCostRub * 100)) }} за заказ. Предварительная оценка
-          модели; сервер и привлечение покупателей считаются отдельно.
-        </p>
-      </div>
-      <div>
-        <h3>Итоговая проверка · {{ labels[h.critique.verdict] }}</h3>
-        <p>{{ h.critique.reason }}</p>
-      </div>
-    </div>
-    <div class="evidence-list">
-      <strong>Источники</strong
-      ><a
-        v-for="e in h.evidence"
-        :key="e.url"
-        :href="e.url"
-        target="_blank"
-        rel="noopener noreferrer"
-        >{{ e.title }} ↗ <small>{{ sourceHost(e.url) }} · {{ dateTime(e.observedAt) }}</small></a
-      >
-    </div>
-    <p class="muted small-text">{{ h.research.uncertainties.join(' ') }}</p>
+      <p class="muted small-text">{{ h.research.uncertainties.join(' ') }}</p>
+    </details>
   </article>
 </template>

@@ -31,7 +31,7 @@ function open(event: Event) {
     <summary>История версий</summary>
     <p class="muted small-text">
       Новые заказы используют текущую версию. Принятые заказы сохраняют свою. Прежние обещания
-      пользы — гипотезы, они не подтверждают рост продаж.
+      пользы остаются гипотезами и не подтверждают рост продаж.
     </p>
     <article v-for="version in versions" :key="version.version" class="product-version">
       <strong>V{{ version.version }} · {{ version.spec.name }}</strong>

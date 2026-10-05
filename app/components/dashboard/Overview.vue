@@ -1,124 +1,241 @@
 <script setup lang="ts">
-const { state: d } = useFarm()
-const props = defineProps<{ busy: boolean }>()
+import type { Template } from '../../../core/policy'
+const { state: d, failure } = useFarm()
+defineProps<{ busy: boolean }>()
 const emit = defineEmits<{ control: [action: string] }>()
-const activeStrategies = computed(
-  () => d.value?.strategies?.filter((s: any) => s.status === 'active') || [],
+const researchTemplate = useState<Template | ''>('research-template', () => '')
+const products = computed(() =>
+  d.value.products.filter((p: any) => p.status === 'sandbox' && !p.needsRefresh),
 )
+const active = computed(() => d.value.jobs.find((j: any) => j.status === 'running'))
+const currentCall = computed(() =>
+  d.value.toolCalls.find((c: any) => c.job_id === active.value?.id && c.status === 'pending'),
+)
+const latestResearch = computed(() => d.value.jobs.find((j: any) => j.kind === 'research'))
+const stopped = computed(() => d.value.state.mode !== 'running')
+const title = computed(() => {
+  if (failure.value) return 'Не удаётся обновить состояние'
+  if (d.value.state.mode === 'emergency_stop') return 'Работа остановлена'
+  if (d.value.state.mode === 'paused') return 'Новые задачи на паузе'
+  if (!d.value.autonomy.workerAlive) return 'Обработчик не на связи'
+  if (active.value)
+    return active.value.kind === 'fulfill'
+      ? 'Готовим текст заказа'
+      : active.value.kind === 'evaluate'
+        ? 'Подводим итоги недели'
+        : 'Проверяем идею для сервиса'
+  if (!d.value.state.research_enabled) return 'Пора пересмотреть идею'
+  if (!d.value.state.provider_readiness?.model || !d.value.state.provider_readiness?.search)
+    return 'Ждём модель или поиск'
+  return d.value.autonomy.enabled ? 'Сервис работает самостоятельно' : 'Всё готово к запуску'
+})
+const description = computed(() => {
+  if (failure.value) return 'Показаны последние полученные данные. Проверьте соединение.'
+  if (currentCall.value) return currentCall.value.task_label
+  if (active.value) return 'Результат сохранится здесь. Страницу можно закрыть.'
+  if (d.value.state.mode === 'emergency_stop')
+    return 'Генерация приостановлена. Заказы и результаты сохранены.'
+  if (d.value.state.mode === 'paused')
+    return 'Исследования и новые заказы приостановлены. Принятые заказы продолжают выполняться.'
+  return d.value.autonomy.reason
+})
+const steps = computed(() => [
+  {
+    title: 'Находит идею',
+    text: 'Ищет задачи покупателей и существующие предложения.',
+    count: `Исследований: ${d.value.hypotheses.length}${d.value.hypotheses.length === 30 ? '+' : ''}`,
+    to: '/?view=hypotheses',
+  },
+  {
+    title: 'Проверяет и собирает',
+    text: 'Оценивает идею, создаёт услугу и проверяет пример текста.',
+    count: `Готово услуг: ${products.value.length} из 3`,
+    to: '/catalog',
+  },
+  {
+    title: 'Выполняет заказ',
+    text: 'Берёт материал, готовит текст и проверяет его перед выдачей.',
+    count: `Тестовых выдач: ${d.value.orderStats.delivered}`,
+    to: '/?view=orders',
+  },
+  {
+    title: 'Подводит итоги',
+    text: 'Раз в неделю сравнивает результаты. Без продаж ждёт данных.',
+    count: d.value.evaluations[0]
+      ? labels[d.value.evaluations[0].decision]
+      : 'Ожидает первой оценки',
+    to: '/?view=strategies',
+  },
+])
 </script>
 
 <template>
-  <section class="metrics" aria-label="Показатели">
-    <article>
-      <span>Активных сервисов</span
-      ><strong
-        >{{ d.products.filter((p: any) => p.status === 'sandbox').length
-        }}<small>/ 3</small></strong
-      >
-      <p>В пределах конструктора</p>
-    </article>
-    <article>
-      <span>Рабочих стратегий</span><strong>{{ activeStrategies.length }}<small>/ 4</small></strong>
-      <p>Поколение {{ d.state.generation }}</p>
-    </article>
-    <article>
-      <span>Расходы API за месяц</span><strong>{{ rub(d.budget.monthSpent) }}</strong>
-      <p>Лимит {{ rub(d.config.monthlyLimit) }}</p>
-    </article>
-    <article>
-      <span>Реальная выручка</span><strong>{{ rub(d.realRevenueKopecks) }}</strong>
-      <p>Тестовые средства исключены</p>
-    </article>
-  </section>
-  <div class="two-columns">
-    <section class="panel">
-      <div class="section-heading">
-        <h2>Команда стратегий</h2>
-        <NuxtLink to="/?view=strategies">Все стратегии ↗</NuxtLink>
-      </div>
-      <div class="strategy-list">
-        <div v-for="(s, i) in activeStrategies" :key="s.id" class="strategy-row">
-          <span class="strategy-avatar" :class="'shade-' + i">{{ s.name.slice(0, 1) }}</span>
-          <div>
-            <strong>{{ s.name }}</strong>
-            <p>{{ s.approach }}</p>
-          </div>
-          <span class="tag">{{ s.test_delivered }} тест.</span>
-        </div>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="section-heading">
-        <h2>Контроль эксперимента</h2>
-        <span class="tiny-label">POLICY V1</span>
-      </div>
-      <div v-if="d.config.modelProvider === 'openai'" class="evaluation-callout">
-        <span>Платная модель · общий предел</span>
-        <strong
-          >{{ usd(d.budget.openaiSpentMicrousd) }} /
-          {{ usd(d.config.openaiTotalLimitMicrousd) }}</strong
-        >
-        <p>
-          По usage: {{ usd(d.budget.openaiActualMicrousd) }}. Первый показатель включает резервы.
-          Предел общий для всех запросов в этой базе и не сбрасывается завтра.
-        </p>
-      </div>
-      <div class="budget-line">
-        <span>API сегодня</span
-        ><strong>{{ rub(d.budget.daySpent) }} / {{ rub(d.config.dailyLimit) }}</strong>
-      </div>
-      <div class="budget-track">
-        <i
-          :style="{
-            width: Math.min(100, (d.budget.daySpent / d.config.dailyLimit) * 100) + '%',
-          }"
-        />
-      </div>
-      <p class="muted small-text">
-        В резервах: {{ rub(d.budget.outstanding) }}. Один бюджет на всю команду.
+  <section class="work-card" aria-label="Текущая работа">
+    <div class="work-copy">
+      <span class="eyebrow">СЕЙЧАС</span>
+      <h2>
+        <span
+          class="dot"
+          :class="!failure && !stopped && d.autonomy.workerAlive ? 'green' : 'amber'"
+        />{{ title }}
+      </h2>
+      <p>{{ description }}</p>
+      <p v-if="!failure && !stopped && d.autonomy.nextAt && !active" class="muted small-text">
+        Следующее исследование: {{ dateTime(d.autonomy.nextAt) }} по вашему времени.
       </p>
-      <div class="evaluation-callout">
-        <span>Недельная оценка</span
-        ><strong>{{
-          d.evaluations[0] ? labels[d.evaluations[0].decision] : 'Ожидает первого запуска'
-        }}</strong>
-        <p>
-          {{
-            d.evaluations[0]?.reason ||
-            'Денежный победитель появится только после достаточных сопоставимых продаж.'
-          }}
-        </p>
-      </div>
-      <div class="control-buttons">
+      <div class="work-actions">
         <button
-          class="button secondary small"
-          :disabled="props.busy"
-          @click="emit('control', d.state.mode === 'running' ? 'paused' : 'running')"
+          v-if="stopped"
+          class="button primary"
+          :disabled="busy || !!failure"
+          @click="emit('control', 'running')"
         >
-          {{ d.state.mode === 'running' ? 'Ⅱ Приостановить' : '▶ Продолжить' }}</button
-        ><button
-          class="button danger small"
-          :disabled="props.busy || d.state.mode === 'emergency_stop'"
-          @click="emit('control', 'emergency_stop')"
+          Продолжить работу
+        </button>
+        <NuxtLink
+          v-else-if="active || d.autonomy.activeRun"
+          class="button primary"
+          :to="active?.kind === 'fulfill' ? '/?view=orders' : '/?view=hypotheses'"
+          >Посмотреть ход работы</NuxtLink
         >
-          Остановить
+        <button
+          v-else-if="!d.state.research_enabled"
+          class="button primary"
+          :disabled="busy || !!failure"
+          @click="emit('control', 'restart_research')"
+        >
+          Начать новый эксперимент
+        </button>
+        <template v-else>
+          <label class="sr-only" for="home-template">Направление исследования</label>
+          <select id="home-template" v-model="researchTemplate" :disabled="busy || !!failure">
+            <option value="">Выбрать идею автоматически</option>
+            <option value="description">Описание товара</option>
+            <option value="faq">Вопросы и ответы</option>
+            <option value="social">Короткие публикации</option>
+          </select>
+          <button
+            class="button primary"
+            :disabled="busy || !!failure || !d.autonomy.workerAlive"
+            @click="emit('control', 'research')"
+          >
+            {{ busy ? 'Запускаем…' : 'Проверить идею' }}
+          </button>
+        </template>
+        <button
+          v-if="!stopped"
+          class="button secondary"
+          :disabled="busy || !!failure"
+          @click="emit('control', 'paused')"
+        >
+          Пауза
         </button>
       </div>
-      <p class="muted small-text">
-        Пауза завершает принятые заказы. Стоп приостанавливает исполнение; история и обязательства
-        сохраняются.
-      </p>
-    </section>
-  </div>
-  <section class="panel">
-    <div class="section-heading">
-      <h2>Последние события</h2>
-      <NuxtLink to="/?view=audit">Открыть журнал ↗</NuxtLink>
     </div>
-    <div v-if="!d.audit.length" class="empty">События появятся после первого запуска worker.</div>
-    <div v-for="event in d.audit.slice(0, 5)" :key="event.id" class="event-row">
-      <span class="event-dot" /><span>{{ event.message }}</span
-      ><time>{{ dateTime(event.created_at) }}</time>
+    <div class="schedule-box">
+      <strong>Автозапуск {{ d.autonomy.enabled ? 'включён' : 'выключен' }}</strong>
+      <p>Одно исследование в день. Заказы выполняются по мере оплаты.</p>
+      <button
+        class="quiet"
+        :disabled="busy || !!failure || !d.autonomy.allowed"
+        @click="emit('control', d.autonomy.enabled ? 'schedule_off' : 'schedule_on')"
+      >
+        {{ d.autonomy.enabled ? 'Выключить автозапуск' : 'Включить автозапуск' }}
+      </button>
+      <p v-if="!d.autonomy.allowed" class="small-text">
+        Разрешите автозапуск в настройках сервера.
+      </p>
     </div>
   </section>
+
+  <div
+    v-if="latestResearch?.status === 'failed' && !d.autonomy.activeRun"
+    class="notice"
+    role="status"
+  >
+    Последнее исследование остановлено.
+    {{
+      latestResearch.error_code === 'SEARCH_INSUFFICIENT_SOURCES'
+        ? 'Поиск не нашёл достаточно независимых источников. Можно повторить позже.'
+        : 'Причина сохранена в истории запуска.'
+    }}
+    <NuxtLink to="/?view=hypotheses">Посмотреть ход исследования</NuxtLink>
+  </div>
+  <div v-if="d.autonomy.reviewOrders" class="notice error" role="status">
+    Заказы для проверки: {{ d.autonomy.reviewOrders }}.
+    <NuxtLink to="/?view=orders">Открыть заказы</NuxtLink>
+  </div>
+  <section class="cycle-strip" aria-label="Как работает сервис">
+    <NuxtLink v-for="(step, i) in steps" :key="step.title" :to="step.to" class="cycle-item">
+      <span class="cycle-number">{{ i + 1 }}</span>
+      <h3>{{ step.title }}</h3>
+      <p>{{ step.text }}</p>
+      <strong>{{ step.count }} <span aria-hidden="true">↗</span></strong>
+    </NuxtLink>
+  </section>
+
+  <div class="overview-columns">
+    <section class="panel ready-services">
+      <div class="section-heading">
+        <h2>Что уже можно попробовать</h2>
+        <NuxtLink to="/catalog">Все услуги</NuxtLink>
+      </div>
+      <div v-if="!products.length" class="empty">
+        Пока нет готовых услуг. Запустите проверку идеи. Если она пройдёт проверку, здесь появится
+        форма заказа.
+      </div>
+      <NuxtLink v-for="product in products" :key="product.id" to="/catalog" class="ready-service">
+        <span class="service-symbol" aria-hidden="true">{{
+          product.template === 'description' ? 'Aa' : product.template === 'faq' ? '?' : '¶'
+        }}</span>
+        <div>
+          <strong>{{ labels[product.template] }}</strong>
+          <p>
+            {{ product.delivery }}
+          </p>
+          <small
+            >{{ product.is_demo ? 'Демо' : 'Проверен на примере' }} · версия
+            {{ product.version }}</small
+          >
+        </div>
+        <span aria-hidden="true">↗</span>
+      </NuxtLink>
+      <p v-if="products.length" class="muted small-text">
+        Откройте услугу, подставьте пример и подтвердите тестовую оплату. Готовый текст можно
+        скачать.
+      </p>
+    </section>
+    <section class="panel money-panel">
+      <div class="section-heading">
+        <h2>Деньги и результат</h2>
+        <NuxtLink to="/?view=settings">Лимиты</NuxtLink>
+      </div>
+      <dl class="money-list">
+        <div>
+          <dt>Расходы API за месяц</dt>
+          <dd>{{ rub(d.budget.monthSpent) }}</dd>
+        </div>
+        <div>
+          <dt>Реальная выручка</dt>
+          <dd>{{ rub(d.realRevenueKopecks) }}</dd>
+        </div>
+        <div>
+          <dt>Выдано тестовых заказов</dt>
+          <dd>{{ d.orderStats.delivered }}</dd>
+        </div>
+      </dl>
+      <div class="revenue-note">
+        <strong>Откуда может появиться доход</strong>
+        <p>
+          Покупатель платит за полезный текст. Сначала нужно проверить качество, найти аудиторию и
+          подключить обычную оплату.
+        </p>
+        <p>
+          Сейчас доступен закрытый тест: сервис исследует идеи и выполняет заказы. Клиентов он не
+          приводит, реальные платежи не принимает. OpenRouter заменит модель, но эти задачи
+          останутся.
+        </p>
+      </div>
+    </section>
+  </div>
 </template>

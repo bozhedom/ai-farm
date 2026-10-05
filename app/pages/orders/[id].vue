@@ -20,7 +20,7 @@ async function load() {
     }
   } catch (e: any) {
     if (e.statusCode === 401) await navigateTo('/login')
-    else connectionError.value = 'Не удалось обновить заказ. Ниже — последние полученные данные.'
+    else connectionError.value = 'Не удалось обновить заказ. Показаны последние полученные данные.'
   } finally {
     loading = false
   }
@@ -83,7 +83,7 @@ function download() {
       <div>
         <div class="eyebrow">ТЕСТОВЫЙ ЗАКАЗ / {{ String(route.params.id).slice(0, 8) }}</div>
         <h1>{{ order?.product_snapshot?.name || 'Загружаем заказ…' }}</h1>
-        <p>Оплата и результат относятся к тестовому контуру.</p>
+        <p>Тестовый заказ. Реальные деньги не списываются.</p>
       </div>
       <span
         v-if="order"
@@ -146,17 +146,19 @@ function download() {
           <div class="eyebrow">
             {{
               order.payment_mode === 'sandbox'
-                ? 'SANDBOX · БЕЗ ПЕРЕВОДА'
+                ? 'БЕЗ СПИСАНИЯ ДЕНЕГ'
                 : 'ETHEREUM SEPOLIA · CHAIN 11155111'
             }}
           </div>
           <h2>Тестовая оплата</h2>
-          <strong class="payment-amount">{{ amount }}<small> TEST ETH</small></strong>
+          <strong v-if="order.payment_mode === 'sepolia'" class="payment-amount"
+            >{{ amount }}<small> TEST ETH</small></strong
+          >
           <template v-if="order.progress.canSubmit">
             <template v-if="order.payment_mode === 'sandbox'">
               <p>
-                Кнопка имитирует успешную оплату. После подтверждения worker подготовит результат
-                автоматически.
+                После подтверждения сервис подготовит текст и проверит его. Страницу можно закрыть:
+                результат сохранится в заказе.
               </p>
               <button class="button primary" :disabled="busy || !!connectionError" @click="pay">
                 {{ busy ? 'Подтверждаем…' : 'Подтвердить тестовую оплату' }}

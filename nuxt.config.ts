@@ -1,11 +1,11 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-01',
   devtools: { enabled: false },
-  css: ['~/assets/main.css', '~/assets/live.css'],
+  css: ['~/assets/main.css', '~/assets/live.css', '~/assets/workspace.css'],
   app: {
     head: {
       htmlAttrs: { lang: 'ru' },
-      title: 'AI Farm · лаборатория продуктов',
+      title: 'AI Farm · текстовые сервисы',
       meta: [{ name: 'robots', content: 'noindex, nofollow' }],
     },
   },

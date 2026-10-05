@@ -19,18 +19,18 @@ async function login() {
   <main class="login-page">
     <div class="login-art">
       <span class="brand-mark"><i /><i /><i /><i /></span>
-      <div class="eyebrow">AI FARM / EXPERIMENT 001</div>
-      <h1>Идеи работают.<br />Вы видите результат.</h1>
-      <p>Исследование, проверка и исполнение<br />в одной автономной лаборатории.</p>
+      <div class="eyebrow">AI FARM</div>
+      <h1>Текстовые услуги<br />под вашим контролем.</h1>
+      <p>Сервис исследует идеи, готовит тексты<br />и проверяет их по исходным материалам.</p>
       <div class="orbit">
         <span>Исследовать</span><span>Проверять</span><span>Создавать</span><span>Измерять</span>
       </div>
-      <small>Ограниченные действия. Проверяемые решения.</small>
+      <small>Локальная работа. Тестовые заказы.</small>
     </div>
     <form class="login-card" @submit.prevent="login">
       <div class="eyebrow">КАБИНЕТ ВЛАДЕЛЬЦА</div>
-      <h2>Добро пожаловать</h2>
-      <p class="muted">Войдите, чтобы наблюдать за работой системы и управлять экспериментами.</p>
+      <h2>Вход в кабинет</h2>
+      <p class="muted">Пароль находится в поле OWNER_PASSWORD локального файла .env.</p>
       <label for="password">Пароль владельца</label
       ><input
         id="password"
@@ -43,10 +43,10 @@ async function login() {
       />
       <p v-if="error" class="error-text" role="alert">{{ error }}</p>
       <button class="button primary" :disabled="busy">
-        {{ busy ? 'Входим…' : 'Войти в лабораторию →' }}
+        {{ busy ? 'Входим…' : 'Войти' }}
       </button>
       <p class="login-hint">
-        Закрытый экспериментальный стенд.<br />Оплаты работают только в тестовом режиме.
+        Кабинет доступен только владельцу.<br />Оплаты работают только в тестовом режиме.
       </p>
     </form>
   </main>

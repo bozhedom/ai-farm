@@ -30,7 +30,7 @@ const roleNames: Record<string, string> = {
             </td>
             <td>{{ labels[j.status] }}</td>
             <td>{{ j.attempts }} / 3</td>
-            <td>{{ j.error_code || '—' }}</td>
+            <td>{{ j.error_code || 'Нет' }}</td>
           </tr>
         </tbody>
       </table>
@@ -50,7 +50,9 @@ const roleNames: Record<string, string> = {
         }}
         ·
         {{
-          call.provider === 'openai' ? usd(call.charged_microusd) : rub(call.charged_kopecks)
+          ['openai', 'openrouter'].includes(call.provider)
+            ? usd(call.charged_microusd)
+            : rub(call.charged_kopecks)
         }}</span
       ><time>{{ dateTime(call.created_at) }}</time>
     </div>

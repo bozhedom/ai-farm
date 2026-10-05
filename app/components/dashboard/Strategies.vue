@@ -9,13 +9,13 @@ const emit = defineEmits<{ control: [action: string] }>()
     <div class="section-heading">
       <div>
         <span class="eyebrow">ПОКОЛЕНИЕ {{ d.state.generation }}</span>
-        <h2>Отбор по результату</h2>
+        <h2>Как сравниваются подходы</h2>
       </div>
       <span class="tag">4 активных места</span>
     </div>
     <p>
       Раз в неделю система оценивает данные. При достаточной выборке две слабые стратегии
-      архивируются, а два лидера создают по одной копии. Без реальных продаж — HOLD.
+      архивируются, а два лидера создают по одной копии. Без реальных продаж система ждёт данных.
     </p>
     <div class="table-wrap">
       <table>
@@ -69,6 +69,8 @@ const emit = defineEmits<{ control: [action: string] }>()
       ><span>{{ e.reason }}</span
       ><time>{{ dateTime(e.created_at) }}</time>
     </div>
-    <p v-if="!d.evaluations.length" class="empty">Первая оценка появится после запуска worker.</p>
+    <p v-if="!d.evaluations.length" class="empty">
+      Первая оценка появится после запуска обработчика.
+    </p>
   </section>
 </template>

@@ -26,7 +26,7 @@ const online = computed(
   () =>
     !failure.value &&
     d.value?.state.worker_heartbeat &&
-    now.value - new Date(d.value.state.worker_heartbeat).getTime() < 30000,
+    now.value - new Date(d.value.state.worker_heartbeat).getTime() < 90000,
 )
 const running = computed(() => d.value?.jobs.filter((j: any) => j.status === 'running') || [])
 const queue = computed(() => d.value?.jobs.filter((j: any) => j.status === 'queued') || [])
@@ -84,7 +84,7 @@ const currentStrategy = computed(() => {
 })
 const summary = computed(() =>
   !online.value
-    ? 'Нет свежего сигнала от worker'
+    ? 'Нет связи с обработчиком'
     : d.value.state.mode === 'emergency_stop'
       ? 'Аварийный стоп включён'
       : current.value
@@ -131,7 +131,9 @@ const usage = computed(() => ({
   actualDollars: calls.value.reduce((n: number, c: any) => n + (c.actual_microusd ?? 0), 0),
   reasoning: calls.value.reduce((n: number, c: any) => n + (c.reasoning_tokens ?? 0), 0),
 }))
-const cloudCalls = computed(() => calls.value.some((c: any) => c.provider === 'openai'))
+const cloudCalls = computed(() =>
+  calls.value.some((c: any) => ['openai', 'openrouter'].includes(c.provider)),
+)
 const sources = computed(() =>
   calls.value
     .flatMap((c: any) => c.sources || [])
@@ -155,8 +157,8 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
   <section v-if="d" class="panel live-lab" aria-label="Работа агентов в реальном времени">
     <div class="section-heading live-heading">
       <div>
-        <span class="eyebrow">ПУЛЬТ ЛАБОРАТОРИИ</span>
-        <h2>От источников — к проверенной идее</h2>
+        <span class="eyebrow">ХОД РАБОТЫ</span>
+        <h2>Ход исследования</h2>
       </div>
       <span class="subtle-tag"
         ><span class="dot" :class="online ? 'green' : 'amber'" />{{
@@ -218,7 +220,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
             online && current
               ? current.task_label
               : !online
-                ? 'Статусы ниже — последние сохранённые. Проверьте соединение и службу worker.'
+                ? 'Показаны последние статусы. Проверьте соединение и обработчик.'
                 : historical
                   ? 'Показаны реальные этапы выбранного задания. Вернитесь к текущему запуску, чтобы наблюдать за работой.'
                   : 'Запустите исследование ниже: поиск → гипотеза → критика → проверка сервиса.'
@@ -232,7 +234,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
         >
       </div>
       <div class="live-timer">
-        <strong>{{ online && current ? elapsed(current.created_at) : '—' }}</strong
+        <strong>{{ online && current ? elapsed(current.created_at) : 'Нет данных' }}</strong
         ><span>{{
           online && current
             ? current.progress_chars
@@ -272,17 +274,17 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
     </div>
     <div class="run-measurements" aria-label="Измерения выбранного запуска">
       <div>
-        <span>Источники</span><strong>{{ sources.length || '—' }}</strong
+        <span>Источники</span><strong>{{ sources.length || 'Нет данных' }}</strong
         ><small>Найдено поиском</small>
       </div>
       <div>
         <span>Токены на входе</span
-        ><strong>{{ measuredCalls.length ? count(usage.input) : '—' }}</strong
+        ><strong>{{ measuredCalls.length ? count(usage.input) : 'Нет данных' }}</strong
         ><small>Контекст и инструкции</small>
       </div>
       <div>
         <span>Токены на выходе</span
-        ><strong>{{ measuredCalls.length ? count(usage.output) : '—' }}</strong
+        ><strong>{{ measuredCalls.length ? count(usage.output) : 'Нет данных' }}</strong
         ><small>{{
           measuredCalls.length
             ? 'По полученным отчётам'
@@ -292,7 +294,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
         }}</small>
       </div>
       <div>
-        <span>{{ cloudCalls ? 'Стоимость по usage' : 'Расходы API запуска' }}</span
+        <span>{{ cloudCalls ? 'Стоимость по ответу API' : 'Расходы API запуска' }}</span
         ><strong>{{ cloudCalls ? usd(usage.actualDollars) : rub(usage.cost) }}</strong
         ><small>{{
           cloudCalls
@@ -304,7 +306,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
       </div>
     </div>
     <p v-if="cloudCalls" class="muted small-text">
-      По полученному usage: {{ usd(usage.actualDollars) }}. Выход включает
+      По ответу API: {{ usd(usage.actualDollars) }}. Выход включает
       {{ count(usage.reasoning) }} токенов рассуждения; повторно они не прибавляются. Незавершённые
       и неопределённые запросы отдельно входят в сумму «С резервом».
     </p>
@@ -315,8 +317,8 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
     </p>
     <div class="live-toolbar">
       <p>
-        <strong>{{ online ? d.workload.running : '—' }}</strong> задач в работе <span>·</span>
-        {{ d.workload.queued }} в очереди<br /><small
+        <strong>{{ online ? d.workload.running : 'Нет данных' }}</strong> задач в работе
+        <span>·</span> {{ d.workload.queued }} в очереди<br /><small
           >Ручных запусков сегодня: {{ d.workload.manual_research_today }} · без суточного
           лимита</small
         >
@@ -334,7 +336,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
           :disabled="researchDisabled"
           @click="emit('research', researchTemplate || undefined)"
         >
-          {{ researchActive ? 'Исследование выполняется…' : 'Новое исследование ↗' }}
+          {{ researchActive ? 'Исследование выполняется…' : 'Проверить идею' }}
         </button>
       </div>
     </div>
@@ -385,7 +387,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
                     ? elapsed(call.created_at, call.finished_at)
                     : online && call.status === 'pending' && job?.status === 'running'
                       ? elapsed(call.created_at)
-                      : '—'
+                      : 'Нет данных'
                 }}</time>
               </summary>
               <p>{{ call.task_label }}</p>
@@ -423,12 +425,12 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
           </h3>
           <p v-if="job.error_code" class="error-text">Причина: {{ job.error_code }}</p>
           <p v-if="job.status === 'failed'">
-            Запуск остановлен. Сохранённые этапы — ниже в истории. После устранения причины
+            Запуск остановлен. Пройденные этапы сохранены в истории. После устранения причины
             запустите новое исследование.
           </p>
           <p v-if="!measuredCalls.length && ['done', 'failed'].includes(job.status)" class="muted">
-            Для этого запуска нет измерений токенов. Прочерк означает отсутствие данных, а не
-            нулевой расход.
+            Для этого запуска нет измерений токенов. Это означает отсутствие данных, а не нулевой
+            расход.
           </p>
           <p>
             {{ calls.filter((c: any) => c.status === 'done').length }} этапов завершено.

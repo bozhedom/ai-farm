@@ -20,6 +20,7 @@ export default defineEventHandler(async () => {
     budget,
     toolCalls,
     workload,
+    orderStats,
   ] = await Promise.all([
     query<AutonomyState>('SELECT * FROM system_state WHERE id=true'),
     query(`SELECT s.*,count(o.id) FILTER(WHERE o.status='delivered')::int AS test_delivered FROM strategies s
@@ -52,6 +53,9 @@ export default defineEventHandler(async () => {
         count(*) FILTER(WHERE dedupe_key LIKE 'manual-research:%' AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::int AS manual_research_today
        FROM jobs`,
     ),
+    query(`SELECT count(*)::int AS total,
+      count(*) FILTER(WHERE status='delivered')::int AS delivered
+      FROM orders`),
   ])
   const c = config()
   const autonomy = await autonomyStatus(state[0]!, budget)
@@ -75,6 +79,7 @@ export default defineEventHandler(async () => {
         product.spec.promise !== sourceSocialDelivery,
     })),
     orders,
+    orderStats: orderStats[0],
     jobs,
     audit,
     evaluations,
