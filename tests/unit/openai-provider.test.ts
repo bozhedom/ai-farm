@@ -5,6 +5,8 @@ import * as db from '../../core/db'
 import * as activity from '../../core/activity'
 import { openaiModel } from '../../core/providers/openai'
 import { openaiCost, openaiMaximum, usdToKopecks } from '../../core/providers/openai-cost'
+import { researchSchemaForEvidence } from '../../core/policy'
+import { dependentResearchIdea, researchEvidence } from '../fixtures/research'
 
 const original = settings.config()
 const args = {
@@ -121,6 +123,21 @@ describe('bounded cloud model', () => {
     await expect(openaiModel(args)).rejects.toThrow('OPENAI_HTTP_429')
     expect(db.query).not.toHaveBeenCalled()
     expect(fetch).toHaveBeenCalledOnce()
+  })
+  it('rejects dependent sources without adding an automatic paid repair', async () => {
+    const data = response()
+    data.output = [
+      {
+        type: 'message',
+        content: [{ type: 'output_text', text: JSON.stringify(dependentResearchIdea) }],
+      },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(data))))
+    await expect(
+      openaiModel({ ...args, schema: researchSchemaForEvidence(researchEvidence, false) }),
+    ).rejects.toThrow('MODEL_SCHEMA_INVALID')
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(db.query).toHaveBeenCalledOnce()
   })
   it('rejects missing usage instead of reporting a free response', async () => {
     vi.stubGlobal(

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { localModel, localSearch, parseSearxResults } from '../../core/providers/local'
 import * as activity from '../../core/activity'
+import { researchSchemaForEvidence } from '../../core/policy'
+import { dependentResearchIdea, researchEvidence } from '../fixtures/research'
 
 beforeEach(() => vi.spyOn(activity, 'reportUsage').mockResolvedValue())
 
@@ -10,6 +12,63 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 describe('local providers', () => {
+  it.each([true, false])(
+    'allows exactly one local repair for dependent sources (corrected: %s)',
+    async (corrected) => {
+      vi.spyOn(activity, 'reportProgress').mockResolvedValue()
+      const validation = vi.spyOn(activity, 'reportValidation').mockResolvedValue()
+      const valid = {
+        ...dependentResearchIdea,
+        sources: [researchEvidence[0]!.url, researchEvidence[2]!.url],
+      }
+      const answer = (idea: typeof dependentResearchIdea) =>
+        new Response(
+          JSON.stringify({
+            message: { content: JSON.stringify(idea) },
+            done: true,
+            prompt_eval_count: 150,
+            eval_count: 100,
+          }) + '\n',
+        )
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(answer(dependentResearchIdea))
+          .mockResolvedValueOnce(answer(corrected ? valid : dependentResearchIdea)),
+      )
+      const context = JSON.stringify({ evidence: researchEvidence, task: 'Проверь гипотезу.' })
+      const result = localModel({
+        key: 'source-repair',
+        system: 'shared rules',
+        context,
+        schema: researchSchemaForEvidence(researchEvidence, false),
+        maxTokens: 1000,
+      })
+      if (corrected) await expect(result).resolves.toEqual(valid)
+      else await expect(result).rejects.toThrow('MODEL_SCHEMA_INVALID')
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(activity.reportUsage).toHaveBeenCalledTimes(2)
+      expect(validation).toHaveBeenNthCalledWith(
+        1,
+        'source-repair',
+        [expect.objectContaining({ path: 'sources', code: 'custom' })],
+        true,
+      )
+      if (!corrected)
+        expect(validation).toHaveBeenNthCalledWith(
+          2,
+          'source-repair',
+          [expect.objectContaining({ path: 'sources', code: 'custom' })],
+          false,
+        )
+      const second = JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string)
+      const repair = JSON.parse(second.messages[1].content)
+      expect(repair.original_context).toBe(context)
+      expect(JSON.parse(repair.candidate)).toEqual(dependentResearchIdea)
+      expect(repair.task).toContain('Состав sources можно изменить')
+    },
+  )
   it('does not repair a monetary estimate to fit a schema limit', async () => {
     vi.spyOn(activity, 'reportProgress').mockResolvedValue()
     const validation = vi.spyOn(activity, 'reportValidation').mockResolvedValue()

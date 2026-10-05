@@ -143,12 +143,18 @@ async function generate<T>(args: LocalModelArgs<T>, attempt: number): Promise<T>
       const retry = attempt === 0 && !issues.some((issue) => issue.path === 'estimatedCostRub')
       await reportValidation(args.key, issues, retry)
       if (!retry) throw new Error('MODEL_SCHEMA_INVALID')
+      const repairSources = issues.some(
+        (issue) => issue.path === 'sources' || issue.path.startsWith('sources.'),
+      )
       // This bounded repair is local-only and has no API charge. No candidate is published before validation.
       return generate(
         {
           ...args,
           context: JSON.stringify({
-            task: 'Исправь только указанные ошибки формата в candidate. Верни полный JSON по схеме из system. Не меняй факты и ссылки. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.',
+            task: repairSources
+              ? 'Исправь указанные ошибки в candidate и верни полный JSON по схеме из system. Состав sources можно изменить: выбери только URL из evidence в original_context, минимум с двух разных доменов. Ссылки должны подходить к фактам гипотезы. Нельзя переписывать URL, добавлять новые ссылки или менять факты и оценку расходов. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.'
+              : 'Исправь только указанные ошибки формата в candidate. Верни полный JSON по схеме из system. Не меняй факты и ссылки. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.',
+            original_context: repairSources ? args.context : undefined,
             candidate: output,
             validation_errors: issues,
           }),

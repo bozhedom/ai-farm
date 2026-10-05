@@ -113,6 +113,30 @@ export function validateEvidence(sources: string[], evidence: Evidence[], demo: 
   const domains = new Set(sources.map((url) => new URL(url).hostname.replace(/^www\./, '')))
   if (!demo && domains.size < 2) throw new Error('INSUFFICIENT_SOURCES')
 }
+
+/** Local schema repair may correct source selection, but never invent or replace evidence. */
+export function researchSchemaForEvidence(evidence: Evidence[], demo: boolean) {
+  return researchSchema
+    .extend({
+      sources: z
+        .array(z.enum(evidence.map((item) => item.url) as [string, ...string[]]))
+        .min(2)
+        .max(6),
+    })
+    .superRefine((idea, context) => {
+      try {
+        validateEvidence(idea.sources, evidence, demo)
+      } catch {
+        context.addIssue({
+          code: 'custom',
+          path: ['sources'],
+          message:
+            'Выбери ссылки из evidence минимум с двух разных доменов. Несколько страниц одного сайта, включая www, считаются одним доменом. Не изменяй URL и не добавляй ссылки вне списка.',
+        })
+      }
+    })
+}
+
 export function safeSourceUrl(url: string) {
   try {
     const u = new URL(url)

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { z } from 'zod'
 import { config } from '../config'
 import { audit, query, transaction } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
@@ -10,7 +9,7 @@ import {
   POLICY,
   outputSchema,
   productSchema,
-  researchSchema,
+  researchSchemaForEvidence,
   reviewSchema,
   templates,
   validateOutput,
@@ -128,12 +127,7 @@ export async function research(job: Job) {
       key: `${job.id}:${template}:research`,
       reservationId,
       context,
-      schema: researchSchema.extend({
-        sources: z
-          .array(z.enum(evidence.map((e) => e.url) as [string, ...string[]]))
-          .min(2)
-          .max(6),
-      }),
+      schema: researchSchemaForEvidence(evidence, config().MODEL_PROVIDER === 'demo'),
       demoValue: {
         title: demoSpecs[template].name,
         problem: 'Подготовка понятного текста по существующим материалам требует времени.',

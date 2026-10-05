@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { demoResult, demoSpecs } from '../../core/providers/demo'
 import { parseSearchXml } from '../../core/providers'
 import { recipes } from '../../core/templates'
@@ -11,7 +12,9 @@ import {
   validateProduct,
   validateOutput,
   safeSourceUrl,
+  researchSchemaForEvidence,
 } from '../../core/policy'
+import { dependentResearchIdea, researchEvidence } from '../fixtures/research'
 
 describe('bounded product policy', () => {
   it('accepts factual product material', () =>
@@ -86,6 +89,50 @@ describe('bounded product policy', () => {
     )
     expect(() => validateEvidence([evidence[0]!.url], evidence, false)).toThrow(
       'INSUFFICIENT_SOURCES',
+    )
+  })
+  it('makes dependent research sources a repairable schema issue without changing the candidate', () => {
+    const schema = researchSchemaForEvidence(researchEvidence, false)
+    const candidate = structuredClone(dependentResearchIdea)
+    const result = schema.safeParse(candidate)
+    expect(result.success).toBe(false)
+    if (!result.success)
+      expect(result.error.issues).toEqual([
+        expect.objectContaining({ code: 'custom', path: ['sources'] }),
+      ])
+    expect(candidate).toEqual(dependentResearchIdea)
+    const corrected = {
+      ...candidate,
+      sources: [researchEvidence[0]!.url, researchEvidence[2]!.url],
+    }
+    expect(schema.parse(corrected)).toEqual(corrected)
+    expect(() => validateEvidence(candidate.sources, researchEvidence, false)).toThrow(
+      'INSUFFICIENT_SOURCES',
+    )
+  })
+  it('keeps strict JSON-schema output and forbids invented sources in live and demo modes', () => {
+    for (const demo of [false, true]) {
+      const schema = researchSchemaForEvidence(researchEvidence, demo)
+      expect(z.toJSONSchema(schema)).toMatchObject({
+        additionalProperties: false,
+        properties: {
+          sources: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 6,
+            items: { enum: researchEvidence.map((item) => item.url) },
+          },
+        },
+      })
+      expect(() =>
+        schema.parse({
+          ...dependentResearchIdea,
+          sources: [researchEvidence[0]!.url, 'https://fabricated.example/source'],
+        }),
+      ).toThrow()
+    }
+    expect(researchSchemaForEvidence(researchEvidence, true).parse(dependentResearchIdea)).toEqual(
+      dependentResearchIdea,
     )
   })
   it.each([
