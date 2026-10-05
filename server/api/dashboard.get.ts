@@ -4,6 +4,7 @@ import { query } from '../../core/db'
 import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
 import { recipes } from '../../core/templates'
+import { sourceSocialDelivery, sourceSocialInputLimit } from '../../core/source-posts'
 import { templateSchema } from '../../core/policy'
 import { autonomyStatus, type AutonomyState } from '../../core/autonomy'
 export default defineEventHandler(async () => {
@@ -60,7 +61,18 @@ export default defineEventHandler(async () => {
     hypotheses,
     products: products.map((product) => ({
       ...product,
-      delivery: recipes[templateSchema.parse(product.template)].delivery,
+      delivery:
+        product.template === 'social' && product.spec.promise === sourceSocialDelivery
+          ? sourceSocialDelivery
+          : recipes[templateSchema.parse(product.template)].delivery,
+      inputLimit:
+        product.template === 'social' && product.spec.promise === sourceSocialDelivery
+          ? sourceSocialInputLimit
+          : 4000,
+      needsRefresh:
+        product.template === 'social' &&
+        c.MODEL_PROVIDER === 'ollama' &&
+        product.spec.promise !== sourceSocialDelivery,
     })),
     orders,
     jobs,

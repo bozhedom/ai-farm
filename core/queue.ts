@@ -105,7 +105,9 @@ export async function finishJob(job: Job, error?: unknown) {
     const terminal =
       !!code &&
       (job.attempts >= job.max_attempts ||
-        /POLICY|UNCERTAIN|BUDGET|INPUT|SOURCE|SCHEMA|REVIEW|OUTPUT|PROVIDER_CHANGED/.test(code))
+        /POLICY|UNCERTAIN|BUDGET|INPUT|SOURCE|SCHEMA|REVIEW|OUTPUT|PROVIDER_CHANGED|RECIPE_REFRESH/.test(
+          code,
+        ))
     await query(
       `UPDATE jobs SET status=$2,error_code=$3,locked_until=null,lease_token=null,
       run_after=now()+make_interval(secs=>$4),finished_at=CASE WHEN $2 IN ('done','failed') THEN now() ELSE null END WHERE id=$1`,

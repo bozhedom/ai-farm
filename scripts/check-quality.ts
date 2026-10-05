@@ -17,9 +17,11 @@ Object.assign(process.env, {
 const { pool, query } = await import('../core/db')
 const { model } = await import('../core/providers')
 const { reserveBudget, closeReservation } = await import('../core/budget')
-const { outputSchema, reviewSchema, validateInput, validateOutput } = await import('../core/policy')
-const { generationContext, reviewContext } = await import('../core/jobs/text-context')
+const { reviewSchema, validateInput, validateOutput } = await import('../core/policy')
+const { reviewContext } = await import('../core/jobs/text-context')
 const { recipes } = await import('../core/templates')
+const { generateText } = await import('../core/jobs/generate-text')
+const { sourceSocialDelivery } = await import('../core/source-posts')
 const { config } = await import('../core/config')
 
 const cases = [
@@ -51,21 +53,19 @@ try {
   for (const item of cases) {
     const key = `quality:${run}:${item.template}`
     const reservationId = await reserveBudget(key, 'order')
-    const product = { template: item.template, promise: recipes[item.template].delivery }
+    const product = {
+      template: item.template,
+      promise: item.template === 'social' ? sourceSocialDelivery : recipes[item.template].delivery,
+    }
     let output: string | undefined
     try {
       validateInput(item.input)
-      const generated = await model({
-        role: 'Исполнитель',
+      const generated = await generateText({
         key: `${key}:generate`,
         reservationId,
-        context: generationContext(
-          product,
-          item.input,
-          'Короткие формулировки, только исходные факты.',
-        ),
-        schema: outputSchema,
-        demoValue: { text: '' },
+        product,
+        input: item.input,
+        approach: 'Короткие формулировки, только исходные факты.',
       })
       output = generated.text
       validateOutput(item.template, output)

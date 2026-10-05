@@ -1,16 +1,10 @@
 import { audit, query, transaction } from '../db'
 import { closeReservation } from '../budget'
 import { model } from '../providers'
-import { demoResult } from '../providers/demo'
-import {
-  outputSchema,
-  reviewSchema,
-  templateSchema,
-  validateOutput,
-  validateInput,
-} from '../policy'
+import { reviewSchema, templateSchema, validateOutput, validateInput } from '../policy'
 import type { Job } from '../queue'
-import { generationContext, reviewContext } from './text-context'
+import { reviewContext } from './text-context'
+import { generateText } from './generate-text'
 
 export async function fulfill(job: Job) {
   const [order] = await query('SELECT * FROM orders WHERE id=$1', [job.payload.orderId])
@@ -22,15 +16,13 @@ export async function fulfill(job: Job) {
   validateInput(order.input)
   await query("UPDATE orders SET status='running' WHERE id=$1 AND status='paid'", [order.id])
   const template = templateSchema.parse(order.product_snapshot.template)
-  const demoText = demoResult(template, order.input)
   const product = { template, promise: order.product_snapshot.promise as string }
-  const output = await model({
-    role: 'Исполнитель',
+  const output = await generateText({
     key: `${job.id}:generate`,
     reservationId: order.reservation_id,
-    context: generationContext(product, order.input, order.strategy_snapshot.approach),
-    schema: outputSchema,
-    demoValue: { text: demoText },
+    product,
+    input: order.input,
+    approach: order.strategy_snapshot.approach,
   })
   try {
     validateOutput(template, output.text)

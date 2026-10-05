@@ -25,6 +25,7 @@ import { attemptLogin, validSession, digest } from '../../core/auth'
 import { reportUsage } from '../../core/activity'
 import { productHistory } from '../../core/products'
 import { recipes } from '../../core/templates'
+import { sourceSocialDelivery } from '../../core/source-posts'
 import { scheduleWork, setSchedule, autonomyStatus, type AutonomyState } from '../../core/autonomy'
 
 const input = 'Керамическая кружка 350 мл. Белая глазурь, ручная работа. Мыть вручную.'
@@ -845,6 +846,164 @@ describe('durable autonomous pipeline', () => {
         await query('SELECT status FROM budget_reservations WHERE dedupe_key=$1', [`order:${o.id}`])
       )[0]!.status,
     ).toBe('closed')
+  })
+})
+
+describe('frozen social service recipes', () => {
+  const material =
+    'Мастерская выпустила пеналы. Скидка на пеналы составляет 10%. Только по субботам. Карандаши не входят в комплект.'
+
+  async function publishSocial(provider: 'demo' | 'ollama' | 'openrouter') {
+    const config = vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: provider,
+      SEARCH_PROVIDER: provider === 'demo' ? 'demo' : 'searxng',
+    })
+    const search = vi.spyOn(providers, 'search').mockResolvedValue([
+      {
+        url: 'https://example.com/text-services',
+        title: 'Предложение текстовых услуг',
+        snippet: 'Текстовые услуги по материалам заказчика.',
+        observedAt: new Date().toISOString(),
+        demo: provider === 'demo',
+      },
+      {
+        url: 'https://example.org/text-editors',
+        title: 'Текстовые редакторы',
+        snippet: 'Бесплатные инструменты для оформления текста.',
+        observedAt: new Date().toISOString(),
+        demo: provider === 'demo',
+      },
+    ])
+    // The provider output is a fixture; product publication, versioning and the queue stay real.
+    const model = vi
+      .spyOn(providers, 'model')
+      .mockImplementation(async (args: any) => args.schema.parse(args.demoValue))
+    try {
+      await requestResearch('social')
+      const job = (await claimJob(['research']))!
+      await runJob(job)
+      await finishJob(job)
+      return (await query("SELECT * FROM products WHERE template='social'"))[0]!
+    } finally {
+      model.mockRestore()
+      search.mockRestore()
+      config.mockRestore()
+    }
+  }
+
+  it('refuses an older social recipe on Ollama before creating an order or budget reservation', async () => {
+    const product = await publishSocial('demo')
+    const original = structuredClone(product.spec)
+    expect(original.promise).not.toBe(sourceSocialDelivery)
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'ollama',
+      SEARCH_PROVIDER: 'searxng',
+    })
+    await expect(createOrder(product.id, material, randomUUID())).rejects.toThrow(
+      'PRODUCT_RECIPE_REFRESH_REQUIRED',
+    )
+    expect(await query('SELECT id FROM orders')).toHaveLength(0)
+    expect(await query("SELECT id FROM budget_reservations WHERE category='order'")).toHaveLength(0)
+    expect((await query('SELECT spec FROM products WHERE id=$1', [product.id]))[0]!.spec).toEqual(
+      original,
+    )
+  })
+
+  it('publishes the full-source promise and rejects oversized material before accepting payment obligations', async () => {
+    const product = await publishSocial('ollama')
+    expect(product.spec.promise).toBe(sourceSocialDelivery)
+    expect((await productHistory(product.id)).versions[0]!.spec.promise).toBe(sourceSocialDelivery)
+    const tooLong = 'Материал мастерской. ' + 'А'.repeat(3001 - 'Материал мастерской. '.length)
+    expect(tooLong).toHaveLength(3001)
+    // The frozen recipe enforces its own limit even after changing to another provider.
+    await expect(createOrder(product.id, tooLong, randomUUID())).rejects.toThrow(
+      'INPUT_SOCIAL_LENGTH',
+    )
+    expect(await query('SELECT id FROM orders')).toHaveLength(0)
+    expect(await query("SELECT id FROM budget_reservations WHERE category='order'")).toHaveLength(0)
+  })
+
+  it('sends an incompatible paid snapshot to review on its first attempt without a model call', async () => {
+    const product = await publishSocial('demo')
+    const originalPromise = product.spec.promise
+    const created = await createOrder(product.id, material, randomUUID())
+    await sandboxPayment(created.id)
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'ollama',
+      SEARCH_PROVIDER: 'searxng',
+    })
+    const model = vi.spyOn(providers, 'model')
+    const job = (await claimJob(['fulfill']))!
+    expect(job.attempts).toBe(1)
+    expect(job.max_attempts).toBeGreaterThan(1)
+    await expect(runJob(job)).rejects.toThrow('PRODUCT_RECIPE_REFRESH_REQUIRED')
+    await finishJob(job, new Error('PRODUCT_RECIPE_REFRESH_REQUIRED'))
+    expect(model).not.toHaveBeenCalled()
+    expect(await query('SELECT id FROM tool_calls WHERE job_id=$1', [job.id])).toHaveLength(0)
+    expect(
+      (await query('SELECT status,attempts,error_code FROM jobs WHERE id=$1', [job.id]))[0],
+    ).toEqual({ status: 'failed', attempts: 1, error_code: 'PRODUCT_RECIPE_REFRESH_REQUIRED' })
+    const [saved] = await query(
+      'SELECT status,result,product_snapshot,paid_at,reservation_id FROM orders WHERE id=$1',
+      [created.id],
+    )
+    expect(saved!.status).toBe('manual_review')
+    expect(saved!.result).toBeNull()
+    expect(saved!.paid_at).toBeInstanceOf(Date)
+    expect(saved!.product_snapshot).toMatchObject({ version: 1, promise: originalPromise })
+    expect(
+      (
+        await query('SELECT status FROM budget_reservations WHERE id=$1', [saved!.reservation_id])
+      )[0]?.status,
+    ).toBe('closed')
+    expect(await claimJob(['fulfill'])).toBeUndefined()
+  })
+
+  it('keeps an order recipe unchanged when a later research publishes a different promise', async () => {
+    const product = await publishSocial('ollama')
+    const created = await createOrder(product.id, material, randomUUID())
+    const newer = await publishSocial('openrouter')
+    expect(newer.id).toBe(product.id)
+    expect(newer.version).toBe(2)
+    expect(newer.spec.promise).toBe(recipes.social.delivery)
+    expect(newer.spec.promise).not.toBe(sourceSocialDelivery)
+    expect(
+      (await query('SELECT product_snapshot FROM orders WHERE id=$1', [created.id]))[0]!
+        .product_snapshot,
+    ).toMatchObject({ version: 1, promise: sourceSocialDelivery })
+    expect(
+      (await productHistory(product.id)).versions.map((version) => version.spec.promise),
+    ).toEqual([recipes.social.delivery, sourceSocialDelivery])
+  })
+
+  it('fulfills the saved full-source recipe after switching to demo without rewriting its promise', async () => {
+    const product = await publishSocial('ollama')
+    const created = await createOrder(product.id, material, randomUUID())
+    expect(settings.config().MODEL_PROVIDER).toBe('demo')
+    await sandboxPayment(created.id)
+    const job = (await claimJob(['fulfill']))!
+    await runJob(job)
+    await finishJob(job)
+    const [saved] = await query('SELECT status,result,product_snapshot FROM orders WHERE id=$1', [
+      created.id,
+    ])
+    expect(saved!.status).toBe('delivered')
+    expect(saved!.product_snapshot).toMatchObject({ version: 1, promise: sourceSocialDelivery })
+    const normalized = saved!.result.replace(/\s+/gu, ' ')
+    expect(normalized.split(material).length - 1).toBe(3)
+    expect(
+      (await query('SELECT spec FROM products WHERE id=$1', [product.id]))[0]!.spec.promise,
+    ).toBe(sourceSocialDelivery)
+    await runJob(job)
+    expect(
+      await query(
+        "SELECT id FROM audit_events WHERE kind='order_delivered' AND data->>'orderId'=$1",
+        [created.id],
+      ),
+    ).toHaveLength(1)
   })
 })
 

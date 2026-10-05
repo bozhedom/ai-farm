@@ -4,6 +4,7 @@ import { audit, query, transaction } from './db'
 import { reserveBudget } from './budget'
 import { productSchema, validateInput } from './policy'
 import { orderProgress, paymentErrorText } from './order-progress'
+import { sourceSocialDelivery, validateSourcePostInput } from './source-posts'
 
 export async function createOrder(productId: string, input: string, requestKey: string) {
   validateInput(input)
@@ -28,6 +29,11 @@ export async function createOrder(productId: string, input: string, requestKey: 
     )
     if (!product) throw new Error('PRODUCT_NOT_FOUND')
     productSchema.parse(product.spec)
+    if (product.template === 'social') {
+      if (product.spec.promise === sourceSocialDelivery) validateSourcePostInput(input)
+      else if (config().MODEL_PROVIDER === 'ollama')
+        throw new Error('PRODUCT_RECIPE_REFRESH_REQUIRED')
+    }
     const [strategy] = await query(
       "SELECT * FROM strategies WHERE status='active' ORDER BY random() LIMIT 1",
       [],
