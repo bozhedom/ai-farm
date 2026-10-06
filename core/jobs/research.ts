@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { config } from '../config'
+import { config, usesSourcePosts } from '../config'
 import { audit, query, transaction } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model, search } from '../providers'
@@ -89,7 +89,7 @@ export async function research(job: Job) {
       template,
       service: {
         task:
-          template === 'social' && config().MODEL_PROVIDER === 'ollama'
+          template === 'social' && usesSourcePosts(config().MODEL_PROVIDER)
             ? sourceSocialDelivery +
               ' Модель выбирает оформление; сервер повторяет полный текст в каждом варианте и сохраняет исходный порядок. Это форматирование, не создание новых рекламных текстов.'
             : recipes[template].task,
@@ -188,7 +188,7 @@ export async function research(job: Job) {
           }),
           template,
         )
-        if (template === 'social' && config().MODEL_PROVIDER === 'ollama')
+        if (template === 'social' && usesSourcePosts(config().MODEL_PROVIDER))
           spec = {
             ...spec,
             name: 'Оформление публикаций',

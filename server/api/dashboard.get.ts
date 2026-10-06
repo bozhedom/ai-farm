@@ -1,5 +1,5 @@
 import { defineEventHandler } from 'h3'
-import { config } from '../../core/config'
+import { config, usesSourcePosts } from '../../core/config'
 import { query } from '../../core/db'
 import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
@@ -75,7 +75,7 @@ export default defineEventHandler(async () => {
           : 4000,
       needsRefresh:
         product.template === 'social' &&
-        c.MODEL_PROVIDER === 'ollama' &&
+        usesSourcePosts(c.MODEL_PROVIDER) &&
         product.spec.promise !== sourceSocialDelivery,
     })),
     orders,

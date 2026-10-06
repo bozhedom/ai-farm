@@ -85,6 +85,10 @@ export function config(): Config {
   return c
 }
 
+/** Free models distorted rewritten posts; their social service only lays out the full source text. */
+export function usesSourcePosts(provider: string) {
+  return provider === 'ollama' || provider === 'openrouter'
+}
 export function isFreeOpenrouterModel(model: string) {
   return (
     model === 'openrouter/free' ||

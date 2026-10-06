@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { config } from './config'
+import { config, usesSourcePosts } from './config'
 import { audit, query, transaction } from './db'
 import { reserveBudget } from './budget'
 import { productSchema, validateInput } from './policy'
@@ -31,7 +31,7 @@ export async function createOrder(productId: string, input: string, requestKey: 
     productSchema.parse(product.spec)
     if (product.template === 'social') {
       if (product.spec.promise === sourceSocialDelivery) validateSourcePostInput(input)
-      else if (config().MODEL_PROVIDER === 'ollama')
+      else if (usesSourcePosts(config().MODEL_PROVIDER))
         throw new Error('PRODUCT_RECIPE_REFRESH_REQUIRED')
     }
     const [strategy] = await query(

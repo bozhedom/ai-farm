@@ -853,7 +853,7 @@ describe('frozen social service recipes', () => {
   const material =
     'Мастерская выпустила пеналы. Скидка на пеналы составляет 10%. Только по субботам. Карандаши не входят в комплект.'
 
-  async function publishSocial(provider: 'demo' | 'ollama' | 'openrouter') {
+  async function publishSocial(provider: 'demo' | 'ollama' | 'openrouter' | 'openai') {
     const config = vi.spyOn(settings, 'config').mockReturnValue({
       ...settings.config(),
       MODEL_PROVIDER: provider,
@@ -911,19 +911,26 @@ describe('frozen social service recipes', () => {
     )
   })
 
-  it('publishes the full-source promise and rejects oversized material before accepting payment obligations', async () => {
-    const product = await publishSocial('ollama')
-    expect(product.spec.promise).toBe(sourceSocialDelivery)
-    expect((await productHistory(product.id)).versions[0]!.spec.promise).toBe(sourceSocialDelivery)
-    const tooLong = 'Материал мастерской. ' + 'А'.repeat(3001 - 'Материал мастерской. '.length)
-    expect(tooLong).toHaveLength(3001)
-    // The frozen recipe enforces its own limit even after changing to another provider.
-    await expect(createOrder(product.id, tooLong, randomUUID())).rejects.toThrow(
-      'INPUT_SOCIAL_LENGTH',
-    )
-    expect(await query('SELECT id FROM orders')).toHaveLength(0)
-    expect(await query("SELECT id FROM budget_reservations WHERE category='order'")).toHaveLength(0)
-  })
+  it.each(['ollama', 'openrouter'] as const)(
+    'publishes the full-source promise on %s and rejects oversized material before accepting payment obligations',
+    async (provider) => {
+      const product = await publishSocial(provider)
+      expect(product.spec.promise).toBe(sourceSocialDelivery)
+      expect((await productHistory(product.id)).versions[0]!.spec.promise).toBe(
+        sourceSocialDelivery,
+      )
+      const tooLong = 'Материал мастерской. ' + 'А'.repeat(3001 - 'Материал мастерской. '.length)
+      expect(tooLong).toHaveLength(3001)
+      // The frozen recipe enforces its own limit even after changing to another provider.
+      await expect(createOrder(product.id, tooLong, randomUUID())).rejects.toThrow(
+        'INPUT_SOCIAL_LENGTH',
+      )
+      expect(await query('SELECT id FROM orders')).toHaveLength(0)
+      expect(await query("SELECT id FROM budget_reservations WHERE category='order'")).toHaveLength(
+        0,
+      )
+    },
+  )
 
   it('sends an incompatible paid snapshot to review on its first attempt without a model call', async () => {
     const product = await publishSocial('demo')
@@ -965,7 +972,7 @@ describe('frozen social service recipes', () => {
   it('keeps an order recipe unchanged when a later research publishes a different promise', async () => {
     const product = await publishSocial('ollama')
     const created = await createOrder(product.id, material, randomUUID())
-    const newer = await publishSocial('openrouter')
+    const newer = await publishSocial('openai')
     expect(newer.id).toBe(product.id)
     expect(newer.version).toBe(2)
     expect(newer.spec.promise).toBe(recipes.social.delivery)

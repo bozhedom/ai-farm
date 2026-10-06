@@ -1,4 +1,4 @@
-import { config } from '../config'
+import { config, usesSourcePosts } from '../config'
 import { model } from '../providers'
 import { demoResult } from '../providers/demo'
 import { outputSchema, type ProductSpec } from '../policy'
@@ -37,7 +37,7 @@ export async function generateText(args: {
     })
     return renderSourcePosts(args.input, result)
   }
-  if (config().MODEL_PROVIDER === 'ollama' && args.product.template === 'social')
+  if (usesSourcePosts(config().MODEL_PROVIDER) && args.product.template === 'social')
     throw new Error('PRODUCT_RECIPE_REFRESH_REQUIRED')
   return model({
     role: 'Исполнитель',
