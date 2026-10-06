@@ -62,14 +62,17 @@ const emit = defineEmits<{ control: [action: string] }>()
       <pre>
 MODEL_PROVIDER=openrouter
 OPENROUTER_API_KEY=ваш_ключ
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=dots-studio/dots-3-note-preview:free
+OPENROUTER_REASONING_EFFORT=low
 SEARCH_PROVIDER=searxng</pre>
       <p>Затем пересоздайте приложение и обработчик:</p>
       <pre>
 docker compose -f compose.yaml -f compose.local.yaml --profile app up -d --build web worker observer</pre>
       <p>
-        Первое подключение поддерживает только бесплатные модели. Они могут быть недоступны или
-        ограничивать число запросов. Полная инструкция: <code>docs/13-openrouter.md</code>.
+        Поддерживаются только бесплатные модели. Указанная модель проверена 06.10.2026: при запрете
+        сбора данных <code>openrouter/free</code> не находит подходящего маршрута. Бесплатные модели
+        могут исчезать или ограничивать число запросов. Полная инструкция:
+        <code>docs/13-openrouter.md</code>.
       </p>
     </details>
   </section>
