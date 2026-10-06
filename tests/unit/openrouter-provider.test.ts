@@ -151,6 +151,13 @@ describe('free OpenRouter adapter', () => {
     await openrouterModel(args)
     expect(vi.mocked(db.query).mock.calls[0]![1]?.slice(3, 6)).toEqual([null, null, null])
   })
+  it('keeps reasoning unknown when a provider counts it outside completion tokens', async () => {
+    const data = response()
+    data.usage.completion_tokens_details.reasoning_tokens = 239
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(data))))
+    await openrouterModel(args)
+    expect(vi.mocked(db.query).mock.calls[0]![1]?.slice(1, 6)).toEqual([1000, 100, 200, 300, null])
+  })
   it('rejects missing usage, impossible counts and missing price', async () => {
     for (const usage of [
       null,
@@ -184,6 +191,13 @@ describe('free OpenRouter adapter', () => {
     vi.mocked(settings.config).mockReturnValue({ ...settings.config(), OPENROUTER_API_KEY: '' })
     await expect(openrouterModel(args)).rejects.toThrow('OPENROUTER_CREDENTIALS_REQUIRED')
     expect(fetch).not.toHaveBeenCalled()
+  })
+  it('reports an upstream error inside a successful HTTP response without usage', async () => {
+    const data = { error: { message: 'provider unavailable', code: 502 } }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(data))))
+    await expect(openrouterModel(args)).rejects.toThrow('OPENROUTER_RESPONSE_ERROR')
+    expect(db.query).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledOnce()
   })
   it('does not retry HTTP errors or expose provider diagnostics', async () => {
     vi.stubGlobal(

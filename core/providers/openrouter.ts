@@ -102,12 +102,17 @@ export async function openrouterModel<T>(args: {
     throw new Error('OPENROUTER_RESPONSE_INVALID')
   }
   const usage = usageSchema.safeParse(data?.usage)
+  // OpenRouter can report an upstream failure inside an HTTP 200 body without usage.
+  if (!usage.success && data?.error && data?.usage == null)
+    throw new Error('OPENROUTER_RESPONSE_ERROR')
   if (!usage.success) throw new Error('OPENROUTER_USAGE_INVALID')
   const { prompt_tokens: input, completion_tokens: output } = usage.data
   const cached = usage.data.prompt_tokens_details?.cached_tokens ?? null
   const writes = usage.data.prompt_tokens_details?.cache_write_tokens ?? null
-  const reasoning = usage.data.completion_tokens_details?.reasoning_tokens ?? null
-  if ((cached ?? 0) + (writes ?? 0) > input || (reasoning ?? 0) > output || output > args.maxTokens)
+  // Some free providers count reasoning outside completion_tokens. Keep that split unknown.
+  const reported = usage.data.completion_tokens_details?.reasoning_tokens ?? null
+  const reasoning = reported !== null && reported <= output ? reported : null
+  if ((cached ?? 0) + (writes ?? 0) > input || output > args.maxTokens)
     throw new Error('OPENROUTER_USAGE_INVALID')
   const microusd = openrouterCost(usage.data.cost)
   // Retain usage even when the answer is truncated, refused, invalid or unexpectedly billed.
