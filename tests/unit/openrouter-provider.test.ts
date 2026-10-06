@@ -89,7 +89,7 @@ describe('free OpenRouter adapter', () => {
       ],
       max_tokens: 100,
       stream: false,
-      response_format: { type: 'json_schema', json_schema: { strict: true } },
+      response_format: { type: 'json_object' },
       provider: {
         require_parameters: true,
         allow_fallbacks: false,
@@ -101,7 +101,6 @@ describe('free OpenRouter adapter', () => {
     expect(body.tools).toBeUndefined()
     expect(body.models).toBeUndefined()
     expect(body.fallbacks).toBeUndefined()
-    expect(body.response_format.json_schema.schema.$schema).toBeUndefined()
     expect(db.query).toHaveBeenCalledWith(expect.stringContaining('actual_microusd'), [
       'free-cloud-check',
       1000,
@@ -113,6 +112,21 @@ describe('free OpenRouter adapter', () => {
       'gen_test',
     ])
     expect(fetch).toHaveBeenCalledOnce()
+  })
+  it('limits reasoning only when the owner configures an effort', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(response()))))
+    await openrouterModel(args)
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string).reasoning).toBeUndefined()
+    vi.mocked(settings.config).mockReturnValue({
+      ...settings.config(),
+      OPENROUTER_REASONING_EFFORT: 'low',
+    })
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(response())))
+    await openrouterModel(args)
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string)).toMatchObject({
+      reasoning: { effort: 'low', exclude: true },
+      provider: { require_parameters: true, allow_fallbacks: false },
+    })
   })
   it.each([
     ['incomplete', 'MODEL_OUTPUT_INCOMPLETE'],
@@ -185,7 +199,7 @@ describe('free OpenRouter adapter', () => {
   })
   it('requires a key and a bounded output before making a request', async () => {
     vi.stubGlobal('fetch', vi.fn())
-    await expect(openrouterModel({ ...args, maxTokens: 2801 })).rejects.toThrow(
+    await expect(openrouterModel({ ...args, maxTokens: 8001 })).rejects.toThrow(
       'OPENROUTER_OUTPUT_LIMIT_INVALID',
     )
     vi.mocked(settings.config).mockReturnValue({ ...settings.config(), OPENROUTER_API_KEY: '' })

@@ -16,6 +16,8 @@ const schema = z.object({
   OPENAI_USD_KOPECKS: positive(12000).refine((n) => n <= 1000000),
   OPENROUTER_API_KEY: z.string().default(''),
   OPENROUTER_MODEL: z.string().default('openrouter/free'),
+  // Reasoning models can spend the whole output limit before the JSON answer.
+  OPENROUTER_REASONING_EFFORT: z.enum(['', 'minimal', 'low', 'medium', 'high']).default(''),
   OLLAMA_URL: z.url().default('http://127.0.0.1:11434'),
   OLLAMA_MODEL: z
     .string()

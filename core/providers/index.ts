@@ -7,7 +7,7 @@ import { POLICY, safeSourceUrl, type Evidence, type Template } from '../policy'
 import { localModel, localSearch } from './local'
 import { reportUsage } from '../activity'
 import { openaiModel } from './openai'
-import { openrouterModel } from './openrouter'
+import { OPENROUTER_OUTPUT_TOKENS, openrouterModel } from './openrouter'
 import { openaiMaximum, usdToKopecks } from './openai-cost'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
@@ -147,15 +147,20 @@ export async function model<T>(args: {
     ...args.context,
   })
   // UTF-8 bytes plus fixed overhead safely overestimate input token count for this small text context.
-  const maxTokens = args.maxOutputTokens ?? (args.role === 'Исследователь' ? 2800 : 2000)
-  // Cloud JSON-schema providers also receive the schema separately from the system instructions.
+  // Free OpenRouter models often reason past 2 800 tokens. Their zero price is enforced per call.
+  const maxTokens =
+    args.maxOutputTokens ??
+    (c.MODEL_PROVIDER === 'openrouter'
+      ? OPENROUTER_OUTPUT_TOKENS
+      : args.role === 'Исследователь'
+        ? 2800
+        : 2000)
+  // OpenAI also receives the schema separately from the system instructions.
   const upperInput =
     Buffer.byteLength(
       system +
         context +
-        (['openai', 'openrouter'].includes(c.MODEL_PROVIDER)
-          ? JSON.stringify(z.toJSONSchema(args.schema))
-          : ''),
+        (c.MODEL_PROVIDER === 'openai' ? JSON.stringify(z.toJSONSchema(args.schema)) : ''),
       'utf8',
     ) + 2048
   if (upperInput > 100000) throw new Error('CONTEXT_TOO_LARGE')

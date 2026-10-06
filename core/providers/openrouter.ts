@@ -29,6 +29,9 @@ export function openrouterCost(value: number | string) {
   return Number(microusd)
 }
 
+/** Reasoning and answer share this limit; only zero-price models are accepted. */
+export const OPENROUTER_OUTPUT_TOKENS = 8000
+
 export async function openrouterModel<T>(args: {
   key: string
   system: string
@@ -39,10 +42,12 @@ export async function openrouterModel<T>(args: {
   const c = config()
   if (!c.OPENROUTER_API_KEY) throw new Error('OPENROUTER_CREDENTIALS_REQUIRED')
   if (!isFreeOpenrouterModel(c.OPENROUTER_MODEL)) throw new Error('OPENROUTER_FREE_MODEL_REQUIRED')
-  if (!Number.isSafeInteger(args.maxTokens) || args.maxTokens < 16 || args.maxTokens > 2800)
+  if (
+    !Number.isSafeInteger(args.maxTokens) ||
+    args.maxTokens < 16 ||
+    args.maxTokens > OPENROUTER_OUTPUT_TOKENS
+  )
     throw new Error('OPENROUTER_OUTPUT_LIMIT_INVALID')
-  const schema = z.toJSONSchema(args.schema)
-  delete schema.$schema
   // Explicit free routes and zero price ceilings. Never retry or switch to a paid model.
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -57,11 +62,13 @@ export async function openrouterModel<T>(args: {
         { role: 'user', content: args.context },
       ],
       max_tokens: args.maxTokens,
+      ...(c.OPENROUTER_REASONING_EFFORT
+        ? { reasoning: { effort: c.OPENROUTER_REASONING_EFFORT, exclude: true } }
+        : {}),
       stream: false,
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: 'farm_result', strict: true, schema },
-      },
+      // Provider-side strict decoding made free models copy the input verbatim. The schema is in
+      // the system prompt, and every answer is still parsed by the project schema below.
+      response_format: { type: 'json_object' },
       provider: {
         require_parameters: true,
         allow_fallbacks: false,
