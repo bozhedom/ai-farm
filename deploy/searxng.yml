@@ -1,9 +1,26 @@
 use_default_settings:
   engines:
+    # Free engines rate-limit or time out independently; keep several so one outage does not stop research.
     keep_only:
+      - yandex
       - duckduckgo
       - bing
       - brave
+      - yahoo
+      - mojeek
+      - presearch
+# keep_only keeps definitions; engines disabled upstream must still be enabled explicitly.
+engines:
+  - name: yandex
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: presearch
+    disabled: false
 search:
   safe_search: 2
   default_lang: ru-RU
