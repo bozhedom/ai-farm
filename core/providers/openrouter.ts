@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { config, isFreeOpenrouterModel } from '../config'
 import { query } from '../db'
-import { reportProgress } from '../activity'
+import { reportProgress, reportValidation } from '../activity'
+import { schemaRepair } from './local'
 
 const tokens = z.number().int().nonnegative().max(100000)
 const usageSchema = z.object({
@@ -32,13 +33,21 @@ export function openrouterCost(value: number | string) {
 /** Reasoning and answer share this limit; only zero-price models are accepted. */
 export const OPENROUTER_OUTPUT_TOKENS = 8000
 
-export async function openrouterModel<T>(args: {
+type OpenrouterArgs<T> = {
   key: string
   system: string
   context: string
   schema: z.ZodType<T>
   maxTokens: number
-}) {
+}
+type Usage = { input: number; output: number; cached: number | null; writes: number | null }
+const add = (a: number | null, b: number | null) => (a === null || b === null ? null : a + b)
+
+export async function openrouterModel<T>(
+  args: OpenrouterArgs<T>,
+  attempt = 0,
+  prior?: Usage,
+): Promise<{ value: T; microusd: number; cost: number }> {
   const c = config()
   if (!c.OPENROUTER_API_KEY) throw new Error('OPENROUTER_CREDENTIALS_REQUIRED')
   if (!isFreeOpenrouterModel(c.OPENROUTER_MODEL)) throw new Error('OPENROUTER_FREE_MODEL_REQUIRED')
@@ -48,7 +57,7 @@ export async function openrouterModel<T>(args: {
     args.maxTokens > OPENROUTER_OUTPUT_TOKENS
   )
     throw new Error('OPENROUTER_OUTPUT_LIMIT_INVALID')
-  // Explicit free routes and zero price ceilings. Never retry or switch to a paid model.
+  // Explicit free routes and zero price ceilings. Never resend after an error or use a paid model.
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -122,6 +131,15 @@ export async function openrouterModel<T>(args: {
   if ((cached ?? 0) + (writes ?? 0) > input || output > args.maxTokens)
     throw new Error('OPENROUTER_USAGE_INVALID')
   const microusd = openrouterCost(usage.data.cost)
+  // A repair adds its usage to the first answer; the reasoning split is then unknown.
+  const total: Usage = prior
+    ? {
+        input: prior.input + input,
+        output: prior.output + output,
+        cached: add(prior.cached, cached),
+        writes: add(prior.writes, writes),
+      }
+    : { input, output, cached, writes }
   // Retain usage even when the answer is truncated, refused, invalid or unexpectedly billed.
   await query(
     `UPDATE tool_calls SET input_tokens=$2,output_tokens=$3,cached_tokens=$4,cache_write_tokens=$5,
@@ -129,11 +147,11 @@ export async function openrouterModel<T>(args: {
      WHERE call_key=$1 AND status='pending'`,
     [
       args.key,
-      input,
-      output,
-      cached,
-      writes,
-      reasoning,
+      total.input,
+      total.output,
+      total.cached,
+      total.writes,
+      prior ? null : reasoning,
       microusd,
       typeof data.id === 'string' ? data.id.slice(0, 200) : null,
     ],
@@ -149,11 +167,13 @@ export async function openrouterModel<T>(args: {
   const text = choice.message?.content
   if (typeof text !== 'string' || text.length > 60000) throw new Error('MODEL_SCHEMA_INVALID')
   await reportProgress(args.key, text.length)
-  let value: T
   try {
-    value = args.schema.parse(JSON.parse(text))
-  } catch {
-    throw new Error('MODEL_SCHEMA_INVALID')
+    return { value: args.schema.parse(JSON.parse(text)), microusd: 0, cost: 0 }
+  } catch (error) {
+    const repair = schemaRepair(error, attempt, args.context, text)
+    await reportValidation(args.key, repair.issues, repair.retry)
+    if (!repair.retry) throw new Error('MODEL_SCHEMA_INVALID')
+    // The first answer was delivered at a verified zero price, so one format repair cannot charge.
+    return openrouterModel({ ...args, context: repair.context }, 1, total)
   }
-  return { value, microusd: 0, cost: 0 }
 }

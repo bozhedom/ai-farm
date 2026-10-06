@@ -39,6 +39,7 @@ beforeEach(() => {
   })
   vi.spyOn(db, 'query').mockResolvedValue([])
   vi.spyOn(activity, 'reportProgress').mockResolvedValue()
+  vi.spyOn(activity, 'reportValidation').mockResolvedValue()
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -131,7 +132,6 @@ describe('free OpenRouter adapter', () => {
   it.each([
     ['incomplete', 'MODEL_OUTPUT_INCOMPLETE'],
     ['refusal', 'MODEL_REFUSED'],
-    ['invalid', 'MODEL_SCHEMA_INVALID'],
     ['tools', 'POLICY_MODEL_TOOLS_FORBIDDEN'],
     ['multiple', 'MODEL_OUTPUT_INCOMPLETE'],
     ['error', 'OPENROUTER_RESPONSE_ERROR'],
@@ -139,7 +139,6 @@ describe('free OpenRouter adapter', () => {
     const data = response()
     if (kind === 'incomplete') data.choices[0]!.finish_reason = 'length'
     if (kind === 'refusal') data.choices[0]!.finish_reason = 'content_filter'
-    if (kind === 'invalid') data.choices[0]!.message.content = '{"wrong":true}'
     if (kind === 'tools') Object.assign(data.choices[0]!.message, { tool_calls: [{}] })
     if (kind === 'multiple') data.choices.push(data.choices[0]!)
     if (kind === 'error') Object.assign(data, { error: { message: 'private detail' } })
@@ -147,6 +146,47 @@ describe('free OpenRouter adapter', () => {
     await expect(openrouterModel(args)).rejects.toThrow(error)
     expect(db.query).toHaveBeenCalledOnce()
     expect(fetch).toHaveBeenCalledOnce()
+  })
+  it('allows one zero-price format repair and adds its usage to the call', async () => {
+    const invalid = response()
+    invalid.choices[0]!.message.content = '{"wrong":true}'
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(invalid)))
+        .mockResolvedValueOnce(new Response(JSON.stringify(response()))),
+    )
+    expect((await openrouterModel(args)).value).toEqual({ text: 'Проверено' })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    const repair = JSON.parse(
+      JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string).messages[1].content,
+    )
+    expect(repair).toMatchObject({ candidate: '{"wrong":true}' })
+    expect(repair.validation_errors.length).toBeGreaterThan(0)
+    expect(activity.reportValidation).toHaveBeenCalledWith(args.key, expect.any(Array), true)
+    expect(vi.mocked(db.query).mock.calls[1]![1]?.slice(1, 7)).toEqual([
+      2000,
+      200,
+      400,
+      600,
+      null,
+      0,
+    ])
+  })
+  it('stops after one failed format repair', async () => {
+    const invalid = () => {
+      const data = response()
+      data.choices[0]!.message.content = 'not json'
+      return new Response(JSON.stringify(data))
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => invalid()),
+    )
+    await expect(openrouterModel(args)).rejects.toThrow('MODEL_SCHEMA_INVALID')
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(activity.reportValidation).toHaveBeenLastCalledWith(args.key, expect.any(Array), false)
   })
   it('retains a reported charge and blocks output instead of calling it free', async () => {
     const data = response()

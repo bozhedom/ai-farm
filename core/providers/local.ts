@@ -51,6 +51,40 @@ export async function localSearch(queryText: string) {
   return value
 }
 
+/** One bounded format repair for free models; cost estimates are never sent back for revision. */
+export function schemaRepair(error: unknown, attempt: number, context: string, candidate: string) {
+  const issues =
+    error instanceof z.ZodError
+      ? error.issues.slice(0, 12).map((issue) => ({
+          path: issue.path.map(String).join('.'),
+          code: issue.code,
+          message: issue.message,
+        }))
+      : [
+          {
+            path: '',
+            code: 'invalid_json',
+            message: 'Верни корректный JSON без пояснений вокруг объекта.',
+          },
+        ]
+  const retry = attempt === 0 && !issues.some((issue) => issue.path === 'estimatedCostRub')
+  const repairSources = issues.some(
+    (issue) => issue.path === 'sources' || issue.path.startsWith('sources.'),
+  )
+  return {
+    issues,
+    retry,
+    context: JSON.stringify({
+      task: repairSources
+        ? 'Исправь указанные ошибки в candidate и верни полный JSON по схеме из system. Состав sources можно изменить: выбери только URL из evidence в original_context, минимум с двух разных доменов. Ссылки должны подходить к фактам гипотезы. Нельзя переписывать URL, добавлять новые ссылки или менять факты и оценку расходов. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.'
+        : 'Исправь только указанные ошибки формата в candidate. Верни полный JSON по схеме из system. Не меняй факты и ссылки. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.',
+      original_context: repairSources ? context : undefined,
+      candidate,
+      validation_errors: issues,
+    }),
+  }
+}
+
 /** Stream only counters to the dashboard. Parse and validate the complete answer before use. */
 type LocalModelArgs<T> = {
   key: string
@@ -126,41 +160,11 @@ async function generate<T>(args: LocalModelArgs<T>, attempt: number): Promise<T>
     try {
       return args.schema.parse(JSON.parse(output))
     } catch (error) {
-      const issues =
-        error instanceof z.ZodError
-          ? error.issues.slice(0, 12).map((issue) => ({
-              path: issue.path.map(String).join('.'),
-              code: issue.code,
-              message: issue.message,
-            }))
-          : [
-              {
-                path: '',
-                code: 'invalid_json',
-                message: 'Верни корректный JSON без пояснений вокруг объекта.',
-              },
-            ]
-      const retry = attempt === 0 && !issues.some((issue) => issue.path === 'estimatedCostRub')
-      await reportValidation(args.key, issues, retry)
-      if (!retry) throw new Error('MODEL_SCHEMA_INVALID')
-      const repairSources = issues.some(
-        (issue) => issue.path === 'sources' || issue.path.startsWith('sources.'),
-      )
-      // This bounded repair is local-only and has no API charge. No candidate is published before validation.
-      return generate(
-        {
-          ...args,
-          context: JSON.stringify({
-            task: repairSources
-              ? 'Исправь указанные ошибки в candidate и верни полный JSON по схеме из system. Состав sources можно изменить: выбери только URL из evidence в original_context, минимум с двух разных доменов. Ссылки должны подходить к фактам гипотезы. Нельзя переписывать URL, добавлять новые ссылки или менять факты и оценку расходов. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.'
-              : 'Исправь только указанные ошибки формата в candidate. Верни полный JSON по схеме из system. Не меняй факты и ссылки. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.',
-            original_context: repairSources ? args.context : undefined,
-            candidate: output,
-            validation_errors: issues,
-          }),
-        },
-        1,
-      )
+      const repair = schemaRepair(error, attempt, args.context, output)
+      await reportValidation(args.key, repair.issues, repair.retry)
+      if (!repair.retry) throw new Error('MODEL_SCHEMA_INVALID')
+      // This bounded repair has no API charge. No candidate is published before validation.
+      return generate({ ...args, context: repair.context }, 1)
     }
   } finally {
     await reader.cancel().catch(() => {})
