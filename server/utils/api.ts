@@ -27,7 +27,7 @@ export async function respond<T>(fn: () => Promise<T>): Promise<T> {
     const status =
       code === 'LOGIN_FAILED'
         ? 401
-        : code === 'LOGIN_RATE_LIMIT'
+        : code === 'LOGIN_RATE_LIMIT' || code === 'RATE_LIMITED'
           ? 429
           : code.endsWith('NOT_FOUND')
             ? 404
