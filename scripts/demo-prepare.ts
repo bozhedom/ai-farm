@@ -12,8 +12,8 @@ import { activityFeed } from '../core/activity-feed'
  * Prepares the office and the storefront for a show: a few full farm cycles (scouting by all
  * agents, a manager report, research of the best ideas with publication, lead search with
  * reply drafts) and one quality selection round with a lowered K. It uses the configured
- * providers. Refuses to touch a working database unless its name ends with _test, the demo
- * provider is configured, or --i-know-this-is-production is passed.
+ * providers. Refuses a working database unless its name ends with _test (by current_database())
+ * or --i-know-this-is-production is passed. The demo provider does not lift this check.
  */
 const args = process.argv.slice(2)
 const flag = (name: string) => args.includes(name)
@@ -29,9 +29,11 @@ const c = config()
 
 const [database] = await query('SELECT current_database() AS name')
 const testDatabase = String(database?.name).endsWith('_test')
-if (!testDatabase && c.MODEL_PROVIDER !== 'demo' && !flag('--i-know-this-is-production')) {
+// The demo provider is not a way around this check: on a working database a selection round
+// would archive real agents and demo products would replace real versions.
+if (!testDatabase && !flag('--i-know-this-is-production')) {
   console.error(
-    `Отказ: база «${database?.name}» не тестовая, а модель не демо. Запустите на базе *_test, с MODEL_PROVIDER=demo или с флагом --i-know-this-is-production.`,
+    `Отказ: база «${database?.name}» не тестовая. Запустите на базе *_test или с флагом --i-know-this-is-production.`,
   )
   await pool.end()
   process.exit(2)

@@ -165,6 +165,8 @@ export function buyerService(row: ProductRow): PublicService | null {
 }
 
 const publicColumns = 'template,slug,version,price_kopecks,page,is_demo,spec,checks'
+/** Demo products reach buyers only on a demo stand, never on a stand with a real model. */
+const demoAllowed = () => config().MODEL_PROVIDER === 'demo'
 
 /** Whether a buyer may start an order right now. */
 export async function acceptingOrders() {
@@ -188,7 +190,9 @@ function seller() {
 export async function publicCatalog(): Promise<PublicCatalog> {
   const rows = await query(
     `SELECT ${publicColumns} FROM products
-     WHERE status='sandbox' AND visibility='public' ORDER BY published_at,slug`,
+     WHERE status='sandbox' AND visibility='public' AND (NOT is_demo OR $1)
+     ORDER BY published_at,slug`,
+    [demoAllowed()],
   )
   return {
     services: rows.map(buyerService).filter((s): s is PublicService => !!s),
@@ -204,8 +208,8 @@ export async function publicService(slug: string) {
   if (!/^[a-z0-9][a-z0-9-]{1,60}$/.test(slug)) throw new Error('SERVICE_NOT_FOUND')
   const [row] = await query(
     `SELECT ${publicColumns} FROM products
-     WHERE slug=$1 AND status='sandbox' AND visibility='public'`,
-    [slug],
+     WHERE slug=$1 AND status='sandbox' AND visibility='public' AND (NOT is_demo OR $2)`,
+    [slug, demoAllowed()],
   )
   const service = row && buyerService(row)
   if (!service) throw new Error('SERVICE_NOT_FOUND')
