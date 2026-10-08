@@ -1,7 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
-import { parseSamples, type ObservationSample, type ServiceChecks } from '../core/observation'
+import {
+  parseReadinessChecks,
+  parseSamples,
+  type ObservationSample,
+  type ServiceChecks,
+} from '../core/observation'
 
 // This process has no model, database credentials, customer data or Docker socket.
 const directory = process.env.HEALTH_DIRECTORY || '.health'
@@ -30,23 +35,12 @@ while (!stopping) {
   try {
     const response = await fetch(target, { signal: AbortSignal.timeout(8000), redirect: 'error' })
     const body = await response.json()
-    if (
-      body &&
-      ['database', 'worker', 'payments', 'backup'].every(
-        (key) => typeof body.checks?.[key] === 'boolean',
-      )
-    )
-      checks = {
-        database: body.checks.database,
-        worker: body.checks.worker,
-        payments: body.checks.payments,
-        backup: body.checks.backup,
-      }
-    if (!response.ok && checks && Object.values(checks).every(Boolean)) checks = null
+    checks = parseReadinessChecks(body, response.ok)
   } catch {
     /* A failed sample must be recorded, including an unreachable web process. */
   }
   samples.push({
+    version: 2,
     at: new Date().toISOString(),
     ok: !!checks && Object.values(checks).every(Boolean),
     checks,

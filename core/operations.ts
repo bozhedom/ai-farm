@@ -1,7 +1,14 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { query } from './db'
-import { isFresh, observationSummary, parseSamples, type ServiceChecks } from './observation'
+import { config } from './config'
+import {
+  isFresh,
+  observationSummary,
+  parseSamples,
+  type InfrastructureChecks,
+  type ServiceChecks,
+} from './observation'
 
 export const healthDirectory = () => process.env.HEALTH_DIRECTORY || '.health'
 async function readStatus(name: string) {
@@ -16,20 +23,64 @@ async function readStatus(name: string) {
 }
 export async function serviceReadiness(now = new Date()) {
   const [state, backup] = await Promise.all([
-    query('SELECT worker_heartbeat,payment_heartbeat FROM system_state WHERE id=true')
+    query(
+      'SELECT worker_heartbeat,payment_heartbeat,provider_readiness FROM system_state WHERE id=true',
+    )
       .then((rows) => rows[0])
       .catch(() => null),
     readStatus('backup.json'),
   ])
-  const checks: ServiceChecks = {
+  const infrastructureChecks: InfrastructureChecks = {
     database: !!state,
     worker: isFresh(state?.worker_heartbeat, 90000, now),
     payments: isFresh(state?.payment_heartbeat, 120000, now),
     backup: backup?.status === 'ok' && isFresh(backup?.completedAt, 26 * 3600000, now),
   }
+  const readiness = state?.provider_readiness
+  const providerHeartbeat = isFresh(readiness?.checkedAt, 90000, now)
+  const checks: ServiceChecks = {
+    ...infrastructureChecks,
+    providerHeartbeat,
+    model: providerHeartbeat && readiness?.model === true,
+    search: providerHeartbeat && readiness?.search === true,
+  }
+  const c = config()
   return {
+    version: 2 as const,
     status: Object.values(checks).every(Boolean) ? 'ok' : 'degraded',
     checks,
+    infrastructure: {
+      status: Object.values(infrastructureChecks).every(Boolean) ? 'ok' : 'degraded',
+      checks: infrastructureChecks,
+    },
+    providers: {
+      status: checks.model && checks.search ? 'ok' : 'degraded',
+      checkedAt:
+        typeof readiness?.checkedAt === 'string' && Number.isFinite(Date.parse(readiness.checkedAt))
+          ? readiness.checkedAt
+          : null,
+      fresh: providerHeartbeat,
+      model: {
+        provider: c.MODEL_PROVIDER,
+        preflightReady: checks.model,
+        verification:
+          c.MODEL_PROVIDER === 'ollama'
+            ? ('local_probe' as const)
+            : c.MODEL_PROVIDER === 'demo'
+              ? ('demo' as const)
+              : ('not_probed' as const),
+      },
+      search: {
+        provider: c.SEARCH_PROVIDER,
+        preflightReady: checks.search,
+        verification:
+          c.SEARCH_PROVIDER === 'searxng'
+            ? ('local_probe' as const)
+            : c.SEARCH_PROVIDER === 'demo'
+              ? ('demo' as const)
+              : ('not_probed' as const),
+      },
+    },
     checkedAt: now.toISOString(),
   }
 }
