@@ -10,6 +10,12 @@ import {
   validateSourcePostInput,
 } from '../source-posts'
 import { generationContext } from './text-context'
+import {
+  isStructuredTemplate,
+  structuredTextFormat,
+  structuredTextSchema,
+  renderStructuredText,
+} from '../structured-text'
 
 type TextProduct = Pick<ProductSpec, 'template' | 'promise'>
 
@@ -39,6 +45,30 @@ export async function generateText(args: {
   }
   if (usesSourcePosts(config().MODEL_PROVIDER) && args.product.template === 'social')
     throw new Error('PRODUCT_RECIPE_REFRESH_REQUIRED')
+  const template = args.product.template
+  if (config().MODEL_PROVIDER !== 'demo' && isStructuredTemplate(template)) {
+    const context = generationContext(args.product, args.input, args.approach)
+    const result = await model({
+      role: 'Исполнитель',
+      key: args.key,
+      reservationId: args.reservationId,
+      context: {
+        ...context,
+        task: context.task.replace(
+          'Выполни recipe и верни текст.',
+          'Выполни смысловые требования recipe и верни поля JSON-схемы.',
+        ),
+        outputFormat: structuredTextFormat(template),
+      },
+      schema: structuredTextSchema(template),
+      // Demo follows the original branch below; this fallback stays explicitly synthetic.
+      demoValue: { text: demoResult(template, args.input) },
+    })
+    // Persisted successful calls from the previous renderer keep their idempotency key.
+    // A live response cannot take this branch: its fields must pass the structured schema.
+    if (Object.hasOwn(result, 'text')) return outputSchemaForTemplate(template).parse(result)
+    return renderStructuredText(template, result)
+  }
   return model({
     role: 'Исполнитель',
     key: args.key,
