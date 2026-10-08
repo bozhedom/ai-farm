@@ -14,6 +14,7 @@ import {
   validateOutput,
   validateEvidence,
   validateInput,
+  validateTemplateInput,
   validateProduct,
   type Template,
   type ProductSpec,
@@ -22,6 +23,7 @@ import type { Job } from '../queue'
 import { reviewContext } from './text-context'
 import { generateText } from './generate-text'
 import { sourceSocialDelivery } from '../source-posts'
+import { discoverOpportunities } from '../opportunities'
 
 export async function research(job: Job) {
   const strategies = await query(
@@ -55,7 +57,14 @@ export async function research(job: Job) {
           )
           .slice(0, existing.length ? 1 : 2)
     plan = selected.map((template, i) => {
-      const strategy = strategies[(new Date().getUTCDate() + i) % 4]!
+      const strategy =
+        strategies[
+          ((savedJob!.payload.campaignId
+            ? Number(savedJob!.payload.campaignPosition) - 1
+            : new Date().getUTCDate()) +
+            i) %
+            4
+        ]!
       return { template, strategy: { id: strategy.id, approach: strategy.approach } }
     })
     await query('UPDATE jobs SET payload=payload||$2::jsonb WHERE id=$1', [
@@ -79,6 +88,7 @@ export async function research(job: Job) {
     )
       continue
     const evidence = await search(template, `${job.id}:${template}:search`, reservationId)
+    await discoverOpportunities(job.id, template, reservationId)
     const memory = await query(
       `SELECT title,status,research->>'counterargument' AS counterargument,
       research->>'experiment' AS experiment,critique->>'reason' AS critique,is_demo
@@ -196,7 +206,7 @@ export async function research(job: Job) {
             inputLabel: 'Исходный текст для трёх вариантов оформления',
           }
         const fixture = recipes[template].fixture
-        validateInput(fixture)
+        validateTemplateInput(template, fixture)
         const rejects = (input: string) => {
           try {
             validateInput(input)
@@ -255,6 +265,15 @@ export async function research(job: Job) {
     }
     await transaction(async (db) => {
       const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
+      const [lease] = await query(
+        `SELECT id FROM jobs WHERE id=$1 AND status='running'
+         AND lease_token=$2 AND locked_until>now() FOR UPDATE`,
+        [job.id, job.lease_token],
+        db,
+      )
+      // The provider response and its charge remain in tool_calls. A late worker must
+      // neither publish after cancellation nor close the reservation of a newer lease.
+      if (!lease) throw new Error('LEASE_LOST')
       const accepted = !!spec && !blockedReason
       const count = (await query("SELECT id FROM products WHERE status='sandbox'", [], db)).length
       const [occupied] = await query(

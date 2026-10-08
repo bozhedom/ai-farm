@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { pool, query } from '../../core/db'
 import * as settings from '../../core/config'
 import { budgetSummary, meteredCall, reserveBudget } from '../../core/budget'
+import * as budget from '../../core/budget'
 import {
   claimJob,
   enqueue,
@@ -14,10 +15,16 @@ import {
   requestResearch,
 } from '../../core/queue'
 import { runJob } from '../../core/jobs/run'
-import type { Template } from '../../core/policy'
+import { templates, type Template } from '../../core/policy'
 import * as providers from '../../core/providers'
 import { createOrder, orderDetails } from '../../core/orders'
 import { resolveOrder } from '../../core/order-resolution'
+import { opportunityList, saveOpportunities, updateOpportunity } from '../../core/opportunities'
+import {
+  cancelResearchCampaign,
+  requestResearchCampaign,
+  researchCampaignStatus,
+} from '../../core/research-campaign'
 import { paymentHash, paymentReceiver, paymentRpc } from '../fixtures/sepolia'
 import type { Invoice } from '../../core/payments'
 import { sandboxPayment, submitTransaction, reconcilePayments } from '../../core/payments'
@@ -27,7 +34,13 @@ import { reportUsage } from '../../core/activity'
 import { productHistory } from '../../core/products'
 import { recipes } from '../../core/templates'
 import { sourceSocialDelivery } from '../../core/source-posts'
-import { scheduleWork, setSchedule, autonomyStatus, type AutonomyState } from '../../core/autonomy'
+import {
+  scheduleWork,
+  setSchedule,
+  setResearchScope,
+  autonomyStatus,
+  type AutonomyState,
+} from '../../core/autonomy'
 
 const input = 'Керамическая кружка 350 мл. Белая глазурь, ручная работа. Мыть вручную.'
 beforeAll(async () => {
@@ -312,6 +325,19 @@ describe('durable autonomous pipeline', () => {
         await finishJob(rejected)
       }
       expect(await query("SELECT id FROM products WHERE template='social'")).toHaveLength(0)
+      // Every untried direction gets a turn before an existing service is refreshed.
+      for (const template of templates.slice(3)) {
+        await requestResearch()
+        const untried = (await claimJob(['research']))!
+        await runJob(untried)
+        await finishJob(untried)
+        expect(
+          (await query('SELECT template,status FROM hypotheses WHERE job_id=$1', [untried.id]))[0],
+        ).toEqual({
+          template,
+          status: 'accepted',
+        })
+      }
       await requestResearch()
       const next = (await claimJob(['research']))!
       await runJob(next)
@@ -335,7 +361,8 @@ describe('durable autonomous pipeline', () => {
     await runJob(job)
     await finishJob(job)
     const calls = await query('SELECT * FROM tool_calls WHERE job_id=$1', [job.id])
-    expect(calls).toHaveLength(6)
+    expect(calls).toHaveLength(7)
+    expect(calls.filter((call) => call.role === 'search')).toHaveLength(2)
     expect(
       calls.every(
         (c) => c.status === 'done' && c.finished_at && c.task_label && c.provider === 'demo',
@@ -564,26 +591,64 @@ describe('durable autonomous pipeline', () => {
     expect(await query("SELECT id FROM audit_events WHERE kind='order_delivered'")).toHaveLength(0)
     expect((await budgetSummary()).outstanding).toBe(0)
   })
-  it('builds and fulfills all three server recipes through the same versioned pipeline', async () => {
-    for (const template of ['description', 'faq', 'social'] as const) {
-      await requestResearch(template)
+  it('builds every campaign recipe and delivers each order once through its saved version and QA', async () => {
+    const campaign = await requestResearchCampaign()
+    for (const template of templates) {
       const job = (await claimJob(['research']))!
+      expect(job.payload.campaignId).toBe(campaign.campaignId)
+      expect(JSON.parse(job.payload.templates!)).toEqual([template])
       await runJob(job)
       await finishJob(job)
       const [product] = await query('SELECT * FROM products WHERE template=$1', [template])
       expect(product!.checks).toMatchObject({ input: recipes[template].fixture, normal: 'PASS' })
       expect(product!.spec.promise).toBe(recipes[template].delivery)
       const created = await createOrder(product!.id, recipes[template].fixture, randomUUID())
-      await sandboxPayment(created.id)
-      const delivery = (await claimJob(['fulfill']))!
+      await Promise.all([sandboxPayment(created.id), sandboxPayment(created.id)])
+      const delivery = (await claimJob(['research', 'fulfill']))!
+      expect(delivery.kind).toBe('fulfill')
       await runJob(delivery)
       await finishJob(delivery)
-      expect((await query('SELECT status FROM orders WHERE id=$1', [created.id]))[0]!.status).toBe(
-        'delivered',
-      )
+      await runJob(delivery)
+      expect((await orderDetails(created.id)).product_snapshot).toMatchObject({
+        template,
+        version: 1,
+        promise: recipes[template].delivery,
+      })
+      expect((await orderDetails(created.id)).status).toBe('delivered')
+      expect((await orderDetails(created.id)).review?.verdict).toBe('PASS')
+      expect(
+        await query(
+          "SELECT id FROM audit_events WHERE kind='order_delivered' AND data->>'orderId'=$1",
+          [created.id],
+        ),
+      ).toHaveLength(1)
     }
-    expect(await query('SELECT id FROM products')).toHaveLength(3)
-    expect(await query('SELECT * FROM product_versions')).toHaveLength(3)
+    expect(await query('SELECT id FROM products')).toHaveLength(templates.length)
+    expect(await query('SELECT * FROM product_versions')).toHaveLength(templates.length)
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toHaveLength(templates.length)
+    expect(
+      await query("SELECT id FROM budget_reservations WHERE category='research'"),
+    ).toHaveLength(templates.length)
+    expect(await query("SELECT id FROM budget_reservations WHERE status='open'")).toHaveLength(0)
+    const status = await researchCampaignStatus(campaign.campaignId)
+    expect(status).toMatchObject({
+      total: templates.length,
+      completed: templates.length,
+      failed: 0,
+      pending: 0,
+      running: 0,
+      status: 'done',
+    })
+    expect(
+      status!.items.every((item) => item.hypothesisStatus === 'accepted' && item.productId),
+    ).toBe(true)
+    expect(
+      (
+        await query(
+          'SELECT count(*)::int AS uses FROM hypotheses GROUP BY strategy_id ORDER BY strategy_id',
+        )
+      ).map((row) => row.uses),
+    ).toEqual([3, 3, 3, 3])
     expect((await budgetSummary()).openaiSpentMicrousd).toBe(0)
   })
   it('blocks malformed social output before spending on QA or publishing a product', async () => {
@@ -850,6 +915,217 @@ describe('durable autonomous pipeline', () => {
   })
 })
 
+describe('template-specific order inputs', () => {
+  it('rejects missing translation instructions before reserving or creating an order', async () => {
+    await requestResearch('translation')
+    const researchJob = (await claimJob(['research']))!
+    await runJob(researchJob)
+    await finishJob(researchJob)
+    const [product] = await query("SELECT id FROM products WHERE template='translation'")
+    await expect(createOrder(product!.id, input, randomUUID())).rejects.toThrow(
+      'TRANSLATION_LANGUAGE_REQUIRED',
+    )
+    await expect(
+      createOrder(product!.id, 'Язык перевода: английский\nКоротко.', randomUUID()),
+    ).rejects.toThrow('INPUT_LENGTH')
+    expect(await query('SELECT id FROM orders')).toHaveLength(0)
+    expect(await query("SELECT id FROM budget_reservations WHERE category='order'")).toHaveLength(0)
+    const created = await createOrder(product!.id, recipes.translation.fixture, randomUUID())
+    await sandboxPayment(created.id)
+    const job = (await claimJob(['fulfill']))!
+    // A legacy or damaged snapshot must be revalidated before any provider call.
+    await query('UPDATE orders SET input=$2 WHERE id=$1', [created.id, input])
+    const model = vi.spyOn(providers, 'model')
+    await expect(runJob(job)).rejects.toThrow('TRANSLATION_LANGUAGE_REQUIRED')
+    await finishJob(job, new Error('TRANSLATION_LANGUAGE_REQUIRED'))
+    expect(model).not.toHaveBeenCalled()
+    expect((await orderDetails(created.id)).status).toBe('manual_review')
+    expect(await query('SELECT id FROM tool_calls WHERE job_id=$1', [job.id])).toHaveLength(0)
+  })
+})
+
+describe('public customer-source candidates', () => {
+  const source = {
+    url: 'https://example.com/request?service=text&utm_source=search&gclid=tracking#offer',
+    title: 'Ищем автора текстов для мастерской',
+    snippet: 'Нужен редактор описаний по подтверждённым характеристикам товаров.',
+    observedAt: '2026-10-08T00:00:00Z',
+    demo: true,
+  }
+
+  it('discovers marked demo candidates with each research and never duplicates a replay', async () => {
+    await research()
+    const first = await opportunityList()
+    expect(first.total).toBe(4)
+    expect(first.items.every((item) => item.is_demo && item.stage === 'new')).toBe(true)
+    expect(new Set(first.items.map((item) => item.template))).toEqual(
+      new Set(['description', 'faq']),
+    )
+    const [job] = await query("SELECT * FROM jobs WHERE dedupe_key='test-research'")
+    await runJob(job as any)
+    expect(await opportunityList()).toEqual(first)
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='opportunities_discovered'"),
+    ).toHaveLength(2)
+    expect(await query("SELECT id FROM tool_calls WHERE call_key LIKE '%:customers'")).toHaveLength(
+      2,
+    )
+  })
+
+  it('refreshes a canonical source on a new run while retaining the owner stage and note', async () => {
+    const first = await enqueue('research', 'source-first')
+    const second = await enqueue('research', 'source-second')
+    await query("UPDATE jobs SET created_at='2026-10-08T00:00:00Z' WHERE id=$1", [first.id])
+    await query("UPDATE jobs SET created_at='2026-10-08T01:00:00Z' WHERE id=$1", [second.id])
+    expect(await saveOpportunities(first.id, 'description', [source])).toBe(1)
+    const [before] = await query('SELECT * FROM opportunities')
+    expect(before!.url).toBe('https://example.com/request?service=text')
+    await updateOpportunity(before!.id, {
+      stage: 'saved',
+      note: 'Проверить условия заявки на сайте.',
+    })
+    expect(
+      await saveOpportunities(first.id, 'description', [
+        { ...source, title: 'Повтор первого ответа' },
+      ]),
+    ).toBe(0)
+    expect(
+      await saveOpportunities(second.id, 'description', [
+        {
+          ...source,
+          url: 'https://example.com/request?service=text&utm_medium=new',
+          title: 'Обновлённая заявка мастерской',
+        },
+      ]),
+    ).toBe(1)
+    expect((await query('SELECT * FROM opportunities'))[0]).toMatchObject({
+      id: before!.id,
+      url: before!.url,
+      first_job_id: first.id,
+      last_job_id: second.id,
+      first_seen_at: before!.first_seen_at,
+      title: 'Обновлённая заявка мастерской',
+      stage: 'saved',
+      note: 'Проверить условия заявки на сайте.',
+    })
+    expect((await opportunityList()).total).toBe(1)
+    const latest = await query('SELECT * FROM opportunities')
+    expect(await saveOpportunities(first.id, 'description', [source])).toBe(0)
+    expect(await query('SELECT * FROM opportunities')).toEqual(latest)
+  })
+
+  it('drops unsafe or prohibited sources, redacts contacts and separates demo from live evidence', async () => {
+    const job = await enqueue('research', 'filtered-sources')
+    const accepted = {
+      ...source,
+      title: 'Текст для компании: contact@example.org',
+      snippet: 'Публичный запрос описаний по материалу. Контакт +7 (999) 123-45-67.',
+    }
+    expect(
+      await saveOpportunities(job.id, 'description', [
+        { ...source, url: 'http://example.com/insecure' },
+        { ...source, url: 'https://localhost/private' },
+        { ...source, url: 'https://127.0.0.1/private' },
+        { ...source, url: 'https://login:password@example.com/private' },
+        { ...source, snippet: 'Требуется реклама казино для массового продвижения.' },
+        accepted,
+      ]),
+    ).toBe(1)
+    expect(await saveOpportunities(job.id, 'description', [{ ...accepted, demo: false }])).toBe(1)
+    const candidates = await opportunityList()
+    expect(candidates.total).toBe(2)
+    expect(new Set(candidates.items.map((item) => item.is_demo))).toEqual(new Set([true, false]))
+    expect(
+      candidates.items.every(
+        (item) =>
+          item.title.includes('[контакт в источнике]') &&
+          item.snippet.includes('[контакт в источнике]'),
+      ),
+    ).toBe(true)
+    expect(JSON.stringify(candidates.items)).not.toContain('contact@example.org')
+    expect(JSON.stringify(candidates.items)).not.toContain('999')
+  })
+
+  it('validates owner updates and never counts a manually won candidate as revenue', async () => {
+    const job = await enqueue('research', 'source-status')
+    await saveOpportunities(job.id, 'description', [source])
+    const [candidate] = await query('SELECT * FROM opportunities')
+    await expect(updateOpportunity(randomUUID(), { stage: 'saved' })).rejects.toThrow(
+      'OPPORTUNITY_NOT_FOUND',
+    )
+    await expect(updateOpportunity(candidate!.id, { stage: 'paid' })).rejects.toBeInstanceOf(
+      z.ZodError,
+    )
+    await expect(
+      updateOpportunity(candidate!.id, { stage: 'won', note: 'x'.repeat(1001) }),
+    ).rejects.toBeInstanceOf(z.ZodError)
+    const before = await budgetSummary()
+    const value = { stage: 'won', note: '  Владелец отметил завершение переговоров.  ' }
+    const first = await updateOpportunity(candidate!.id, value)
+    expect(await updateOpportunity(candidate!.id, value)).toEqual(first)
+    expect(first).toEqual({ id: candidate!.id, stage: 'won', note: value.note.trim() })
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='opportunity_updated'"),
+    ).toHaveLength(1)
+    expect(await budgetSummary()).toEqual(before)
+    expect(await query('SELECT id FROM orders')).toHaveLength(0)
+    await evaluateWeek('candidate-is-not-revenue')
+    expect((await query('SELECT decision,details FROM evaluations'))[0]).toMatchObject({
+      decision: 'HOLD',
+      details: { realRevenueKopecks: 0 },
+    })
+  })
+
+  it('keeps older saved candidates accessible through pagination and validated filters', async () => {
+    const job = await enqueue('research', 'source-pages')
+    for (let start = 0; start < 55; start += 6) {
+      await saveOpportunities(
+        job.id,
+        'description',
+        Array.from({ length: Math.min(6, 55 - start) }, (_, index) => ({
+          ...source,
+          url: `https://example.com/request/${start + index}`,
+        })),
+      )
+    }
+    const [saved] = await query('SELECT id FROM opportunities ORDER BY first_seen_at,id LIMIT 1')
+    await updateOpportunity(saved!.id, {
+      stage: 'saved',
+      note: 'Сохранённый кандидат до новых результатов.',
+    })
+    const first = await opportunityList()
+    const second = await opportunityList({ offset: '50' })
+    expect(first).toMatchObject({ total: 55, limit: 50, offset: 0, hasMore: true })
+    expect(first.items).toHaveLength(50)
+    expect(second).toMatchObject({ total: 55, limit: 50, offset: 50, hasMore: false })
+    expect(second.items).toHaveLength(5)
+    expect(new Set([...first.items, ...second.items].map((item) => item.id)).size).toBe(55)
+    const filtered = await opportunityList({ stage: 'saved', template: 'description' })
+    expect(filtered).toMatchObject({ total: 1, hasMore: false })
+    expect(filtered.items[0]!.id).toBe(saved!.id)
+    expect((await opportunityList({ stage: 'saved', template: 'faq' })).items).toHaveLength(0)
+    await expect(opportunityList({ offset: -1 })).rejects.toBeInstanceOf(z.ZodError)
+    await expect(opportunityList({ offset: 0.5 })).rejects.toBeInstanceOf(z.ZodError)
+    await expect(opportunityList({ stage: 'paid' } as any)).rejects.toBeInstanceOf(z.ZodError)
+    await expect(opportunityList({ template: 'unknown' } as any)).rejects.toBeInstanceOf(z.ZodError)
+  })
+
+  it('records a failed optional customer search without fabricating candidates or stopping research', async () => {
+    const original = providers.search
+    vi.spyOn(providers, 'search').mockImplementation(async (...args) => {
+      if (args[3] === 'customers') throw new Error('SEARCH_HTTP_503')
+      return original(...args)
+    })
+    expect(await research()).toHaveLength(2)
+    expect((await opportunityList()).total).toBe(0)
+    expect(
+      await query(
+        "SELECT id FROM audit_events WHERE kind='opportunities_search_failed' AND data->>'code'='SEARCH_HTTP_503'",
+      ),
+    ).toHaveLength(2)
+  })
+})
+
 describe('owner resolution of test obligations', () => {
   const reason = 'Проверка завершена: тестовый материал отклонён, выдача не требуется.'
 
@@ -1073,6 +1349,524 @@ describe('owner resolution of test obligations', () => {
     expect(
       await query("SELECT id FROM tool_calls WHERE job_id=$1 AND status='done'", [job.id]),
     ).toHaveLength(2)
+  })
+})
+
+describe('durable research campaigns', () => {
+  it.each(['cancelled', 'reclaimed'])(
+    'preserves a late QA response without allowing the old worker to publish after its lease is %s',
+    async (outcome) => {
+      const campaign = await requestResearchCampaign()
+      const job = (await claimJob(['research']))!
+      let signalStarted!: () => void, releaseCall!: () => void
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve
+      })
+      const released = new Promise<void>((resolve) => {
+        releaseCall = resolve
+      })
+      const original = budget.meteredCall
+      const qaInvoke = vi.fn()
+      vi.spyOn(budget, 'meteredCall').mockImplementation(async (args: any) => {
+        if (!args.key.endsWith(':fixture-review')) return original(args)
+        return original({
+          ...args,
+          invoke: async () => {
+            qaInvoke()
+            signalStarted()
+            await released
+            return args.invoke()
+          },
+        })
+      })
+      const pending = runJob(job)
+      let replacement: Awaited<ReturnType<typeof claimJob>>
+      try {
+        await started
+        expect(
+          (
+            await query("SELECT status FROM tool_calls WHERE job_id=$1 AND role='Проверяющий'", [
+              job.id,
+            ])
+          )[0]!.status,
+        ).toBe('pending')
+        await query("UPDATE jobs SET locked_until=now()-interval '1 minute' WHERE id=$1", [job.id])
+        await recoverJobs()
+        if (outcome === 'cancelled') {
+          expect((await cancelResearchCampaign(campaign.campaignId)).cancelled).toBe(
+            templates.length,
+          )
+        } else {
+          replacement = (await claimJob(['research']))!
+          expect(replacement.id).toBe(job.id)
+          expect(replacement.lease_token).not.toBe(job.lease_token)
+        }
+      } finally {
+        releaseCall()
+        await expect(pending).rejects.toThrow('LEASE_LOST')
+      }
+      await finishJob(job, new Error('LEASE_LOST'))
+      expect(await query('SELECT id FROM hypotheses')).toHaveLength(0)
+      expect(await query('SELECT id FROM products')).toHaveLength(0)
+      expect(await query('SELECT * FROM product_versions')).toHaveLength(0)
+      expect(
+        (
+          await query(
+            "SELECT status,output,charged_kopecks FROM tool_calls WHERE job_id=$1 AND role='Проверяющий'",
+            [job.id],
+          )
+        )[0],
+      ).toMatchObject({ status: 'done', output: { verdict: 'PASS' }, charged_kopecks: 0 })
+      expect(await query('SELECT id FROM tool_calls WHERE job_id=$1', [job.id])).toHaveLength(7)
+      expect((await opportunityList()).total).toBe(2)
+      const [reservation] = await query(
+        'SELECT status FROM budget_reservations WHERE dedupe_key=$1',
+        [`research:${job.id}`],
+      )
+      if (outcome === 'cancelled') {
+        expect(reservation!.status).toBe('closed')
+        expect(
+          (await query('SELECT status,error_code FROM jobs WHERE id=$1', [job.id]))[0],
+        ).toEqual({ status: 'failed', error_code: 'RESEARCH_CAMPAIGN_CANCELLED' })
+      } else {
+        expect(reservation!.status).toBe('open')
+        expect(
+          (await query('SELECT status,lease_token FROM jobs WHERE id=$1', [job.id]))[0],
+        ).toEqual({ status: 'running', lease_token: replacement!.lease_token })
+        await runJob(replacement!)
+        await finishJob(replacement!)
+        expect(await query('SELECT id FROM products')).toHaveLength(1)
+        expect(await query('SELECT * FROM product_versions')).toHaveLength(1)
+        expect(await query('SELECT id FROM tool_calls WHERE job_id=$1', [job.id])).toHaveLength(7)
+      }
+      expect(qaInvoke).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('persists a full-portfolio schedule and creates one campaign across concurrent schedulers', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
+    expect((await query('SELECT research_scope FROM system_state'))[0]!.research_scope).toBe(
+      'rotate',
+    )
+    expect(await setResearchScope('all')).toEqual({ scope: 'all' })
+    await setSchedule(true)
+    const now = new Date()
+    const slot = `research:${now.toISOString().slice(0, 10)}`
+    await Promise.all(Array.from({ length: 8 }, () => scheduleWork(now)))
+    const jobs = await query("SELECT id,dedupe_key,payload FROM jobs WHERE kind='research'")
+    expect(jobs).toHaveLength(templates.length)
+    expect(jobs.filter((job) => job.dedupe_key === slot)).toHaveLength(1)
+    expect(jobs.every((job) => job.payload.scheduleSlot === slot)).toBe(true)
+    expect(new Set(jobs.map((job) => job.payload.campaignId)).size).toBe(1)
+    expect(await researchCampaignStatus()).toMatchObject({
+      total: templates.length,
+      pending: templates.length,
+    })
+    expect(await setResearchScope('rotate')).toEqual({ scope: 'rotate' })
+    await scheduleWork(now)
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(templates.length)
+    await expect(setResearchScope('unknown' as any)).rejects.toThrow()
+    expect((await query('SELECT research_scope FROM system_state'))[0]!.research_scope).toBe(
+      'rotate',
+    )
+  })
+
+  it('freezes every queued automatic direction while allowing an explicit single manual run', async () => {
+    const original = settings.config()
+    const config = vi
+      .spyOn(settings, 'config')
+      .mockReturnValue({ ...original, AUTONOMY_ENABLED: true })
+    await setResearchScope('all')
+    await setSchedule(true)
+    await scheduleWork()
+    const campaign = (await researchCampaignStatus())!
+    await setSchedule(false)
+    expect(await claimJob(['research'])).toBeUndefined()
+    await expect(requestResearchCampaign()).rejects.toThrow('RESEARCH_CAMPAIGN_SCHEDULE_PAUSED')
+    const manual = await requestResearch('faq')
+    expect(manual.reused).toBe(false)
+    const job = (await claimJob(['research']))!
+    expect(job.id).toBe(manual.id)
+    expect(job.payload.campaignId).toBeUndefined()
+    await runJob(job)
+    await finishJob(job)
+    expect(await researchCampaignStatus(campaign.id)).toMatchObject({
+      pending: templates.length,
+      running: 0,
+    })
+    await setSchedule(true)
+    config.mockReturnValue({ ...original, AUTONOMY_ENABLED: false })
+    expect(await claimJob(['research'])).toBeUndefined()
+    config.mockReturnValue({ ...original, AUTONOMY_ENABLED: true })
+    const first = (await claimJob(['research']))!
+    expect(first.payload.campaignId).toBe(campaign.id)
+    expect(first.payload.campaignPosition).toBe('01')
+    expect(first.attempts).toBe(1)
+    await setSchedule(false)
+    await runJob(first)
+    await finishJob(first)
+    expect(await claimJob(['research'])).toBeUndefined()
+    expect(await researchCampaignStatus(campaign.id)).toMatchObject({
+      completed: 1,
+      pending: templates.length - 1,
+    })
+    await setSchedule(true)
+    const second = (await claimJob(['research']))!
+    expect(second.payload.campaignPosition).toBe('02')
+  })
+
+  it('preserves automatic portfolio jobs after midnight and never adds a pause backlog', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
+    await setResearchScope('all')
+    await setSchedule(true)
+    const now = new Date()
+    await scheduleWork(now)
+    const campaign = (await researchCampaignStatus())!
+    const tomorrow = new Date(now.getTime() + 86400000)
+    await query("UPDATE jobs SET created_at=now()-interval '2 days' WHERE kind='research'")
+    await expireResearchSlots(tomorrow.toISOString().slice(0, 10))
+    await query("UPDATE system_state SET mode='paused'")
+    await scheduleWork(tomorrow)
+    await scheduleWork(new Date(now.getTime() + 3 * 86400000))
+    expect(await researchCampaignStatus(campaign.id)).toMatchObject({
+      pending: templates.length,
+      failed: 0,
+    })
+    expect(await claimJob(['research'])).toBeUndefined()
+    await query("UPDATE system_state SET mode='running'")
+    await scheduleWork(tomorrow)
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(templates.length)
+    const first = (await claimJob(['research']))!
+    expect(first.payload.campaignId).toBe(campaign.id)
+    expect(first.payload.campaignPosition).toBe('01')
+  })
+
+  async function spendResearchBudget(kopecks: number) {
+    const reservationId = await reserveBudget('used-research-budget', 'research')
+    await meteredCall({
+      key: 'used-research-call',
+      reservationId,
+      role: 'Исследователь',
+      maximum: kopecks,
+      demo: false,
+      invoke: async () => ({ value: 'Сохранённый результат', cost: kopecks }),
+    })
+    await query("UPDATE budget_reservations SET status='closed' WHERE id=$1", [reservationId])
+  }
+
+  it('defers a daily-budget-limited campaign without spending attempts and resumes after UTC rollover', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'yandex',
+      SEARCH_PROVIDER: 'searxng',
+      DAILY_BUDGET_KOPECKS: 15000,
+      MONTHLY_BUDGET_KOPECKS: 300000,
+      RESEARCH_RESERVE_KOPECKS: 10000,
+    })
+    await spendResearchBudget(6000)
+    const campaign = await requestResearchCampaign()
+    const before = await budgetSummary()
+    expect(await claimJob(['research'])).toBeUndefined()
+    const waiting = await query(
+      "SELECT status,error_code,attempts,run_after FROM jobs WHERE payload->>'campaignId'=$1",
+      [campaign.campaignId],
+    )
+    expect(waiting.every((job) => job.status === 'queued' && job.attempts === 0)).toBe(true)
+    expect(waiting.some((job) => job.error_code === 'RESEARCH_DAILY_BUDGET_WAIT')).toBe(true)
+    const tomorrow = new Date()
+    tomorrow.setUTCHours(24, 0, 0, 0)
+    expect(
+      waiting
+        .filter((job) => job.error_code === 'RESEARCH_DAILY_BUDGET_WAIT')
+        .every((job) => new Date(job.run_after) >= tomorrow),
+    ).toBe(true)
+    expect(await budgetSummary()).toEqual(before)
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(1)
+    expect((await researchCampaignStatus(campaign.campaignId))!.failed).toBe(0)
+    await query("UPDATE tool_calls SET created_at=now()-interval '1 day'")
+    await query(
+      "UPDATE jobs SET run_after=now()-interval '1 second' WHERE payload->>'campaignId'=$1",
+      [campaign.campaignId],
+    )
+    const resumed = (await claimJob(['research']))!
+    expect(resumed.payload.campaignId).toBe(campaign.campaignId)
+    expect(resumed.attempts).toBe(1)
+    expect(
+      (await query('SELECT error_code FROM jobs WHERE id=$1', [resumed.id]))[0]!.error_code,
+    ).toBeNull()
+    expect((await budgetSummary()).monthSpent).toBe(6000)
+  })
+
+  it('keeps monthly exhaustion terminal instead of hiding it behind a daily campaign wait', async () => {
+    const original = settings.config()
+    const config = vi.spyOn(settings, 'config').mockReturnValue({
+      ...original,
+      MODEL_PROVIDER: 'yandex',
+      SEARCH_PROVIDER: 'searxng',
+      DAILY_BUDGET_KOPECKS: 15000,
+      MONTHLY_BUDGET_KOPECKS: 300000,
+    })
+    await spendResearchBudget(6000)
+    config.mockReturnValue({ ...settings.config(), MONTHLY_BUDGET_KOPECKS: 15000 })
+    const campaign = await requestResearchCampaign()
+    const job = (await claimJob(['research']))!
+    expect(job.payload.campaignId).toBe(campaign.campaignId)
+    expect(job.attempts).toBe(1)
+    await expect(runJob(job)).rejects.toThrow('BUDGET_BLOCKED')
+    await finishJob(job, new Error('BUDGET_BLOCKED'))
+    expect((await query('SELECT status,error_code FROM jobs WHERE id=$1', [job.id]))[0]).toEqual({
+      status: 'failed',
+      error_code: 'BUDGET_BLOCKED',
+    })
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='research_daily_budget_wait'"),
+    ).toHaveLength(0)
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(1)
+  })
+
+  it.each(['spent', 'closed'])(
+    'does not defer or reopen a campaign that already owns a %s reservation',
+    async (condition) => {
+      vi.spyOn(settings, 'config').mockReturnValue({
+        ...settings.config(),
+        MODEL_PROVIDER: 'yandex',
+        SEARCH_PROVIDER: 'searxng',
+        DAILY_BUDGET_KOPECKS: 15000,
+        MONTHLY_BUDGET_KOPECKS: 300000,
+      })
+      await requestResearchCampaign()
+      const first = (await claimJob(['research']))!
+      const [reservation] = await query('SELECT * FROM budget_reservations WHERE dedupe_key=$1', [
+        `research:${first.id}`,
+      ])
+      expect(reservation!.status).toBe('open')
+      if (condition === 'spent') {
+        await meteredCall({
+          key: 'existing-envelope-spend',
+          reservationId: reservation!.id,
+          role: 'Исследователь',
+          maximum: 9000,
+          demo: false,
+          invoke: async () => ({ value: 'Сохранённый результат', cost: 9000 }),
+        })
+      } else {
+        await query("UPDATE budget_reservations SET status='closed' WHERE id=$1", [reservation!.id])
+      }
+      await finishJob(first, new Error('PROVIDER_HTTP_503'))
+      await query('UPDATE jobs SET run_after=now() WHERE id=$1', [first.id])
+      const retry = (await claimJob(['research']))!
+      expect(retry.id).toBe(first.id)
+      expect(retry.attempts).toBe(2)
+      const invoke = vi.fn(async () => ({ value: 'Не должен выполняться', cost: 1500 }))
+      const code = condition === 'spent' ? 'BUDGET_BLOCKED' : 'RESERVATION_CLOSED'
+      if (condition === 'spent') {
+        await expect(
+          meteredCall({
+            key: 'existing-envelope-extra',
+            reservationId: reservation!.id,
+            role: 'Критик',
+            maximum: 1500,
+            demo: false,
+            invoke,
+          }),
+        ).rejects.toThrow(code)
+      } else {
+        await expect(runJob(retry)).rejects.toThrow(code)
+      }
+      await finishJob(retry, new Error(code))
+      expect(invoke).not.toHaveBeenCalled()
+      expect(
+        (await query('SELECT status,error_code FROM jobs WHERE id=$1', [retry.id]))[0],
+      ).toEqual({ status: 'failed', error_code: code })
+      expect(await query('SELECT id FROM budget_reservations')).toHaveLength(1)
+      expect(
+        (
+          await query('SELECT status,spent_kopecks FROM budget_reservations WHERE id=$1', [
+            reservation!.id,
+          ])
+        )[0],
+      ).toEqual({ status: 'closed', spent_kopecks: condition === 'spent' ? 9000 : 0 })
+      expect(
+        await query("SELECT id FROM audit_events WHERE kind='research_daily_budget_wait'"),
+      ).toHaveLength(0)
+    },
+  )
+
+  it('does not postpone a campaign behind midnight when the lifetime model cap is already spent', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'openai',
+      SEARCH_PROVIDER: 'searxng',
+      DAILY_BUDGET_KOPECKS: 15000,
+      MONTHLY_BUDGET_KOPECKS: 300000,
+      OPENAI_TOTAL_BUDGET_MICROUSD: 100,
+    })
+    const reservationId = await reserveBudget('lifetime-spent', 'research')
+    await meteredCall({
+      key: 'lifetime-spent-call',
+      reservationId,
+      role: 'Исследователь',
+      maximum: 6000,
+      maximumMicrousd: 100,
+      demo: false,
+      activity: { provider: 'openai', taskLabel: 'Проверка общего предела расходов' },
+      invoke: async () => ({ value: 'Сохранённый результат', cost: 6000, microusd: 100 }),
+    })
+    await query("UPDATE budget_reservations SET status='closed' WHERE id=$1", [reservationId])
+    await requestResearchCampaign()
+    const job = (await claimJob(['research']))!
+    expect(job.attempts).toBe(1)
+    await expect(runJob(job)).rejects.toThrow('BUDGET_BLOCKED')
+    await finishJob(job, new Error('BUDGET_BLOCKED'))
+    expect((await query('SELECT status FROM jobs WHERE id=$1', [job.id]))[0]!.status).toBe('failed')
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='research_daily_budget_wait'"),
+    ).toHaveLength(0)
+    expect((await budgetSummary()).openaiSpentMicrousd).toBe(100)
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(1)
+  })
+
+  it('deduplicates concurrent portfolio requests and serializes claims across workers', async () => {
+    expect(await researchCampaignStatus()).toBeNull()
+    const requested = await Promise.all(Array.from({ length: 8 }, () => requestResearchCampaign()))
+    expect(new Set(requested.map((value) => value.campaignId)).size).toBe(1)
+    expect(requested.filter((value) => !value.existing)).toHaveLength(1)
+    expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(templates.length)
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='research_campaign_requested'"),
+    ).toHaveLength(1)
+    const claims = await Promise.all(Array.from({ length: 8 }, () => claimJob(['research'])))
+    const first = claims.find(Boolean)!
+    expect(claims.filter(Boolean)).toHaveLength(1)
+    expect(JSON.parse(first.payload.templates!)).toEqual([templates[0]])
+    expect((await requestResearchCampaign()).campaignId).toBe(requested[0]!.campaignId)
+    expect((await requestResearch('faq')).reused).toBe(true)
+    expect(await researchCampaignStatus()).toMatchObject({
+      total: templates.length,
+      running: 1,
+      pending: templates.length - 1,
+    })
+    await finishJob(first, new Error('MODEL_SCHEMA_INVALID'))
+    const next = (await claimJob(['research']))!
+    expect(JSON.parse(next.payload.templates!)).toEqual([templates[1]])
+    await runJob(next)
+    await finishJob(next)
+    expect(await researchCampaignStatus(requested[0]!.campaignId)).toMatchObject({
+      failed: 1,
+      completed: 1,
+      pending: templates.length - 2,
+    })
+  })
+
+  it('keeps campaign jobs across midnight while expiring stale daily slots', async () => {
+    const campaign = await requestResearchCampaign()
+    const [tomorrow] = await query(
+      "SELECT to_char((now() AT TIME ZONE 'UTC') + interval '1 day','YYYY-MM-DD') AS day",
+    )
+    const [yesterday] = await query(
+      "SELECT to_char((now() AT TIME ZONE 'UTC') - interval '1 day','YYYY-MM-DD') AS day",
+    )
+    const stale = await enqueue('research', `research:${yesterday!.day}`)
+    await query("UPDATE jobs SET created_at=now()-interval '2 days'")
+    await expireResearchSlots(tomorrow!.day)
+    expect(await researchCampaignStatus(campaign.campaignId)).toMatchObject({
+      pending: templates.length,
+      failed: 0,
+    })
+    expect((await query('SELECT status,error_code FROM jobs WHERE id=$1', [stale.id]))[0]).toEqual({
+      status: 'failed',
+      error_code: 'RESEARCH_SLOT_EXPIRED',
+    })
+    expect((await claimJob(['research']))!.payload.campaignId).toBe(campaign.campaignId)
+  })
+
+  it('cancels only queued research and releases only those reservations without erasing jobs', async () => {
+    const created = await order()
+    await sandboxPayment(created.id)
+    const campaign = await requestResearchCampaign()
+    const running = (await claimJob(['research']))!
+    const [queued] = await query(
+      "SELECT id FROM jobs WHERE status='queued' AND payload->>'campaignId'=$1 LIMIT 1",
+      [campaign.campaignId],
+    )
+    const runningReservation = await reserveBudget(`research:${running.id}`, 'research')
+    const queuedReservation = await reserveBudget(`research:${queued!.id}`, 'research')
+    const cancelled = await cancelResearchCampaign(campaign.campaignId)
+    expect(cancelled.cancelled).toBe(templates.length - 1)
+    expect(await cancelResearchCampaign(campaign.campaignId)).toMatchObject({ cancelled: 0 })
+    expect(await researchCampaignStatus(campaign.campaignId)).toMatchObject({
+      cancelled: templates.length - 1,
+      running: 1,
+      failed: 0,
+      pending: 0,
+    })
+    expect(
+      (await query('SELECT status FROM budget_reservations WHERE id=$1', [runningReservation]))[0]!
+        .status,
+    ).toBe('open')
+    expect(
+      (await query('SELECT status FROM budget_reservations WHERE id=$1', [queuedReservation]))[0]!
+        .status,
+    ).toBe('closed')
+    expect((await query('SELECT status FROM orders WHERE id=$1', [created.id]))[0]!.status).toBe(
+      'paid',
+    )
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='research_campaign_cancelled'"),
+    ).toHaveLength(1)
+    await runJob(running)
+    await finishJob(running)
+    expect(await researchCampaignStatus(campaign.campaignId)).toMatchObject({
+      status: 'cancelled',
+      completed: 1,
+      cancelled: templates.length - 1,
+    })
+    expect(await claimJob(['research'])).toBeUndefined()
+    expect((await claimJob(['fulfill']))!.payload.orderId).toBe(created.id)
+    await expect(cancelResearchCampaign(randomUUID())).rejects.toThrow(
+      'RESEARCH_CAMPAIGN_NOT_FOUND',
+    )
+    expect((await requestResearchCampaign()).campaignId).not.toBe(campaign.campaignId)
+  })
+
+  it('preserves pause, emergency stop, research window and budget limits for a campaign', async () => {
+    const campaign = await requestResearchCampaign()
+    for (const mode of ['paused', 'emergency_stop']) {
+      await query('UPDATE system_state SET mode=$1', [mode])
+      await expect(requestResearchCampaign()).rejects.toThrow('RESEARCH_PAUSED')
+      expect(await claimJob(['research'])).toBeUndefined()
+    }
+    await query("UPDATE system_state SET mode='running',research_enabled=false")
+    await expect(requestResearchCampaign()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+    expect(await claimJob(['research'])).toBeUndefined()
+    await query('UPDATE system_state SET research_enabled=true')
+    const job = (await claimJob(['research']))!
+    const original = settings.config()
+    const config = vi.spyOn(settings, 'config').mockReturnValue({
+      ...original,
+      MODEL_PROVIDER: 'yandex',
+      SEARCH_PROVIDER: 'yandex',
+      DAILY_BUDGET_KOPECKS: 1,
+    })
+    const search = vi.spyOn(providers, 'search')
+    await expect(runJob(job)).rejects.toThrow('BUDGET_BLOCKED')
+    await finishJob(job, new Error('BUDGET_BLOCKED'))
+    expect(search).not.toHaveBeenCalled()
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(0)
+    expect(await query('SELECT id FROM budget_reservations')).toHaveLength(0)
+    expect(await researchCampaignStatus(campaign.campaignId)).toMatchObject({
+      failed: 1,
+      pending: templates.length - 1,
+    })
+    config.mockReturnValue(original)
+    const next = (await claimJob(['research']))!
+    await runJob(next)
+    await finishJob(next)
+    expect(await researchCampaignStatus(campaign.campaignId)).toMatchObject({
+      failed: 1,
+      completed: 1,
+      pending: templates.length - 2,
+    })
   })
 })
 

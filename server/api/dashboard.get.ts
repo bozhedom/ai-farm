@@ -5,7 +5,10 @@ import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
 import { recipes } from '../../core/templates'
 import { sourceSocialDelivery, sourceSocialInputLimit } from '../../core/source-posts'
-import { templateSchema } from '../../core/policy'
+import { POLICY, templateSchema } from '../../core/policy'
+import { serviceCatalog } from '../../core/service-catalog'
+import { researchCampaignStatus } from '../../core/research-campaign'
+import { opportunityList } from '../../core/opportunities'
 import { autonomyStatus, type AutonomyState } from '../../core/autonomy'
 export default defineEventHandler(async () => {
   const [
@@ -21,6 +24,8 @@ export default defineEventHandler(async () => {
     toolCalls,
     workload,
     orderStats,
+    researchCampaign,
+    opportunities,
   ] = await Promise.all([
     query<AutonomyState>('SELECT * FROM system_state WHERE id=true'),
     query(`SELECT s.*,count(o.id) FILTER(WHERE o.status='delivered')::int AS test_delivered FROM strategies s
@@ -56,11 +61,16 @@ export default defineEventHandler(async () => {
     query(`SELECT count(*)::int AS total,
       count(*) FILTER(WHERE status='delivered')::int AS delivered
       FROM orders`),
+    researchCampaignStatus(),
+    opportunityList(),
   ])
   const c = config()
   const autonomy = await autonomyStatus(state[0]!, budget)
   return {
     state: state[0],
+    serviceCatalog: serviceCatalog.map(({ task, ...service }) => service),
+    researchCampaign,
+    opportunities,
     strategies,
     hypotheses,
     products: products.map((product) => ({
@@ -125,6 +135,7 @@ export default defineEventHandler(async () => {
       openaiTotalLimitMicrousd: c.OPENAI_TOTAL_BUDGET_MICROUSD,
       openrouterFreeOnly: true,
       openrouterTotalLimitMicrousd: 0,
+      maxProducts: POLICY.maxProducts,
     },
     realRevenueKopecks: 0,
   }

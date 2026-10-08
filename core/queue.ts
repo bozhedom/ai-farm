@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { templateSchema, type Template } from './policy'
 import { config } from './config'
+import { budgetSummary, reserveBudget } from './budget'
 
 export type Job = {
   id: string
@@ -34,21 +35,78 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
       WHERE j.kind=ANY($1) AND j.status='queued' AND j.run_after<=now() AND j.attempts<j.max_attempts
       AND (j.kind='evaluate' OR (j.kind='research' AND s.mode='running' AND s.research_enabled) OR (j.kind='fulfill' AND s.mode<>'emergency_stop'))
       AND (j.kind<>'research' OR NOT EXISTS (SELECT 1 FROM jobs active WHERE active.kind='research' AND active.status='running'))
-      AND (j.kind<>'research' OR j.dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' OR ($2 AND s.schedule_enabled))
-      ORDER BY CASE j.kind WHEN 'fulfill' THEN 0 ELSE 1 END,j.created_at
+      AND (j.kind<>'research' OR (j.dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND NOT (j.payload ? 'scheduleSlot')) OR ($2 AND s.schedule_enabled))
+      ORDER BY CASE j.kind WHEN 'fulfill' THEN 0 ELSE 1 END,j.created_at,j.payload->>'campaignPosition',j.id
       FOR UPDATE OF j SKIP LOCKED LIMIT 1`,
       [kinds, config().AUTONOMY_ENABLED],
       db,
     )
     if (!row) return
+    if (row.kind === 'research' && row.payload.campaignId && (await deferDailyCampaign(row, db)))
+      return
     const [claimed] = await query<Job>(
       `UPDATE jobs SET status='running', attempts=attempts+1,started_at=COALESCE(started_at,now()),
+      error_code=CASE WHEN error_code='RESEARCH_DAILY_BUDGET_WAIT' THEN null ELSE error_code END,
       locked_until=now()+interval '2 minutes', lease_token=$2 WHERE id=$1 RETURNING *`,
       [row.id, randomUUID()],
       db,
     )
     return claimed
   })
+}
+
+/** A depleted day can recover at midnight; exhausted task or lifetime limits cannot. */
+async function deferDailyCampaign(job: Job, db: Connection) {
+  const c = config()
+  const reserve =
+    ['yandex', 'openai'].includes(c.MODEL_PROVIDER) || c.SEARCH_PROVIDER === 'yandex'
+      ? c.RESEARCH_RESERVE_KOPECKS
+      : 0
+  if (reserve === 0 || reserve > c.DAILY_BUDGET_KOPECKS) return false
+  await query('SELECT pg_advisory_xact_lock(735093)', [], db)
+  // Existing reservations already own their envelope. Only meteredCall knows the next
+  // exact maximum: do not mask an insufficient remainder or uncertain call with a delay.
+  if (
+    (
+      await query(
+        'SELECT id FROM budget_reservations WHERE dedupe_key=$1',
+        [`research:${job.id}`],
+        db,
+      )
+    ).length
+  )
+    return false
+  const budget = await budgetSummary(db)
+  const outstanding = budget.outstanding + reserve
+  const protectedOrders = Math.min(100000, Math.floor(c.MONTHLY_BUDGET_KOPECKS / 3))
+  if (
+    outstanding > c.DAILY_BUDGET_KOPECKS ||
+    budget.monthSpent + outstanding + protectedOrders > c.MONTHLY_BUDGET_KOPECKS ||
+    (c.MODEL_PROVIDER === 'openai' &&
+      budget.openaiSpentMicrousd >= c.OPENAI_TOTAL_BUDGET_MICROUSD) ||
+    (c.MODEL_PROVIDER === 'openrouter' && budget.openrouterActualMicrousd > 0)
+  )
+    return false
+  if (budget.daySpent + outstanding <= c.DAILY_BUDGET_KOPECKS) {
+    // Allocate under the same budget lock: a simultaneous order cannot consume the
+    // checked room between this preflight and the worker's first reservation request.
+    await reserveBudget(`research:${job.id}`, 'research', db)
+    return false
+  }
+  const [postponed] = await query(
+    `UPDATE jobs SET error_code='RESEARCH_DAILY_BUDGET_WAIT',
+     run_after=(date_trunc('day',now() AT TIME ZONE 'UTC')+interval '1 day 5 seconds') AT TIME ZONE 'UTC'
+     WHERE id=$1 RETURNING run_after`,
+    [job.id],
+    db,
+  )
+  await audit(
+    'research_daily_budget_wait',
+    'Направление ждёт следующего суточного бюджета. Попытки, расходы и обязательства сохранены.',
+    { jobId: job.id, campaignId: job.payload.campaignId, nextAt: postponed!.run_after },
+    db,
+  )
+  return true
 }
 
 /** Owners may start a new run when the previous one ends; parallel clicks share the active job. */
@@ -60,7 +118,7 @@ export async function requestResearch(template?: Template) {
     if (!state.research_enabled) throw new Error('RESEARCH_WINDOW_CLOSED')
     const [active] = await query(
       `SELECT id,status FROM jobs WHERE kind='research' AND status IN ('queued','running')
-       AND (status='running' OR dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' OR $1)
+       AND (status='running' OR (dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND NOT (payload ? 'scheduleSlot')) OR $1)
        ORDER BY created_at LIMIT 1`,
       [config().AUTONOMY_ENABLED && state.schedule_enabled],
       db,
@@ -105,7 +163,7 @@ export async function finishJob(job: Job, error?: unknown) {
     const terminal =
       !!code &&
       (job.attempts >= job.max_attempts ||
-        /POLICY|UNCERTAIN|BUDGET|INPUT|SOURCE|SCHEMA|REVIEW|OUTPUT|PROVIDER_CHANGED|RECIPE_REFRESH/.test(
+        /POLICY|UNCERTAIN|BUDGET|INPUT|SOURCE|SCHEMA|REVIEW|OUTPUT|PROVIDER_CHANGED|RECIPE_REFRESH|TRANSLATION_LANGUAGE|^RESERVATION_CLOSED$/.test(
           code,
         ))
     await query(
@@ -175,7 +233,7 @@ export async function expireResearchSlots(day: string) {
   await transaction(async (db) => {
     const stale = await query(
       `UPDATE jobs SET status='failed',error_code='RESEARCH_SLOT_EXPIRED',finished_at=now()
-      WHERE kind='research' AND status='queued' AND (
+      WHERE kind='research' AND status='queued' AND NOT (payload ? 'campaignId') AND (
         (dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND right(dedupe_key,10)<$1)
         OR (dedupe_key LIKE 'manual-research:%' AND created_at < ($1::date::timestamp AT TIME ZONE 'UTC'))
       ) RETURNING id`,

@@ -3,6 +3,23 @@ import { audit, query, transaction } from './db'
 import { enqueue } from './queue'
 import type { budgetSummary } from './budget'
 import { operationsStatus } from './operations'
+import { enqueueResearchCampaign } from './research-campaign'
+
+export async function setResearchScope(scope: 'rotate' | 'all') {
+  if (!['rotate', 'all'].includes(scope)) throw new Error('RESEARCH_SCOPE_INVALID')
+  return transaction(async (db) => {
+    await query('UPDATE system_state SET research_scope=$1 WHERE id=true', [scope], db)
+    await audit(
+      'research_scope_changed',
+      scope === 'all'
+        ? 'Следующий суточный запуск обойдёт все направления последовательно в пределах бюджета.'
+        : 'Следующий суточный запуск исследует очередное направление. Начатый обход сохранён.',
+      { scope },
+      db,
+    )
+    return { scope }
+  })
+}
 
 export async function setSchedule(enabled: boolean) {
   if (enabled && !config().AUTONOMY_ENABLED) throw new Error('SCHEDULE_DISABLED_ON_SERVER')
@@ -45,11 +62,16 @@ export async function scheduleWork(now = new Date()) {
       ).length
     )
       return
-    const job = await enqueue('research', key, {}, db)
+    const job =
+      state.research_scope === 'all'
+        ? await enqueueResearchCampaign(db, key)
+        : await enqueue('research', key, {}, db)
     await audit(
       'research_scheduled',
-      'Суточное исследование поставлено автоматически.',
-      { jobId: job.id, slot: key },
+      state.research_scope === 'all'
+        ? 'Суточный обход всех направлений поставлен автоматически.'
+        : 'Суточное исследование поставлено автоматически.',
+      { jobId: job.id, slot: key, scope: state.research_scope },
       db,
     )
   })
@@ -61,11 +83,13 @@ type Run = {
   error_code: string | null
   created_at: Date
   finished_at: Date | null
+  run_after: Date
 }
 export type AutonomyState = {
   mode: string
   research_enabled: boolean
   schedule_enabled: boolean
+  research_scope: 'rotate' | 'all'
   worker_heartbeat: Date | null
   provider_readiness: { model: boolean; search: boolean; checkedAt: string } | null
 }
@@ -77,10 +101,10 @@ export async function autonomyStatus(
 ) {
   const [scheduled, active, today, obligations, operations] = await Promise.all([
     query<Run>(
-      "SELECT id,status,error_code,created_at,finished_at FROM jobs WHERE kind='research' AND dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' ORDER BY created_at DESC LIMIT 1",
+      "SELECT id,status,error_code,created_at,finished_at,run_after FROM jobs WHERE kind='research' AND dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' ORDER BY created_at DESC LIMIT 1",
     ),
     query<Run>(
-      "SELECT id,status,error_code,created_at,finished_at FROM jobs WHERE kind='research' AND status IN ('queued','running') ORDER BY created_at LIMIT 1",
+      "SELECT id,status,error_code,created_at,finished_at,run_after FROM jobs WHERE kind='research' AND status IN ('queued','running') ORDER BY (status='running') DESC,created_at,payload->>'campaignPosition',id LIMIT 1",
     ),
     query('SELECT id FROM jobs WHERE dedupe_key=$1', [
       `research:${now.toISOString().slice(0, 10)}`,
@@ -141,10 +165,13 @@ export async function autonomyStatus(
   else if (openrouterCostBlocked)
     reason =
       'OpenRouter сообщил плату за бесплатный запрос. Новые вызовы остановлены; проверьте расходы в кабинете OpenRouter.'
-  else if (active.length)
-    reason =
-      'Исследование уже в очереди или выполняется. Дополнительный автоматический запуск ждёт его завершения.'
-  else if (budgetBlocked)
+  else if (active.length) {
+    const waiting = active[0]!.error_code === 'RESEARCH_DAILY_BUDGET_WAIT'
+    if (waiting) nextAt = new Date(active[0]!.run_after).toISOString()
+    reason = waiting
+      ? 'Обход ждёт следующего суточного бюджета. Принятые заказы сохраняют приоритет.'
+      : 'Исследование уже в очереди или выполняется. Дополнительный автоматический запуск ждёт его завершения.'
+  } else if (budgetBlocked)
     reason =
       'Доступного бюджета недостаточно для нового исследования. Резервы и прежние расходы сохранены.'
   else {
@@ -159,6 +186,7 @@ export async function autonomyStatus(
   }
   return {
     operations,
+    researchScope: state.research_scope,
     enabled,
     allowed: c.AUTONOMY_ENABLED,
     reason,

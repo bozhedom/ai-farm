@@ -5,13 +5,19 @@ import { enqueue, requestResearch } from '../../core/queue'
 import { simulateEvolution } from '../../core/evolution'
 import { templateSchema } from '../../core/policy'
 import { body, respond } from '../utils/api'
-import { setSchedule } from '../../core/autonomy'
+import { setResearchScope, setSchedule } from '../../core/autonomy'
+import { cancelResearchCampaign, requestResearchCampaign } from '../../core/research-campaign'
 export default defineEventHandler((event) =>
   respond(async () => {
     const input = await body(
       event,
       z.discriminatedUnion('action', [
         z.object({ action: z.literal('research'), template: templateSchema.optional() }).strict(),
+        z.object({ action: z.literal('research_all') }).strict(),
+        z.object({ action: z.literal('cancel_research_all'), campaignId: z.uuid() }).strict(),
+        z
+          .object({ action: z.literal('research_scope'), scope: z.enum(['rotate', 'all']) })
+          .strict(),
         z
           .object({
             action: z.enum([
@@ -31,6 +37,9 @@ export default defineEventHandler((event) =>
       ]),
     )
     if (input.action === 'research') return requestResearch(input.template)
+    if (input.action === 'research_all') return requestResearchCampaign()
+    if (input.action === 'cancel_research_all') return cancelResearchCampaign(input.campaignId)
+    if (input.action === 'research_scope') return setResearchScope(input.scope)
     if (input.action === 'schedule_on' || input.action === 'schedule_off')
       return setSchedule(input.action === 'schedule_on')
     if (input.action === 'evaluate')
