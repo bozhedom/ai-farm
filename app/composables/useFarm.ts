@@ -41,7 +41,7 @@ export const dateTime = (date: string) =>
 export const labels: Record<string, string> = {
   running: 'В работе',
   paused: 'Пауза',
-  emergency_stop: 'Аварийный стоп',
+  emergency_stop: 'Остановлено',
   queued: 'В очереди',
   done: 'Готово',
   failed: 'Ошибка',
@@ -69,9 +69,9 @@ export const labels: Record<string, string> = {
   PASS: 'Допущено',
   REVISE: 'Доработать',
   BLOCKED: 'Остановлено',
-  HOLD: 'Недостаточно данных',
+  HOLD: 'Ждём данных',
   SIMULATION: 'Симуляция',
-  CLOSED: 'Закрыт без победителя',
+  CLOSED: 'Сезон закрыт',
 }
 export function errorText(error: any) {
   const code = error?.data?.statusMessage || error?.statusMessage || ''

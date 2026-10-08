@@ -126,7 +126,9 @@ function host(url: string) {
         договорённости отмечаются вручную; письма, реклама и платежи отсюда не отправляются.
       </p>
     </div>
-    <NuxtLink class="button secondary" to="/office?view=directions">Исследовать направления →</NuxtLink>
+    <NuxtLink class="button secondary" to="/office?view=directions"
+      >Исследовать направления</NuxtLink
+    >
   </section>
   <p v-if="error" class="notice error" role="alert">{{ error }}</p>
   <p v-if="message" class="notice" role="status">{{ message }}</p>
@@ -208,7 +210,7 @@ function host(url: string) {
         ><span class="tag">{{ stages[item.stage] }}</span>
       </div>
       <h2>
-        <a :href="item.url" target="_blank" rel="noopener noreferrer">{{ item.title }} ↗</a>
+        <a :href="item.url" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
       </h2>
       <p class="muted small-text">
         {{ serviceLabel(item.template) }} · {{ host(item.url) }} · Найдено
@@ -247,7 +249,7 @@ function host(url: string) {
       :disabled="loading || busy || offset === 0"
       @click="turnPage(-1)"
     >
-      ← Назад</button
+      Назад</button
     ><span class="muted small-text"
       >Страница {{ Math.floor(offset / page.limit) + 1 }} из
       {{ Math.max(1, Math.ceil(page.total / page.limit)) }}</span
@@ -256,7 +258,7 @@ function host(url: string) {
       :disabled="loading || busy || !page.hasMore"
       @click="turnPage(1)"
     >
-      Далее →
+      Далее
     </button>
   </nav>
 </template>

@@ -69,7 +69,7 @@ const steps = [
       <div>
         <h2>{{ step.title }}</h2>
         <p>{{ step.detail }}</p>
-        <NuxtLink :to="step.to">{{ step.action }} →</NuxtLink>
+        <NuxtLink :to="step.to">{{ step.action }}</NuxtLink>
       </div>
     </li>
   </ol>
@@ -106,7 +106,7 @@ const steps = [
           </dd>
         </div>
       </dl>
-      <NuxtLink to="/office?view=settings">Проверить состояние →</NuxtLink>
+      <NuxtLink to="/office?view=settings">Проверить состояние</NuxtLink>
     </section>
     <section class="panel">
       <h2>Как перейти к заработку</h2>
@@ -120,7 +120,7 @@ const steps = [
         актуальность, сохраните подходящие и запишите следующий шаг. Наличие источника не означает
         готовность человека купить.
       </p>
-      <p><NuxtLink to="/office?view=opportunities">Открыть кандидатов и заметки →</NuxtLink></p>
+      <p><NuxtLink to="/office?view=opportunities">Открыть кандидатов и заметки</NuxtLink></p>
       <p>
         Проверьте качество на независимых материалах, посчитайте ручную редактуру, привлечение
         клиента, API, инфраструктуру и остальные расходы. Максимальный доход заранее неизвестен: он
@@ -131,7 +131,7 @@ const steps = [
         подходящий платёжный сервис, документы и отдельный путь доступа покупателя. Sandbox и
         Sepolia выручкой не считаются.
       </p>
-      <NuxtLink to="/office?view=directions">Аудитории и каналы клиентов →</NuxtLink>
+      <NuxtLink to="/office?view=directions">Аудитории и каналы клиентов</NuxtLink>
     </section>
   </div>
 </template>

@@ -10,16 +10,10 @@ const filtered = computed(() =>
   <section class="panel">
     <div class="section-heading">
       <h2>Тестовые заказы</h2>
-      <NuxtLink to="/office/products">Создать заказ ↗</NuxtLink>
+      <NuxtLink to="/office/products">Создать заказ</NuxtLink>
     </div>
     <p class="muted">
-      {{
-        d.config.paymentMode === 'sandbox'
-          ? 'Sandbox: оплата имитируется, деньги не переводятся.'
-          : 'Sepolia: используются только тестовые ETH.'
-      }}
-      Реальная выручка не меняется. Показаны до 30 заказов: сначала требующие проверки, затем
-      ожидающие исполнения и оплаты.
+      Показаны до 30 заказов: сначала те, что ждут проверки, затем в работе и ждут оплаты.
     </p>
     <div class="order-filter">
       <label for="order-status">Статус заказа</label
@@ -55,7 +49,7 @@ const filtered = computed(() =>
         <tbody>
           <tr v-for="o in filtered" :key="o.id">
             <td>
-              <NuxtLink :to="'/office/orders/' + o.id">{{ o.id.slice(0, 8) }} ↗</NuxtLink>
+              <NuxtLink :to="'/office/orders/' + o.id">{{ o.id.slice(0, 8) }}</NuxtLink>
             </td>
             <td>{{ o.product_snapshot.name }}</td>
             <td>{{ o.strategy_snapshot.name }}</td>

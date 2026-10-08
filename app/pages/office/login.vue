@@ -19,18 +19,14 @@ async function login() {
   <main class="login-page">
     <div class="login-art">
       <span class="brand-mark"><i /><i /><i /><i /></span>
-      <div class="eyebrow">AI FARM</div>
-      <h1>Текстовые услуги<br />под вашим контролем.</h1>
+      <div class="eyebrow">AI Farm</div>
+      <h1>Ваша ИИ-ферма<br />идей и текстов</h1>
       <p>Сервис исследует идеи, готовит тексты<br />и проверяет их по исходным материалам.</p>
-      <div class="orbit">
-        <span>Исследовать</span><span>Проверять</span><span>Создавать</span><span>Измерять</span>
-      </div>
       <small>Локальная работа. Тестовые заказы.</small>
     </div>
     <form class="login-card" @submit.prevent="login">
-      <div class="eyebrow">КАБИНЕТ ВЛАДЕЛЬЦА</div>
+      <div class="eyebrow">Кабинет владельца</div>
       <h2>Вход в кабинет</h2>
-      <p class="muted">Пароль находится в поле OWNER_PASSWORD локального файла .env.</p>
       <label for="password">Пароль владельца</label
       ><input
         id="password"

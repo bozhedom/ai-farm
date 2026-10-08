@@ -9,7 +9,7 @@ const emit = defineEmits<{ control: [action: string] }>()
     <div class="section-heading">
       <div>
         <span class="eyebrow">ПОКОЛЕНИЕ {{ d.state.generation }}</span>
-        <h2>Как сравниваются подходы</h2>
+        <h2>Разведчики</h2>
       </div>
       <span class="tag">4 активных места</span>
     </div>

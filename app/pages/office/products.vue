@@ -137,7 +137,7 @@ async function order() {
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
       <div v-if="!d.products.length" class="panel empty large">
         Услуги появятся после успешной проверки идеи.<br /><NuxtLink to="/office?view=directions"
-          >Выбрать и исследовать направления →</NuxtLink
+          >Найти идеи</NuxtLink
         >
       </div>
       <template v-else>
@@ -270,7 +270,7 @@ async function order() {
                       : p.status === 'archived'
                         ? 'В архиве'
                         : selected === p.id
-                          ? 'К форме заказа ↑'
+                          ? 'Заказать'
                           : 'Попробовать'
                   }}
                 </button>

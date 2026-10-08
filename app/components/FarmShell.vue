@@ -108,10 +108,9 @@ const modelLabel = computed(() =>
       <div class="sidebar-bottom">
         <div class="worker-state">
           <span class="dot" :class="workerOk ? 'green' : 'amber'" />{{
-            workerOk ? 'Обработчик на связи' : 'Нет связи с обработчиком'
+            workerOk ? 'Сервер работает' : 'Сервер не отвечает'
           }}
         </div>
-        <p>Закрытый тестовый сервис.<br />Реальные платежи не подключены.</p>
       </div>
     </aside>
     <div class="main-wrap">
@@ -123,7 +122,7 @@ const modelLabel = computed(() =>
         <div v-if="logoutError" class="notice error" role="alert">{{ logoutError }}</div>
         <slot />
       </main>
-      <footer><span>AI Farm</span><span>Тестовые заказы не приносят выручку</span></footer>
+      <footer><span>AI Farm</span></footer>
     </div>
   </div>
 </template>

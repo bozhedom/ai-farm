@@ -168,9 +168,7 @@ const steps = computed(() => [
       </p>
     </div>
     <NuxtLink class="button secondary" to="/office?view=directions">{{
-      d.researchCampaign?.status === 'running'
-        ? 'Прогресс всех направлений →'
-        : 'Выбрать направления →'
+      d.researchCampaign?.status === 'running' ? 'Прогресс всех направлений' : 'Выбрать направления'
     }}</NuxtLink>
   </section>
 
@@ -196,7 +194,20 @@ const steps = computed(() => [
       <span class="cycle-number">{{ i + 1 }}</span>
       <h3>{{ step.title }}</h3>
       <p>{{ step.text }}</p>
-      <strong>{{ step.count }} <span aria-hidden="true">↗</span></strong>
+      <strong
+        >{{ step.count }}
+        <svg
+          class="link-icon"
+          viewBox="0 0 24 24"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path d="M7 17 17 7M8 7h9v9" /></svg
+      ></strong>
     </NuxtLink>
   </section>
 
@@ -225,11 +236,22 @@ const steps = computed(() => [
             {{ product.delivery }}
           </p>
           <small
-            >{{ product.is_demo ? 'Демо' : 'Проверен на примере' }} · версия
+            >{{ product.is_demo ? 'Демо' : 'Проверен на примере' }}, версия
             {{ product.version }}</small
           >
         </div>
-        <span aria-hidden="true">↗</span>
+        <svg
+          class="link-icon"
+          viewBox="0 0 24 24"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path d="M7 17 17 7M8 7h9v9" />
+        </svg>
       </NuxtLink>
       <p v-if="products.length" class="muted small-text">
         Откройте услугу, подставьте пример и подтвердите тестовую оплату. Готовый текст можно

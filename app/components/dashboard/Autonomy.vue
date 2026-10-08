@@ -18,7 +18,7 @@ function changeScope(event: Event) {
         failure
           ? 'Связь потеряна'
           : d.autonomy.workerAlive
-            ? 'Обработчик на связи'
+            ? 'Сервер работает'
             : 'Нет сигнала обработчика'
       }}</span>
     </div>
@@ -31,11 +31,8 @@ function changeScope(event: Event) {
     </p>
     <div class="two-columns">
       <div>
-        <h3>Исследования · раз в сутки</h3>
-        <p>
-          Поиск → гипотеза → критик → сборка → контрольный пример. Прошедшая проверку версия
-          появляется в витрине автоматически.
-        </p>
+        <h3>Исследования раз в сутки</h3>
+        <p>Разведчики ищут, критик проверяет, лучшее идёт на сайт.</p>
         <label for="research-scope">Что исследовать по расписанию</label>
         <select
           id="research-scope"
@@ -89,7 +86,7 @@ function changeScope(event: Event) {
           >.
         </p>
         <NuxtLink v-if="d.autonomy.reviewOrders" to="/office?view=orders"
-          >Посмотреть остановленные заказы ↗</NuxtLink
+          >Посмотреть остановленные заказы</NuxtLink
         >
         <p class="muted small-text">
           Недельная оценка не вызывает модель. Без настоящих продаж система ждёт данных. Копии базы

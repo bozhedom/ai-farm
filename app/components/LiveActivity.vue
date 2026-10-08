@@ -225,7 +225,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
                 ? 'Показаны последние статусы. Проверьте соединение и обработчик.'
                 : historical
                   ? 'Показаны реальные этапы выбранного задания. Вернитесь к текущему запуску, чтобы наблюдать за работой.'
-                  : 'Запустите исследование ниже: поиск → гипотеза → критика → проверка сервиса.'
+                  : 'Запустите исследование ниже. Разведчик ищет, критик проверяет, лучшее становится услугой.'
           }}
         </p>
         <span v-if="online && current" class="live-provider"
@@ -313,9 +313,10 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
       и неопределённые запросы отдельно входят в сумму «С резервом».
     </p>
     <p class="muted small-text">
-      После исследования откройте <NuxtLink to="/office?view=hypotheses">«Исследования»</NuxtLink>: там
-      сохраняются идея и решение критика. Принятая идея выпускает версию сервиса в
-      <NuxtLink to="/office/products">«Услугах»</NuxtLink>. Отклонённая остаётся в истории с причиной.
+      После исследования откройте <NuxtLink to="/office?view=hypotheses">«Исследования»</NuxtLink>:
+      там сохраняются идея и решение критика. Принятая идея выпускает версию сервиса в
+      <NuxtLink to="/office/products">«Услугах»</NuxtLink>. Отклонённая остаётся в истории с
+      причиной.
     </p>
     <div class="live-toolbar">
       <p>
@@ -348,9 +349,9 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
       </summary>
       <ul>
         <li v-for="source in sources" :key="source.url">
-          <a :href="source.url" target="_blank" rel="noopener noreferrer"
-            >{{ source.title || source.url }} ↗</a
-          >
+          <a :href="source.url" target="_blank" rel="noopener noreferrer">{{
+            source.title || source.url
+          }}</a>
         </li>
       </ul>
       <p>
@@ -460,9 +461,11 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
             ><span>{{ labels[h.status] }} · {{ h.is_demo ? 'демо' : 'живое исследование' }}</span>
           </p>
           <NuxtLink v-if="jobHypotheses.length" to="/office?view=hypotheses"
-            >Открыть гипотезы и источники ↗</NuxtLink
-          ><NuxtLink v-if="jobHypotheses.some((h: any) => h.status === 'accepted')" to="/office/products"
-            >Посмотреть созданный продукт ↗</NuxtLink
+            >Открыть гипотезы и источники</NuxtLink
+          ><NuxtLink
+            v-if="jobHypotheses.some((h: any) => h.status === 'accepted')"
+            to="/office/products"
+            >Посмотреть созданный продукт</NuxtLink
           ></template
         >
         <p v-else>Первый результат появится после исследования.</p>

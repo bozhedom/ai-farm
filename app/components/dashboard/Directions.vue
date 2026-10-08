@@ -78,7 +78,7 @@ function itemLabel(item: any) {
       >
         {{ busy ? 'Запускаем…' : 'Исследовать все направления' }}
       </button>
-      <NuxtLink to="/office?view=guide">Как проверить результат →</NuxtLink>
+      <NuxtLink to="/office?view=guide">Как проверить результат</NuxtLink>
     </div>
     <p v-if="researchBlockedReason" class="muted small-text portfolio-hint" role="status">
       {{ researchBlockedReason }}
@@ -124,7 +124,7 @@ function itemLabel(item: any) {
       «Исследования».
     </p>
     <div class="inline-actions">
-      <NuxtLink to="/office?view=hypotheses">Ход работы и результаты →</NuxtLink>
+      <NuxtLink to="/office?view=hypotheses">Ход работы и результаты</NuxtLink>
       <button
         v-if="campaign.status === 'running'"
         class="quiet"
@@ -204,7 +204,7 @@ function itemLabel(item: any) {
           v-if="productFor(item.id)"
           class="button secondary small"
           :to="productLink(productFor(item.id).id)"
-          >Попробовать услугу →</NuxtLink
+          >Попробовать услугу</NuxtLink
         >
         <button
           :class="productFor(item.id) ? 'quiet' : 'button secondary small'"
@@ -224,7 +224,6 @@ function itemLabel(item: any) {
     </article>
   </div>
   <p class="muted small-text">
-    Каналы — идеи для самостоятельной проверки. Автоматических публикаций, рассылок и продаж здесь
-    нет. Используйте свои материалы и разрешённые площадкой способы размещения.
+    Каналы подсказывают, где искать клиентов. Размещаете вы сами, рассылок мы не делаем.
   </p>
 </template>

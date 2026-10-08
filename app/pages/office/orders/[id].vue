@@ -122,7 +122,7 @@ function download() {
 </script>
 <template>
   <FarmShell>
-    <NuxtLink class="back-link" to="/office?view=orders">← Все заказы</NuxtLink>
+    <NuxtLink class="back-link" to="/office?view=orders">Все заказы</NuxtLink>
     <div class="page-heading">
       <div>
         <div class="eyebrow">ТЕСТОВЫЙ ЗАКАЗ / {{ String(route.params.id).slice(0, 8) }}</div>
@@ -341,7 +341,7 @@ function download() {
           </div>
           <div class="inline-actions">
             <button class="button secondary" @click="copyResult">Копировать текст</button
-            ><button class="button secondary" @click="download">Скачать TXT ↓</button>
+            ><button class="button secondary" @click="download">Скачать .txt</button>
           </div>
         </div>
         <pre>{{ order.result }}</pre>
@@ -357,7 +357,7 @@ function download() {
           <p>Новый заказ сохранит отдельный результат и актуальную версию услуги.</p>
         </div>
         <NuxtLink class="button primary" :to="productLink(order.product_id)"
-          >Создать новый заказ →</NuxtLink
+          >Создать новый заказ</NuxtLink
         >
       </div>
     </template>
