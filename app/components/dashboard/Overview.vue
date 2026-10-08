@@ -45,19 +45,19 @@ const steps = computed(() => [
     title: 'Находит идею',
     text: 'Ищет задачи покупателей и существующие предложения.',
     count: `Исследований: ${d.value.hypotheses.length}${d.value.hypotheses.length === 30 ? '+' : ''}`,
-    to: '/?view=hypotheses',
+    to: '/office?view=hypotheses',
   },
   {
     title: 'Проверяет и собирает',
     text: 'Оценивает идею, создаёт услугу и проверяет пример текста.',
     count: `Готово услуг: ${products.value.length} из ${d.value.config.maxProducts}`,
-    to: '/catalog',
+    to: '/office/products',
   },
   {
     title: 'Выполняет заказ',
     text: 'Берёт материал, готовит текст и проверяет его перед выдачей.',
     count: `Тестовых выдач: ${d.value.orderStats.delivered}`,
-    to: '/?view=orders',
+    to: '/office?view=orders',
   },
   {
     title: 'Подводит итоги',
@@ -65,7 +65,7 @@ const steps = computed(() => [
     count: d.value.evaluations[0]
       ? labels[d.value.evaluations[0].decision]
       : 'Ожидает первой оценки',
-    to: '/?view=strategies',
+    to: '/office?view=strategies',
   },
 ])
 </script>
@@ -96,7 +96,7 @@ const steps = computed(() => [
         <NuxtLink
           v-else-if="active || d.autonomy.activeRun"
           class="button primary"
-          :to="active?.kind === 'fulfill' ? '/?view=orders' : '/?view=hypotheses'"
+          :to="active?.kind === 'fulfill' ? '/office?view=orders' : '/office?view=hypotheses'"
           >Посмотреть ход работы</NuxtLink
         >
         <button
@@ -167,7 +167,7 @@ const steps = computed(() => [
         проверки.
       </p>
     </div>
-    <NuxtLink class="button secondary" to="/?view=directions">{{
+    <NuxtLink class="button secondary" to="/office?view=directions">{{
       d.researchCampaign?.status === 'running'
         ? 'Прогресс всех направлений →'
         : 'Выбрать направления →'
@@ -185,11 +185,11 @@ const steps = computed(() => [
         ? 'Поиск не нашёл достаточно независимых источников. Можно повторить позже.'
         : 'Причина сохранена в истории запуска.'
     }}
-    <NuxtLink to="/?view=hypotheses">Посмотреть ход исследования</NuxtLink>
+    <NuxtLink to="/office?view=hypotheses">Посмотреть ход исследования</NuxtLink>
   </div>
   <div v-if="d.autonomy.reviewOrders" class="notice error" role="status">
     Заказы для проверки: {{ d.autonomy.reviewOrders }}.
-    <NuxtLink to="/?view=orders">Открыть заказы</NuxtLink>
+    <NuxtLink to="/office?view=orders">Открыть заказы</NuxtLink>
   </div>
   <section class="cycle-strip" aria-label="Как работает сервис">
     <NuxtLink v-for="(step, i) in steps" :key="step.title" :to="step.to" class="cycle-item">
@@ -204,7 +204,7 @@ const steps = computed(() => [
     <section class="panel ready-services">
       <div class="section-heading">
         <h2>Что уже можно попробовать</h2>
-        <NuxtLink to="/catalog">Все услуги</NuxtLink>
+        <NuxtLink to="/office/products">Все услуги</NuxtLink>
       </div>
       <div v-if="!products.length" class="empty">
         Пока нет готовых услуг. Запустите проверку идеи. Если она пройдёт проверку, здесь появится
@@ -239,7 +239,7 @@ const steps = computed(() => [
     <section class="panel money-panel">
       <div class="section-heading">
         <h2>Деньги и результат</h2>
-        <NuxtLink to="/?view=settings">Лимиты</NuxtLink>
+        <NuxtLink to="/office?view=settings">Лимиты</NuxtLink>
       </div>
       <dl class="money-list">
         <div>

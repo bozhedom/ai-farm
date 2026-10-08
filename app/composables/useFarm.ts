@@ -10,7 +10,7 @@ export function useFarm() {
       state.value = await request('/api/dashboard', { timeout: 10000 })
       failure.value = ''
     } catch (error: any) {
-      if (error.statusCode === 401 || error.status === 401) await navigateTo('/login')
+      if (error.statusCode === 401 || error.status === 401) await navigateTo('/office/login')
       else failure.value = 'Не удалось обновить данные. Проверьте соединение.'
     } finally {
       refreshing.value = false

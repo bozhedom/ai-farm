@@ -25,7 +25,7 @@ async function load() {
     }
   } catch (e: any) {
     if (stopped || id !== route.params.id) return
-    if (e.statusCode === 401 || e.status === 401) await navigateTo('/login')
+    if (e.statusCode === 401 || e.status === 401) await navigateTo('/office/login')
     else if (e.statusCode === 404 || e.status === 404) {
       missing.value = true
       connectionError.value = ''
@@ -122,7 +122,7 @@ function download() {
 </script>
 <template>
   <FarmShell>
-    <NuxtLink class="back-link" to="/?view=orders">← Все заказы</NuxtLink>
+    <NuxtLink class="back-link" to="/office?view=orders">← Все заказы</NuxtLink>
     <div class="page-heading">
       <div>
         <div class="eyebrow">ТЕСТОВЫЙ ЗАКАЗ / {{ String(route.params.id).slice(0, 8) }}</div>
@@ -147,7 +147,7 @@ function download() {
     </p>
     <div v-if="missing" class="panel empty large">
       <p>По этой ссылке нет заказа. Проверьте адрес или найдите нужный заказ в истории.</p>
-      <NuxtLink class="button secondary" to="/?view=orders">Открыть все заказы</NuxtLink>
+      <NuxtLink class="button secondary" to="/office?view=orders">Открыть все заказы</NuxtLink>
     </div>
     <template v-if="order">
       <section class="panel" aria-label="Ход заказа">

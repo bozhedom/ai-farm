@@ -13,9 +13,15 @@ export default defineNuxtConfig({
   app: {
     head: {
       htmlAttrs: { lang: 'ru' },
-      title: 'AI Farm · текстовые сервисы',
+      title: 'AI Farm',
       meta: [{ name: 'robots', content: 'noindex, nofollow' }],
     },
+  },
+  // The owner office moved under /office. Old bookmarks keep working.
+  routeRules: {
+    '/login': { redirect: { to: '/office/login', statusCode: 301 } },
+    '/catalog': { redirect: { to: '/office/products', statusCode: 301 } },
+    '/orders/**': { redirect: { to: '/office/orders/**', statusCode: 301 } },
   },
   nitro: {
     preset: 'node-server',

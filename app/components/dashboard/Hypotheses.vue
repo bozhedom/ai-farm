@@ -21,7 +21,7 @@ const sourceHost = (url: string) => new URL(url).hostname
     </button>
   </div>
   <p v-if="researchBlockedReason" class="muted small-text" role="status">
-    {{ researchBlockedReason }} <NuxtLink to="/?view=directions">Направления и управление</NuxtLink>
+    {{ researchBlockedReason }} <NuxtLink to="/office?view=directions">Направления и управление</NuxtLink>
   </p>
   <div v-if="!d.hypotheses.length" class="panel empty large">
     Исследований пока нет. Нажмите «Проверить идею».
@@ -47,7 +47,7 @@ const sourceHost = (url: string) => new URL(url).hostname
     </p>
     <p v-if="h.released_version" class="notice">
       По этой гипотезе выпущена версия {{ h.released_version }} сервиса.
-      <NuxtLink :to="h.released_product_id ? productLink(h.released_product_id) : '/catalog'"
+      <NuxtLink :to="h.released_product_id ? productLink(h.released_product_id) : '/office/products'"
         >Открыть услугу →</NuxtLink
       >
       Сейчас витрина показывает последнюю версию; прежние заказы сохраняют свою.

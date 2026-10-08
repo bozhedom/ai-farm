@@ -109,7 +109,7 @@ docker compose -f compose.yaml -f compose.local.yaml --profile app up -d --build
   <section class="panel">
     <div class="section-heading">
       <h2>Управление работой</h2>
-      <NuxtLink to="/?view=strategies">Подходы и недельная оценка</NuxtLink>
+      <NuxtLink to="/office?view=strategies">Подходы и недельная оценка</NuxtLink>
     </div>
     <div class="control-buttons">
       <button

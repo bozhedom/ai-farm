@@ -313,9 +313,9 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
       и неопределённые запросы отдельно входят в сумму «С резервом».
     </p>
     <p class="muted small-text">
-      После исследования откройте <NuxtLink to="/?view=hypotheses">«Исследования»</NuxtLink>: там
+      После исследования откройте <NuxtLink to="/office?view=hypotheses">«Исследования»</NuxtLink>: там
       сохраняются идея и решение критика. Принятая идея выпускает версию сервиса в
-      <NuxtLink to="/catalog">«Услугах»</NuxtLink>. Отклонённая остаётся в истории с причиной.
+      <NuxtLink to="/office/products">«Услугах»</NuxtLink>. Отклонённая остаётся в истории с причиной.
     </p>
     <div class="live-toolbar">
       <p>
@@ -459,9 +459,9 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
             <strong>{{ h.title }}</strong
             ><span>{{ labels[h.status] }} · {{ h.is_demo ? 'демо' : 'живое исследование' }}</span>
           </p>
-          <NuxtLink v-if="jobHypotheses.length" to="/?view=hypotheses"
+          <NuxtLink v-if="jobHypotheses.length" to="/office?view=hypotheses"
             >Открыть гипотезы и источники ↗</NuxtLink
-          ><NuxtLink v-if="jobHypotheses.some((h: any) => h.status === 'accepted')" to="/catalog"
+          ><NuxtLink v-if="jobHypotheses.some((h: any) => h.status === 'accepted')" to="/office/products"
             >Посмотреть созданный продукт ↗</NuxtLink
           ></template
         >

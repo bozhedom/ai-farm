@@ -53,7 +53,7 @@ async function load() {
     }
   } catch (e: any) {
     if (version !== requestVersion) return
-    if (e.statusCode === 401 || e.status === 401) await navigateTo('/login')
+    if (e.statusCode === 401 || e.status === 401) await navigateTo('/office/login')
     else loadError.value = 'Не удалось обновить источники. Повторите загрузку.'
   } finally {
     if (version === requestVersion) loading.value = false
@@ -126,7 +126,7 @@ function host(url: string) {
         договорённости отмечаются вручную; письма, реклама и платежи отсюда не отправляются.
       </p>
     </div>
-    <NuxtLink class="button secondary" to="/?view=directions">Исследовать направления →</NuxtLink>
+    <NuxtLink class="button secondary" to="/office?view=directions">Исследовать направления →</NuxtLink>
   </section>
   <p v-if="error" class="notice error" role="alert">{{ error }}</p>
   <p v-if="message" class="notice" role="status">{{ message }}</p>
@@ -193,7 +193,7 @@ function host(url: string) {
     class="panel empty large"
   >
     Пока нет источников для поиска клиентов.
-    <NuxtLink to="/?view=directions">Запустите исследование направлений</NuxtLink>.
+    <NuxtLink to="/office?view=directions">Запустите исследование направлений</NuxtLink>.
   </div>
   <div v-else-if="!items.length && !loading && !loadError" class="panel empty">
     По этим фильтрам записей нет.

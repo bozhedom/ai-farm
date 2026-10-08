@@ -2,25 +2,25 @@
 const { state, failure, refresh } = useFarm()
 const route = useRoute()
 const menu = [
-  ['/', 'Обзор'],
-  ['/?view=directions', 'Направления'],
-  ['/catalog', 'Услуги'],
-  ['/?view=opportunities', 'Клиенты'],
-  ['/?view=hypotheses', 'Исследования'],
-  ['/?view=orders', 'Заказы'],
-  ['/?view=guide', 'Как пользоваться'],
+  ['/office', 'Обзор'],
+  ['/office?view=directions', 'Направления'],
+  ['/office/products', 'Услуги'],
+  ['/office?view=opportunities', 'Клиенты'],
+  ['/office?view=hypotheses', 'Исследования'],
+  ['/office?view=orders', 'Заказы'],
+  ['/office?view=guide', 'Как пользоваться'],
 ]
 const secondary = [
-  ['/?view=settings', 'Настройки'],
-  ['/?view=audit', 'Журнал'],
+  ['/office?view=settings', 'Настройки'],
+  ['/office?view=audit', 'Журнал'],
 ]
 const active = (url: string) => {
-  if (url === '/') return route.path === '/' && !route.query.view
-  if (url === '/catalog') return route.path === '/catalog'
+  if (url === '/office') return route.path === '/office' && !route.query.view
+  if (url === '/office/products') return route.path === '/office/products'
   const view = url.split('view=')[1]
   return (
-    (route.path === '/' && route.query.view === view) ||
-    (view === 'orders' && route.path.startsWith('/orders/'))
+    (route.path === '/office' && route.query.view === view) ||
+    (view === 'orders' && route.path.startsWith('/office/orders/'))
   )
 }
 const logoutError = ref('')
@@ -38,7 +38,7 @@ async function logout() {
   try {
     await $fetch('/api/auth/logout', { method: 'POST', body: {} })
     state.value = null
-    await navigateTo('/login')
+    await navigateTo('/office/login')
   } catch {
     logoutError.value = 'Не удалось выйти. Проверьте соединение и повторите.'
   } finally {
@@ -60,7 +60,7 @@ const modelLabel = computed(() =>
   <div class="workspace">
     <a class="skip-link" href="#main-content">К содержимому</a>
     <aside class="sidebar">
-      <NuxtLink to="/" class="brand"
+      <NuxtLink to="/office" class="brand"
         ><span class="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span
         ><span>AI Farm<small>Текстовые сервисы</small></span></NuxtLink
       >

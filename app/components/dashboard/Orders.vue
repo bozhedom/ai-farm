@@ -10,7 +10,7 @@ const filtered = computed(() =>
   <section class="panel">
     <div class="section-heading">
       <h2>Тестовые заказы</h2>
-      <NuxtLink to="/catalog">Создать заказ ↗</NuxtLink>
+      <NuxtLink to="/office/products">Создать заказ ↗</NuxtLink>
     </div>
     <p class="muted">
       {{
@@ -55,7 +55,7 @@ const filtered = computed(() =>
         <tbody>
           <tr v-for="o in filtered" :key="o.id">
             <td>
-              <NuxtLink :to="'/orders/' + o.id">{{ o.id.slice(0, 8) }} ↗</NuxtLink>
+              <NuxtLink :to="'/office/orders/' + o.id">{{ o.id.slice(0, 8) }} ↗</NuxtLink>
             </td>
             <td>{{ o.product_snapshot.name }}</td>
             <td>{{ o.strategy_snapshot.name }}</td>
@@ -69,7 +69,7 @@ const filtered = computed(() =>
     </div>
     <div v-if="!d.orders.length" class="empty large">
       Заказов ещё нет.
-      <NuxtLink to="/catalog">Выберите услугу и создайте первый тестовый заказ</NuxtLink>.
+      <NuxtLink to="/office/products">Выберите услугу и создайте первый тестовый заказ</NuxtLink>.
     </div>
     <div v-else-if="!filtered.length" class="empty">
       Заказов с таким статусом нет. <button class="quiet" @click="filter = ''">Показать все</button>

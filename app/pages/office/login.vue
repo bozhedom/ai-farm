@@ -7,7 +7,7 @@ async function login() {
   error.value = ''
   try {
     await $fetch('/api/auth/login', { method: 'POST', body: { password: password.value } })
-    await navigateTo('/')
+    await navigateTo('/office')
   } catch (e) {
     error.value = errorText(e)
   } finally {

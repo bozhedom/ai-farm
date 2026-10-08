@@ -78,7 +78,7 @@ function itemLabel(item: any) {
       >
         {{ busy ? 'Запускаем…' : 'Исследовать все направления' }}
       </button>
-      <NuxtLink to="/?view=guide">Как проверить результат →</NuxtLink>
+      <NuxtLink to="/office?view=guide">Как проверить результат →</NuxtLink>
     </div>
     <p v-if="researchBlockedReason" class="muted small-text portfolio-hint" role="status">
       {{ researchBlockedReason }}
@@ -88,7 +88,7 @@ function itemLabel(item: any) {
           d.state.provider_readiness?.model === false ||
           d.state.provider_readiness?.search === false
         "
-        to="/?view=settings"
+        to="/office?view=settings"
         >Открыть настройки</NuxtLink
       >
     </p>
@@ -124,7 +124,7 @@ function itemLabel(item: any) {
       «Исследования».
     </p>
     <div class="inline-actions">
-      <NuxtLink to="/?view=hypotheses">Ход работы и результаты →</NuxtLink>
+      <NuxtLink to="/office?view=hypotheses">Ход работы и результаты →</NuxtLink>
       <button
         v-if="campaign.status === 'running'"
         class="quiet"

@@ -88,7 +88,7 @@ function changeScope(event: Event) {
           >. Требуют проверки владельцем: <strong>{{ d.autonomy.reviewOrders }}</strong
           >.
         </p>
-        <NuxtLink v-if="d.autonomy.reviewOrders" to="/?view=orders"
+        <NuxtLink v-if="d.autonomy.reviewOrders" to="/office?view=orders"
           >Посмотреть остановленные заказы ↗</NuxtLink
         >
         <p class="muted small-text">

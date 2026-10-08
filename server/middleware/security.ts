@@ -21,6 +21,8 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 413, statusMessage: 'BODY_TOO_LARGE' })
   }
   if (path === '/api/health' || path === '/api/readiness' || path === '/api/auth/login') return
+  // Public buyer pages. Read-only paths are listed exactly; everything else needs the session.
+  if (path === '/api/public/catalog' && ['GET', 'HEAD'].includes(event.method)) return
   if (!(await validSession(getCookie(event, 'farm_session'))))
     throw createError({ statusCode: 401, statusMessage: 'AUTH_REQUIRED' })
 })

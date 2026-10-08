@@ -18,7 +18,7 @@ export function useServiceCatalog() {
   const service = (template: string) => services.value.find((item) => item.id === template)
   const serviceLabel = (template: string) =>
     service(template)?.label || labels[template] || 'Другое направление'
-  const productLink = (id: string) => ({ path: '/catalog', query: { product: id } })
+  const productLink = (id: string) => ({ path: '/office/products', query: { product: id } })
   const researchBlockedReason = computed(() => {
     if (failure.value) return 'Данные не обновляются. Дождитесь восстановления соединения.'
     if (!state.value?.autonomy.workerAlive)

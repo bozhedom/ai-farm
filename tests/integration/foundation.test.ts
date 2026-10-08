@@ -5,6 +5,7 @@ import { claimJob, enqueue, finishJob } from '../../core/queue'
 import { runJob } from '../../core/jobs/run'
 import { createOrder } from '../../core/orders'
 import { defaultPriceKopecks, publicSlug } from '../../core/storefront'
+import { publicCatalog } from '../../core/public-catalog'
 import type { Template } from '../../core/policy'
 import { applyMigrations, resetDatabase } from './helpers/db'
 
@@ -55,5 +56,29 @@ describe('storefront foundation', () => {
     await expect(
       query('UPDATE orders SET revenue_kopecks=49000 WHERE id=$1', [order.id]),
     ).rejects.toThrow(/orders_revenue_requires_real_payment/)
+  })
+
+  it('shows buyers only products the owner made public, without internal fields', async () => {
+    await enqueue('research', 'foundation-catalog', { templates: JSON.stringify(['faq']) })
+    const job = (await claimJob(['research']))!
+    await runJob(job)
+    await finishJob(job)
+    expect((await publicCatalog()).services).toEqual([])
+    await query("UPDATE products SET visibility='public', published_at=now()")
+    const catalog = await publicCatalog()
+    expect(catalog.payment).toEqual({ mode: 'sandbox', test: true, label: 'Тестовая оплата' })
+    expect(catalog.acceptingOrders).toBe(false)
+    expect(catalog.seller).toBeNull()
+    expect(catalog.services).toHaveLength(1)
+    expect(catalog.services[0]).toMatchObject({
+      slug: 'faq',
+      priceKopecks: 149000,
+      currency: 'RUB',
+    })
+    const json = JSON.stringify(catalog)
+    for (const hidden of ['strategy', 'hypothesis', 'checks', '"id"', 'template'])
+      expect(json).not.toContain(hidden)
+    await query("UPDATE products SET status='archived'")
+    expect((await publicCatalog()).services).toEqual([])
   })
 })

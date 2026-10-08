@@ -87,7 +87,7 @@ async function order() {
       method: 'POST',
       body: { productId: selected.value, input: input.value, requestKey },
     })
-    await navigateTo('/orders/' + result.id)
+    await navigateTo('/office/orders/' + result.id)
   } catch (e) {
     error.value = errorText(e)
   } finally {
@@ -132,11 +132,11 @@ async function order() {
       </div>
       <div v-if="!d.autonomy.workerAlive" class="notice">
         Обработчик не на связи. Созданный заказ сохранится, а после оплаты будет ждать запуска
-        обработчика. <NuxtLink to="/?view=settings">Проверить состояние</NuxtLink>
+        обработчика. <NuxtLink to="/office?view=settings">Проверить состояние</NuxtLink>
       </div>
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
       <div v-if="!d.products.length" class="panel empty large">
-        Услуги появятся после успешной проверки идеи.<br /><NuxtLink to="/?view=directions"
+        Услуги появятся после успешной проверки идеи.<br /><NuxtLink to="/office?view=directions"
           >Выбрать и исследовать направления →</NuxtLink
         >
       </div>
@@ -245,12 +245,12 @@ async function order() {
                 <p v-if="p.checks.input">Исходный материал: {{ p.checks.input }}</p>
                 <pre>{{ p.checks.sample }}</pre>
                 <p v-if="p.checks.reason">{{ p.checks.reason }}</p>
-                <NuxtLink to="/?view=hypotheses">Исследования и источники</NuxtLink>
+                <NuxtLink to="/office?view=hypotheses">Исследования и источники</NuxtLink>
               </details>
               <ProductHistory :key="p.id + ':' + p.version" :product-id="p.id" />
               <p v-if="p.needsRefresh" class="small-text">
                 Для локальной модели нужна новая версия услуги.
-                <NuxtLink to="/?view=directions">Запустите исследование</NuxtLink>.
+                <NuxtLink to="/office?view=directions">Запустите исследование</NuxtLink>.
               </p>
               <div class="product-bottom">
                 <div>
