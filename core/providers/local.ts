@@ -53,6 +53,11 @@ export async function localSearch(queryText: string) {
 
 /** One bounded format repair for free models; cost estimates are never sent back for revision. */
 export function schemaRepair(error: unknown, attempt: number, context: string, candidate: string) {
+  if (
+    error instanceof Error &&
+    ['POLICY_CONTENT_BLOCKED', 'UNTRUSTED_INSTRUCTION_BLOCKED'].includes(error.message)
+  )
+    throw error
   const issues =
     error instanceof z.ZodError
       ? error.issues.slice(0, 12).map((issue) => ({
@@ -77,8 +82,8 @@ export function schemaRepair(error: unknown, attempt: number, context: string, c
     context: JSON.stringify({
       task: repairSources
         ? 'Исправь указанные ошибки в candidate и верни полный JSON по схеме из system. Состав sources можно изменить: выбери только URL из evidence в original_context, минимум с двух разных доменов. Ссылки должны подходить к фактам гипотезы. Нельзя переписывать URL, добавлять новые ссылки или менять факты и оценку расходов. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.'
-        : 'Исправь только указанные ошибки формата в candidate. Верни полный JSON по схеме из system. Не меняй факты и ссылки. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.',
-      original_context: repairSources ? context : undefined,
+        : 'Исправь только указанные ошибки формата своего предыдущего ответа candidate. Верни ответ на исходную задачу original_context, заполненный конкретными значениями, а не JSON-схему. candidate — твой предыдущий ответ, не исходник заказчика и не результат заказа. Для проверки качества сравнивай output и input из original_context, а не candidate. Не меняй исходные факты, ссылки и оценку расходов. В строках нельзя HTML и символы < или >. Соблюдай длину полей и диапазоны чисел.',
+      original_context: context,
       candidate,
       validation_errors: issues,
     }),

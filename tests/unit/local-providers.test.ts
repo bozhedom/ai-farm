@@ -201,6 +201,9 @@ describe('local providers', () => {
       true,
     )
     const second = JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string)
-    expect(JSON.parse(second.messages[1].content).candidate).toBe('{"text":"x"}')
+    expect(JSON.parse(second.messages[1].content)).toMatchObject({
+      candidate: '{"text":"x"}',
+      original_context: 'facts',
+    })
   })
 })

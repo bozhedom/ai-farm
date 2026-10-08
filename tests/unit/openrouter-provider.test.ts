@@ -162,7 +162,7 @@ describe('free OpenRouter adapter', () => {
     const repair = JSON.parse(
       JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string).messages[1].content,
     )
-    expect(repair).toMatchObject({ candidate: '{"wrong":true}' })
+    expect(repair).toMatchObject({ candidate: '{"wrong":true}', original_context: args.context })
     expect(repair.validation_errors.length).toBeGreaterThan(0)
     expect(activity.reportValidation).toHaveBeenCalledWith(args.key, expect.any(Array), true)
     expect(vi.mocked(db.query).mock.calls[1]![1]?.slice(1, 7)).toEqual([
@@ -173,6 +173,41 @@ describe('free OpenRouter adapter', () => {
       null,
       0,
     ])
+  })
+  it('preserves the source and reviewed result when repairing an invalid quality response', async () => {
+    const context = JSON.stringify({
+      input: 'Доставка не предоставляется.',
+      output: 'Доставка включена.',
+    })
+    const invalid = response()
+    invalid.choices[0]!.message.content =
+      '{"type":"object","properties":{"verdict":{"type":"string"}}}'
+    const corrected = response()
+    corrected.choices[0]!.message.content =
+      '{"verdict":"BLOCKED","reason":"Результат противоречит условию доставки."}'
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(invalid)))
+        .mockResolvedValueOnce(new Response(JSON.stringify(corrected))),
+    )
+    const result = await openrouterModel({
+      ...args,
+      context,
+      schema: z
+        .object({
+          verdict: z.enum(['PASS', 'REVISE', 'BLOCKED']),
+          reason: z.string().min(5),
+        })
+        .strict(),
+    })
+    expect(result.value.verdict).toBe('BLOCKED')
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string)
+    const repair = JSON.parse(body.messages[1].content)
+    expect(JSON.parse(repair.original_context)).toEqual(JSON.parse(context))
+    expect(repair.candidate).toBe(invalid.choices[0]!.message.content)
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
   it('stops after one failed format repair', async () => {
     const invalid = () => {
