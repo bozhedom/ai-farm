@@ -56,12 +56,21 @@ export async function fulfill(job: Job) {
   }
   await transaction(async (db) => {
     const [state] = await query('SELECT mode FROM system_state WHERE id=true FOR UPDATE', [], db)
+    const [lease] = await query(
+      `SELECT id FROM jobs WHERE id=$1 AND status='running'
+       AND lease_token=$2 AND locked_until>clock_timestamp() FOR UPDATE`,
+      [job.id, job.lease_token],
+      db,
+    )
     const [current] = await query(
       'SELECT status FROM orders WHERE id=$1 FOR UPDATE',
       [order.id],
       db,
     )
     if (!current || !['paid', 'running'].includes(current.status)) return
+    // A late response remains in tool_calls, but only the current worker may deliver
+    // or release the reservation now owned by a recovered job.
+    if (!lease) throw new Error('LEASE_LOST')
     if (state?.mode === 'emergency_stop') throw new Error('STOPPED')
     const rows = await query(
       "UPDATE orders SET status='delivered',result=$2,review=$3,delivered_at=now() WHERE id=$1 AND status IN ('paid','running') RETURNING id",

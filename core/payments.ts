@@ -156,6 +156,8 @@ async function confirmPayment(
 export async function sandboxPayment(id: string) {
   if (config().PAYMENT_MODE !== 'sandbox') throw new Error('SANDBOX_DISABLED')
   return transaction(async (db) => {
+    // Serialize new obligations with generation changes; keep state -> order lock order.
+    await query('SELECT id FROM system_state WHERE id=true FOR UPDATE', [], db)
     const [order] = await query('SELECT * FROM orders WHERE id=$1 FOR UPDATE', [id], db)
     if (!order) throw new Error('ORDER_NOT_FOUND')
     if (order.payment_mode !== 'sandbox') throw new Error('PAYMENT_MODE_MISMATCH')
@@ -271,9 +273,11 @@ export async function reconcilePayments(call: Rpc = rpc) {
       }
       // Hash + lease fence prevents a delayed response from replacing a newer verification.
       await transaction(async (db) => {
+        // RPC stays outside the lock; confirming a payment is atomic with OPEN_OBLIGATIONS.
+        await query('SELECT id FROM system_state WHERE id=true FOR UPDATE', [], db)
         const [current] = await query(
           `SELECT * FROM orders WHERE id=$1 AND tx_hash=$2 AND payment_lease_token=$3
-         AND payment_locked_until>now() AND status='awaiting_payment' FOR UPDATE`,
+         AND payment_locked_until>clock_timestamp() AND status='awaiting_payment' FOR UPDATE`,
           [order.id, order.tx_hash, order.payment_lease_token],
           db,
         )
