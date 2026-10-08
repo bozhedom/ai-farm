@@ -10,6 +10,7 @@ vi.hoisted(() => {
 })
 
 import { pool, query } from '../../core/db'
+import * as settings from '../../core/config'
 import { createPublicOrder } from '../../core/orders'
 import {
   reconcilePayments,
@@ -205,5 +206,138 @@ describe('public Sepolia payment on a mocked chain', () => {
     await query(`UPDATE orders SET expires_at=now()-interval '10 minutes' WHERE id=$1`, [id])
     await reconcilePayments(chain.rpc)
     expect((await publicOrderView(token)).status).toBe('expired')
+  })
+
+  it('gives a hijacked transfer to the order with the exact amount: scanner path', async () => {
+    const chain = mockChain()
+    const victim = await newOrder()
+    const attacker = await newOrder()
+    // The attacker sees the victim's transfer in the mempool and pins its hash first, before
+    // the farm's node knows it.
+    const hash = chain.txHash()
+    await payPublicOrder(attacker.token, { mode: 'sepolia', hash }, chain.rpc)
+    expect((await query('SELECT order_id FROM payment_attempts'))[0]!.order_id).toBe(attacker.id)
+    chain.mine([{ hash, to: receiver, value: victim.wei, input: '0x', status: '0x1' }])
+    await reconcilePayments(chain.rpc)
+    expect((await query('SELECT order_id FROM payment_attempts'))[0]!.order_id).toBe(victim.id)
+    expect(
+      (await query('SELECT tx_hash,payment_error FROM orders WHERE id=$1', [attacker.id]))[0],
+    ).toEqual({ tx_hash: null, payment_error: null })
+    chain.mine()
+    chain.mine()
+    await recheck()
+    await reconcilePayments(chain.rpc)
+    expect((await publicOrderView(victim.token)).status).toBe('in_progress')
+    expect((await publicOrderView(attacker.token)).status).toBe('awaiting_payment')
+    expect(
+      (await query("SELECT data FROM audit_events WHERE kind='payment_attempt_moved'"))[0]!.data,
+    ).toMatchObject({ orderId: victim.id, fromOrderId: attacker.id, hash })
+  })
+
+  it('gives a hijacked transfer to the order with the exact amount: buyer hash path', async () => {
+    const chain = mockChain()
+    const victim = await newOrder()
+    const attacker = await newOrder()
+    const hash = chain.txHash()
+    await payPublicOrder(attacker.token, { mode: 'sepolia', hash }, chain.rpc)
+    chain.mine([{ hash, to: receiver, value: victim.wei, input: '0x', status: '0x1' }])
+    // The attacker cannot take it back by repeating the claim: the node shows another amount.
+    await payPublicOrder(victim.token, { mode: 'sepolia', hash }, chain.rpc)
+    await expect(
+      payPublicOrder(attacker.token, { mode: 'sepolia', hash }, chain.rpc),
+    ).rejects.toThrow('WRONG_AMOUNT')
+    chain.mine()
+    chain.mine()
+    await reconcilePayments(chain.rpc)
+    expect((await query('SELECT status,tx_hash FROM orders WHERE id=$1', [victim.id]))[0]).toEqual({
+      status: 'paid',
+      tx_hash: hash,
+    })
+  })
+
+  it('releases a hash its order already rejected, and never moves a confirmed payment', async () => {
+    const chain = mockChain()
+    const first = await newOrder()
+    const second = await newOrder()
+    const paid = chain.transfer(receiver, first.wei)
+    // Without the scanner (it would hand the hash over at once) the wrong order holds it via the
+    // owner path, which has no precheck, and its own check rejects it.
+    const real = settings.config()
+    vi.spyOn(settings, 'config').mockReturnValue({ ...real, SEPOLIA_SCAN_ENABLED: false })
+    await submitTransaction(second.id, paid)
+    await reconcilePayments(chain.rpc)
+    expect(
+      (await query('SELECT payment_error FROM orders WHERE id=$1', [second.id]))[0]!.payment_error,
+    ).toBe('WRONG_AMOUNT')
+    // Even without a proof, the rejected hash is free for another order now.
+    await submitTransaction(first.id, paid)
+    chain.mine()
+    chain.mine()
+    await recheck()
+    await reconcilePayments(chain.rpc)
+    expect((await query('SELECT status FROM orders WHERE id=$1', [first.id]))[0]!.status).toBe(
+      'paid',
+    )
+    const third = await newOrder()
+    await expect(submitTransaction(third.id, paid)).rejects.toThrow('TX_ALREADY_USED')
+    expect((await query('SELECT order_id FROM payment_attempts'))[0]!.order_id).toBe(first.id)
+    vi.restoreAllMocks()
+  })
+
+  it('sends an unresolved hash conflict to the owner instead of expiring it', async () => {
+    const chain = mockChain()
+    const first = await newOrder()
+    const second = await newOrder()
+    const hash = chain.transfer(receiver, first.wei)
+    await payPublicOrder(first.token, { mode: 'sepolia', hash }, chain.rpc)
+    await expect(submitTransaction(second.id, hash)).rejects.toThrow('TX_ALREADY_USED')
+    await query(
+      `UPDATE orders SET created_at=now()-interval '2 hours',expires_at=now()-interval '1 hour'
+       WHERE id=$1`,
+      [second.id],
+    )
+    await reconcilePayments(chain.rpc)
+    const view = await publicOrderView(second.token)
+    expect(view.status).toBe('needs_attention')
+    expect(view.message.detail).toBe(
+      'Этот перевод указали и в другом заказе. Владелец разберётся сам.',
+    )
+  })
+
+  it('closes an invoice whose hash never appeared on the node an hour after it ended', async () => {
+    const chain = mockChain()
+    const { id, token } = await newOrder()
+    const random = '0x' + 'ab'.repeat(32)
+    await payPublicOrder(token, { mode: 'sepolia', hash: random }, chain.rpc)
+    await query(
+      `UPDATE orders SET created_at=now()-interval '3 hours',expires_at=now()-interval '30 minutes'
+       WHERE id=$1`,
+      [id],
+    )
+    await reconcilePayments(chain.rpc)
+    await reconcilePayments(chain.rpc)
+    // Half an hour after the deadline the hash is still checked.
+    expect((await query('SELECT status FROM orders WHERE id=$1', [id]))[0]!.status).toBe(
+      'awaiting_payment',
+    )
+    await query(`UPDATE orders SET expires_at=now()-interval '2 hours' WHERE id=$1`, [id])
+    await query(`UPDATE payment_attempts SET checked_at=now() WHERE order_id=$1`, [id])
+    await reconcilePayments(chain.rpc)
+    expect((await publicOrderView(token)).status).toBe('expired')
+    // A hash the node did show (a real transfer) still gets the full day and goes to the owner.
+    const other = await newOrder()
+    const late = chain.transfer(receiver, other.wei)
+    await payPublicOrder(other.token, { mode: 'sepolia', hash: late }, chain.rpc)
+    await query(
+      `UPDATE orders SET created_at=now()-interval '4 hours',expires_at=now()-interval '3 hours'
+       WHERE id=$1`,
+      [other.id],
+    )
+    await reconcilePayments(chain.rpc)
+    await recheck()
+    await reconcilePayments(chain.rpc)
+    expect(
+      (await query('SELECT status,payment_error FROM orders WHERE id=$1', [other.id]))[0],
+    ).toEqual({ status: 'awaiting_payment', payment_error: 'TX_OUTSIDE_INVOICE_WINDOW' })
   })
 })

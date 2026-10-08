@@ -95,24 +95,25 @@ describe('transfer matching', () => {
 })
 
 describe('hash precheck', () => {
-  it('refuses a known transfer that cannot pay this invoice and lets unknown ones wait', async () => {
+  it('refuses a known transfer that cannot pay this invoice and proves only an exact match', async () => {
     const chain = mockChain()
     const inv = invoice('a', 1633000000000042n)
     const good = chain.transfer(receiver, 1633000000000042n)
     const wrongAmount = chain.transfer(receiver, 1633000000000041n)
     const wrongReceiver = chain.transfer('0x' + 'd'.repeat(40), 1633000000000042n)
     const contract = chain.transfer(receiver, 1633000000000042n, { input: '0xa9059cbb' })
-    await expect(precheckTransfer(inv, good, chain.rpc)).resolves.toBeUndefined()
+    // true: the node showed this exact transfer, so the claim may take the hash from another order.
+    await expect(precheckTransfer(inv, good, chain.rpc)).resolves.toBe(true)
     await expect(precheckTransfer(inv, wrongAmount, chain.rpc)).rejects.toThrow('WRONG_AMOUNT')
     await expect(precheckTransfer(inv, wrongReceiver, chain.rpc)).rejects.toThrow('WRONG_RECEIVER')
     await expect(precheckTransfer(inv, contract, chain.rpc)).rejects.toThrow(
       'ONLY_NATIVE_TRANSFER_ALLOWED',
     )
-    await expect(precheckTransfer(inv, '0x' + '9'.repeat(64), chain.rpc)).resolves.toBeUndefined()
+    await expect(precheckTransfer(inv, '0x' + '9'.repeat(64), chain.rpc)).resolves.toBe(false)
     chain.fail.eth_getTransactionByHash = () => {
       throw new Error('RPC_UNAVAILABLE')
     }
-    await expect(precheckTransfer(inv, wrongAmount, chain.rpc)).resolves.toBeUndefined()
+    await expect(precheckTransfer(inv, wrongAmount, chain.rpc)).resolves.toBe(false)
     await expect(precheckTransfer(inv, 'nope', chain.rpc)).rejects.toThrow('INVALID_TX_HASH')
   })
 })

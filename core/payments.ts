@@ -219,10 +219,77 @@ export async function sandboxPayment(id: string, options: { refuseWhenFull?: boo
   })
 }
 
-export async function submitTransaction(id: string, hash: string) {
+/**
+ * Pins `hash` to a locked order: one hash, one order. A hash already pinned elsewhere moves to
+ * this order only when the other order provably cannot be paid by it: either this claim proved
+ * the transfer's exact amount is this invoice's (`proven`; amounts are unique per invoice), or
+ * the other order's own check already rejected it. A confirmed payment never moves. This keeps
+ * someone who pins a victim's hash first from holding the victim's transfer hostage.
+ */
+async function claimAttempt(
+  db: Connection,
+  order: Record<string, any>,
+  hash: string,
+  how: { proven: boolean; byScan: boolean },
+) {
+  const [mine] = await query(
+    `INSERT INTO payment_attempts(tx_hash,order_id,detected_by_scan,seen_at)
+     VALUES($1,$2,$3,CASE WHEN $3 THEN now() END) ON CONFLICT(tx_hash) DO NOTHING
+     RETURNING order_id`,
+    [hash, order.id, how.byScan],
+    db,
+  )
+  if (mine) return true
+  const [attempt] = await query(
+    'SELECT * FROM payment_attempts WHERE tx_hash=$1 FOR UPDATE',
+    [hash],
+    db,
+  )
+  if (!attempt) return false
+  if (attempt.order_id === order.id) return true
+  const [holder] = await query(
+    'SELECT id,status,tx_hash,amount_wei::text AS amount_wei FROM orders WHERE id=$1 FOR UPDATE',
+    [attempt.order_id],
+    db,
+  )
+  const unusable =
+    !!holder &&
+    attempt.confirmed_at === null &&
+    !(holder.tx_hash === hash && holder.status !== 'awaiting_payment') &&
+    ((how.proven && holder.amount_wei !== String(order.amount_wei)) ||
+      replaceableErrors.includes(attempt.error_code))
+  if (!unusable) return false
+  await query(
+    `UPDATE payment_attempts SET order_id=$2,detected_by_scan=$3,submitted_at=now(),checked_at=null,
+     confirmations=0,error_code=null,proof=null,confirmed_at=null,
+     seen_at=CASE WHEN $3 THEN now() ELSE seen_at END WHERE tx_hash=$1`,
+    [hash, order.id, how.byScan],
+    db,
+  )
+  if (holder.tx_hash === hash)
+    await query(
+      `UPDATE orders SET tx_hash=null,confirmations=0,payment_error=null,last_payment_check=null,
+       payment_proof=null,payment_lease_token=null,payment_locked_until=null WHERE id=$1`,
+      [holder.id],
+      db,
+    )
+  await audit(
+    'payment_attempt_moved',
+    'Хеш тестового перевода передан заказу с точной суммой: прежнему заказу он не подходит.',
+    { orderId: order.id, fromOrderId: holder.id, hash },
+    db,
+  )
+  return true
+}
+
+/**
+ * A buyer's or the owner's hash for an open Sepolia invoice. `proven`: the caller already saw
+ * this transaction on the node with this invoice's receiver and exact amount.
+ */
+export async function submitTransaction(id: string, hash: string, proven = false) {
   if (!hashPattern.test(hash)) throw new Error('INVALID_TX_HASH')
   hash = hash.toLowerCase()
-  return transaction(async (db) => {
+  const refused = await transaction(async (db) => {
     const [order] = await query('SELECT * FROM orders WHERE id=$1 FOR UPDATE', [id], db)
     if (
       !order ||
@@ -231,18 +298,16 @@ export async function submitTransaction(id: string, hash: string) {
       new Date(order.expires_at) <= new Date()
     )
       throw new Error('ORDER_NOT_PAYABLE')
-    await query(
-      'INSERT INTO payment_attempts(tx_hash,order_id) VALUES($1,$2) ON CONFLICT(tx_hash) DO NOTHING',
-      [hash, id],
-      db,
-    )
-    const [attempt] = await query(
-      'SELECT order_id FROM payment_attempts WHERE tx_hash=$1',
-      [hash],
-      db,
-    )
-    if (attempt?.order_id !== id) throw new Error('TX_ALREADY_USED')
-    if (order.tx_hash === hash) return
+    if (!(await claimAttempt(db, order, hash, { proven, byScan: false }))) {
+      // Remember the conflict: such an invoice goes to the owner instead of silently expiring.
+      await query(
+        "UPDATE orders SET payment_error='TX_ALREADY_USED' WHERE id=$1 AND tx_hash IS NULL",
+        [id],
+        db,
+      )
+      return 'TX_ALREADY_USED'
+    }
+    if (order.tx_hash === hash) return null
     await query(
       `UPDATE orders SET tx_hash=$2,confirmations=0,payment_error=null,last_payment_check=null,
        payment_proof=null,payment_lease_token=null,payment_locked_until=null WHERE id=$1`,
@@ -255,17 +320,21 @@ export async function submitTransaction(id: string, hash: string) {
       { orderId: id, hash },
       db,
     )
+    return null
   })
+  if (refused) throw new Error(refused)
 }
 
 const sameAddress = (a: unknown, b: string) =>
   typeof a === 'string' && a.toLowerCase() === b.toLowerCase()
 
 /**
- * Cheap check before a buyer's hash is pinned to an order forever. A transaction the node
- * already knows must go to this invoice's receiver with its exact amount; otherwise the hash is
- * refused, so nobody can pin somebody else's transfer to their own order. Unknown or unreadable
- * transactions pass: full verification happens in `reconcilePayments`.
+ * Cheap check before a buyer's hash is pinned to an order. A transaction the node already knows
+ * must go to this invoice's receiver with its exact amount; otherwise the hash is refused.
+ * Returns true when the node showed exactly that: such a claim wins over an earlier order that
+ * pinned the same hash (see `claimAttempt`). Unknown or unreadable transactions return false and
+ * are pinned only until a proven claim or the order's own check says otherwise; full
+ * verification happens in `reconcilePayments`.
  */
 export async function precheckTransfer(invoice: Invoice, hash: string, call: Rpc = rpc) {
   if (!hashPattern.test(hash)) throw new Error('INVALID_TX_HASH')
@@ -273,19 +342,21 @@ export async function precheckTransfer(invoice: Invoice, hash: string, call: Rpc
   try {
     tx = await call('eth_getTransactionByHash', [hash])
   } catch {
-    return
+    return false
   }
-  if (!tx || typeof tx !== 'object') return
+  if (!tx || typeof tx !== 'object') return false
+  if (typeof tx.hash === 'string' && tx.hash.toLowerCase() !== hash.toLowerCase()) return false
   if (!sameAddress(tx.to, invoice.receiver)) throw new Error('WRONG_RECEIVER')
   let value: bigint
   try {
     value = quantity(tx.value)
   } catch {
-    return
+    return false
   }
   if (value !== BigInt(invoice.amount_wei)) throw new Error('WRONG_AMOUNT')
   if (typeof tx.input === 'string' && tx.input !== '0x')
     throw new Error('ONLY_NATIVE_TRANSFER_ALLOWED')
+  return typeof tx.hash === 'string' && tx.input === '0x'
 }
 
 /** Blocks fetched per cycle, blocks re-read after a pause, and the furthest the scan looks back. */
@@ -350,7 +421,11 @@ export function matchTransfers(block: any, invoices: OpenInvoice[], receiver: st
   return found
 }
 
-/** Pins a scanned transfer to its invoice with the same one-hash-one-order rule as buyers. */
+/**
+ * Pins a scanned transfer to its invoice with the same one-hash-one-order rule as buyers. The
+ * block showed the exact amount, so the claim is proven: a hash pinned earlier to another order
+ * moves here.
+ */
 async function attachDetectedPayment(orderId: string, hash: string, amountWei: string) {
   return transaction(async (db) => {
     const [order] = await query('SELECT * FROM orders WHERE id=$1 FOR UPDATE', [orderId], db)
@@ -363,18 +438,15 @@ async function attachDetectedPayment(orderId: string, hash: string, amountWei: s
       (order.tx_hash && !replaceableErrors.includes(order.payment_error))
     )
       return false
-    await query(
-      `INSERT INTO payment_attempts(tx_hash,order_id,detected_by_scan) VALUES($1,$2,true)
-       ON CONFLICT(tx_hash) DO NOTHING`,
-      [hash, orderId],
-      db,
-    )
-    const [attempt] = await query(
-      'SELECT order_id FROM payment_attempts WHERE tx_hash=$1',
-      [hash],
-      db,
-    )
-    if (attempt?.order_id !== orderId) return false
+    order.amount_wei = String(order.amount_wei)
+    if (!(await claimAttempt(db, order, hash, { proven: true, byScan: true }))) {
+      await query(
+        "UPDATE orders SET payment_error='TX_ALREADY_USED' WHERE id=$1 AND tx_hash IS NULL",
+        [orderId],
+        db,
+      )
+      return false
+    }
     await query(
       `UPDATE orders SET tx_hash=$2,confirmations=0,payment_error=null,last_payment_check=null,
        payment_proof=null,payment_lease_token=null,payment_locked_until=null WHERE id=$1`,
@@ -457,18 +529,38 @@ export async function scanPayments(call: Rpc = rpc, now = new Date()) {
   return { scanned, found }
 }
 
+/** A hash the node has never shown, though it answered after the invoice ended. */
+export const unseenHashSeconds = 3600
+
 async function expireInvoices() {
   const c = config()
   const grace = c.PAYMENT_MODE === 'sepolia' && c.SEPOLIA_SCAN_ENABLED ? scanGraceSeconds : 0
   await transaction(async (db) => {
+    // Unpaid invoices expire. A hash pinned elsewhere (TX_ALREADY_USED) goes to the owner. A
+    // pinned hash is checked a day longer, unless the node still had never seen it an hour
+    // after the deadline: such a transfer cannot have been mined inside the invoice window.
     const expired = await query(
-      `UPDATE orders SET status=CASE WHEN tx_hash IS NULL THEN 'expired' ELSE 'manual_review' END,
+      `WITH due AS (
+         SELECT o.id,o.tx_hash,o.payment_error,o.expires_at,EXISTS(
+           SELECT 1 FROM payment_attempts a WHERE a.tx_hash=o.tx_hash AND a.order_id=o.id
+           AND a.seen_at IS NULL AND a.error_code IS NULL AND a.checked_at>o.expires_at) AS unseen
+         FROM orders o WHERE o.status='awaiting_payment' AND o.expires_at<now())
+       UPDATE orders SET status=CASE
+         WHEN due.tx_hash IS NULL AND due.payment_error IS DISTINCT FROM 'TX_ALREADY_USED'
+           THEN 'expired'
+         WHEN due.tx_hash IS NOT NULL AND due.unseen THEN 'expired'
+         ELSE 'manual_review' END,
        payment_lease_token=null,payment_locked_until=null
-       WHERE status='awaiting_payment' AND ((tx_hash IS NULL AND expires_at<now()-make_interval(
-         secs=>CASE WHEN payment_mode='sepolia' THEN $1::int ELSE 0 END))
-         OR expires_at<now()-interval '24 hours')
-       RETURNING id,reservation_id,status`,
-      [grace],
+       FROM due WHERE orders.id=due.id AND orders.status='awaiting_payment'
+       AND orders.tx_hash IS NOT DISTINCT FROM due.tx_hash
+       AND orders.payment_error IS NOT DISTINCT FROM due.payment_error AND (
+         (due.tx_hash IS NULL AND orders.expires_at<now()-make_interval(
+           secs=>CASE WHEN orders.payment_mode='sepolia' THEN $1::int ELSE 0 END))
+         OR (due.tx_hash IS NOT NULL AND due.unseen
+           AND orders.expires_at<now()-make_interval(secs=>$2::int))
+         OR orders.expires_at<now()-interval '24 hours')
+       RETURNING orders.id,orders.reservation_id,orders.status,due.tx_hash,due.payment_error`,
+      [grace, unseenHashSeconds],
       db,
     )
     for (const order of expired) {
@@ -476,8 +568,12 @@ async function expireInvoices() {
       await audit(
         'invoice_expired',
         order.status === 'manual_review'
-          ? 'Тестовый платёж требует проверки владельцем.'
-          : 'Срок тестового счёта истёк; резерв освобождён.',
+          ? order.payment_error === 'TX_ALREADY_USED' && !order.tx_hash
+            ? 'Перевод на сумму счёта уже указан в другом заказе. Нужна проверка владельцем.'
+            : 'Тестовый платёж требует проверки владельцем.'
+          : order.tx_hash
+            ? 'Указанный перевод так и не появился в сети. Срок счёта истёк; резерв освобождён.'
+            : 'Срок тестового счёта истёк; резерв освобождён.',
         { orderId: order.id },
         db,
       )
@@ -542,9 +638,13 @@ export async function reconcilePayments(call: Rpc = rpc) {
           db,
         )
         if (!current) return
+        // The node has shown this transaction: mined, or rejected for its content.
+        const seen = !!result?.proof || (!!code && replaceableErrors.includes(code))
         await query(
           `UPDATE payment_attempts SET checked_at=now(),confirmations=$2,error_code=$3,proof=$4,
-         confirmed_at=CASE WHEN $5 THEN now() ELSE confirmed_at END WHERE tx_hash=$1 AND order_id=$6`,
+         confirmed_at=CASE WHEN $5 THEN now() ELSE confirmed_at END,
+         seen_at=CASE WHEN $7 THEN COALESCE(seen_at,now()) ELSE seen_at END
+         WHERE tx_hash=$1 AND order_id=$6`,
           [
             order.tx_hash,
             result?.confirmations ?? 0,
@@ -552,6 +652,7 @@ export async function reconcilePayments(call: Rpc = rpc) {
             result?.proof ?? null,
             result?.confirmed ?? false,
             order.id,
+            seen,
           ],
           db,
         )

@@ -201,4 +201,38 @@ describe.skipIf(!anvil)('crypto on a local anvil node (ANVIL_RPC_URL, npm run te
     await reconcilePayments()
     expect((await publicOrderView(unpaid.token)).status).toBe('expired')
   })
+
+  it('hands a transfer pinned first to the wrong order to the order it pays', async () => {
+    // The attacker copies a victim's hash from the mempool while the farm's node cannot answer
+    // the precheck, so the hash gets pinned to the attacker's order first.
+    const down = async () => {
+      throw new Error('RPC_UNAVAILABLE')
+    }
+    const victim = await newOrder()
+    const attacker = await newOrder()
+    const hash = await send(receiver, victim.wei)
+    await payPublicOrder(attacker.token, { mode: 'sepolia', hash }, down)
+    // The victim's own hash submission wins: the node shows the victim's exact amount.
+    await payPublicOrder(victim.token, { mode: 'sepolia', hash })
+    // The scanner does the same for a victim who never submits a hash.
+    const quiet = await newOrder()
+    const thief = await newOrder()
+    const quietHash = await send(receiver, quiet.wei)
+    await payPublicOrder(thief.token, { mode: 'sepolia', hash: quietHash }, down)
+    await mine(2)
+    await reconcilePayments()
+    await recheck()
+    await reconcilePayments()
+    for (const [order, tx] of [
+      [victim, hash],
+      [quiet, quietHash],
+    ] as const)
+      expect((await query('SELECT status,tx_hash FROM orders WHERE id=$1', [order.id]))[0]).toEqual(
+        { status: 'paid', tx_hash: tx },
+      )
+    for (const order of [attacker, thief])
+      expect((await query('SELECT status,tx_hash FROM orders WHERE id=$1', [order.id]))[0]).toEqual(
+        { status: 'awaiting_payment', tx_hash: null },
+      )
+  })
 })

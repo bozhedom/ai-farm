@@ -169,18 +169,18 @@ export async function payPublicOrder(token: string, request: PublicPayRequest, c
   if (order.status !== 'awaiting_payment' || new Date(order.expires_at) <= new Date())
     throw new Error('ORDER_NOT_PAYABLE')
   const hash = request.hash.toLowerCase()
-  if (order.tx_hash !== hash)
-    await precheckTransfer(
-      {
-        receiver: order.receiver,
-        amount_wei: String(order.amount_wei),
-        created_at: order.created_at,
-        expires_at: order.expires_at,
-      },
-      hash,
-      call,
-    )
-  await submitTransaction(order.id, hash)
+  if (order.tx_hash === hash) return { ok: true as const }
+  const proven = await precheckTransfer(
+    {
+      receiver: order.receiver,
+      amount_wei: String(order.amount_wei),
+      created_at: order.created_at,
+      expires_at: order.expires_at,
+    },
+    hash,
+    call,
+  )
+  await submitTransaction(order.id, hash, proven)
   return { ok: true as const }
 }
 
