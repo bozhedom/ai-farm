@@ -3,7 +3,7 @@
 -- Product: public fields. Existing products stay private until the owner publishes them.
 ALTER TABLE products ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'service' CHECK (kind IN ('service'));
 ALTER TABLE products ADD COLUMN IF NOT EXISTS slug text;
-ALTER TABLE products ADD COLUMN IF NOT EXISTS price_kopecks integer NOT NULL DEFAULT 49900
+ALTER TABLE products ADD COLUMN IF NOT EXISTS price_kopecks integer NOT NULL DEFAULT 49000
   CHECK (price_kopecks > 0 AND price_kopecks <= 10000000);
 ALTER TABLE products ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'private'
   CHECK (visibility IN ('private','public'));

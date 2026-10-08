@@ -27,7 +27,7 @@ describe('storefront rules', () => {
       expect(priceIdFor(kopecks)).toBe(priceIds[i])
       if (i) expect(kopecks).toBeGreaterThan(priceList[i - 1]!)
     }
-    for (const kopecks of [29000, 49000, 69000, 79000, 89000, 149000, 199000, 19900, 49900])
+    for (const kopecks of [29000, 49000, 69000, 79000, 89000, 149000, 199000])
       expect(priceList).toContain(kopecks)
     expect(() => priceKopecksFor('rub1')).toThrow('PRICE_UNKNOWN')
     expect(priceIdFor(12345)).toBeNull()

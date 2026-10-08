@@ -7,19 +7,13 @@ import type { ServiceDefinition, ServiceTemplate } from './service-catalog'
  * price. Amounts are integer kopecks. This module has no database or config access, so the
  * public site, the farm and tests can share it.
  */
-export const priceList = Object.freeze([
-  19900, 29000, 29900, 49000, 49900, 69000, 79000, 79900, 89000, 149000, 199000,
-] as const)
+export const priceList = Object.freeze([29000, 49000, 69000, 79000, 89000, 149000, 199000] as const)
 export type PriceKopecks = (typeof priceList)[number]
 export const priceIds = [
-  'rub199',
   'rub290',
-  'rub299',
   'rub490',
-  'rub499',
   'rub690',
   'rub790',
-  'rub799',
   'rub890',
   'rub1490',
   'rub1990',
