@@ -17,6 +17,8 @@
     "test": "vitest run tests/unit",
     "test:integration": "node --env-file=.env node_modules/vitest/vitest.mjs run tests/integration --maxWorkers=1",
     "test:autonomy": "node --env-file=.env --import tsx scripts/check-autonomy.ts",
+    "test:crypto": "node scripts/test-crypto.mjs",
+    "anvil:pay": "node --env-file-if-exists=.env scripts/anvil-pay.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "postinstall": "nuxt prepare",

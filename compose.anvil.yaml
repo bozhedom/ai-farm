@@ -1,0 +1,36 @@
+# Local payment demo on THIS machine only: an anvil node that imitates Sepolia (chain 11155111).
+# It is not a public network. Its test ETH exists only inside this container and is never money.
+# The server still holds no keys: buyers pay from a wallet, or `npm run anvil:pay -- <order link>`
+# sends a transfer from anvil's built-in test account.
+#
+#   docker compose -f compose.yaml -f compose.anvil.yaml --profile app up -d --build
+#   npm run anvil:pay -- http://localhost:3210/order/<token>
+#
+# Without this file the stack keeps PAYMENT_MODE from .env (sandbox by default).
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:v1.3.5
+    profiles: ['app']
+    restart: unless-stopped
+    entrypoint: ['anvil']
+    # A block every 2 seconds, so confirmations grow without manual mining.
+    command: ['--host', '0.0.0.0', '--chain-id', '11155111', '--block-time', '2']
+    ports:
+      - '127.0.0.1:18545:8545'
+  web:
+    environment: &anvil-payments
+      PAYMENT_MODE: sepolia
+      SEPOLIA_RPC_URL: http://anvil:8545
+      SEPOLIA_LOCAL_NODE: 'true'
+      # anvil test account 9: only its address is configured, never a key.
+      SEPOLIA_RECEIVER: '0xa0ee7a142d267c1f36714e4a8f75612f20a79720'
+      SEPOLIA_CONFIRMATIONS: '3'
+      SEPOLIA_SCAN_ENABLED: 'true'
+    depends_on:
+      anvil:
+        condition: service_started
+  worker:
+    environment: *anvil-payments
+    depends_on:
+      anvil:
+        condition: service_started
