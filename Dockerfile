@@ -1,7 +1,11 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --ignore-scripts
+# npm may skip a failed optional binary download while still reporting success.
+# Run only esbuild's locked installer and verify it before caching this layer.
+RUN npm ci --ignore-scripts --include=optional \
+    && npm rebuild esbuild \
+    && node -e "require('esbuild').transformSync('const n: number = 1', { loader: 'ts' })"
 COPY . .
 RUN npm run build
 
