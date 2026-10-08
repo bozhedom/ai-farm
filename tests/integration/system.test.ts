@@ -1,4 +1,3 @@
-import { readFileSync, readdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
@@ -42,28 +41,11 @@ import {
   autonomyStatus,
   type AutonomyState,
 } from '../../core/autonomy'
+import { applyMigrations, resetDatabase } from './helpers/db'
 
 const input = 'Керамическая кружка 350 мл. Белая глазурь, ручная работа. Мыть вручную.'
-beforeAll(async () => {
-  const [db] = await query('SELECT current_database() AS name')
-  if (!db?.name.endsWith('_test')) throw new Error('REFUSING_NON_TEST_DATABASE')
-  for (const file of readdirSync('db')
-    .filter((x) => x.endsWith('.sql'))
-    .sort())
-    await query(readFileSync(`db/${file}`, 'utf8'))
-})
-beforeEach(async () => {
-  await query(
-    'TRUNCATE sessions,login_attempts,audit_events,evaluations,orders,tool_calls,budget_reservations,products,hypotheses,jobs,strategies,system_state RESTART IDENTITY CASCADE',
-  )
-  await query('INSERT INTO system_state(id) VALUES(true)')
-  for (const name of ['Альфа', 'Бета', 'Гамма', 'Дельта'])
-    await query('INSERT INTO strategies(id,name,approach,generation) VALUES($1,$2,$3,1)', [
-      randomUUID(),
-      name,
-      'Только проверенные факты и ясная структура.',
-    ])
-})
+beforeAll(applyMigrations)
+beforeEach(() => resetDatabase())
 afterEach(() => vi.restoreAllMocks())
 afterAll(async () => {
   await pool.end()

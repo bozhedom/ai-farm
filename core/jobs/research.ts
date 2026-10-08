@@ -25,6 +25,7 @@ import { generateText } from './generate-text'
 import { sourceSocialDelivery } from '../source-posts'
 import { discoverOpportunities } from '../opportunities'
 import { lockResearchWindow } from '../research-window'
+import { defaultPriceKopecks, publicSlug } from '../storefront'
 
 export async function research(job: Job) {
   const strategies = await query(
@@ -312,12 +313,23 @@ export async function research(job: Job) {
         const productId = occupied?.id || randomUUID()
         const version = occupied ? occupied.version + 1 : 1
         await query(
-          `INSERT INTO products(id,hypothesis_id,strategy_id,template,spec,is_demo,checks,version)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+          `INSERT INTO products(id,hypothesis_id,strategy_id,template,spec,is_demo,checks,version,slug,price_kopecks)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            ON CONFLICT(template) DO UPDATE SET hypothesis_id=EXCLUDED.hypothesis_id,
            strategy_id=EXCLUDED.strategy_id,spec=EXCLUDED.spec,is_demo=EXCLUDED.is_demo,
            checks=EXCLUDED.checks,version=EXCLUDED.version,updated_at=now()`,
-          [productId, id, strategy.id, template, spec, isDemo, checks, version],
+          [
+            productId,
+            id,
+            strategy.id,
+            template,
+            spec,
+            isDemo,
+            checks,
+            version,
+            publicSlug(template),
+            defaultPriceKopecks[template],
+          ],
           db,
         )
         await query(
