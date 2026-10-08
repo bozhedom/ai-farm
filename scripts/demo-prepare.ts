@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { config } from '../core/config'
 import { pool, query } from '../core/db'
-import { claimJob, enqueue, finishJob, type Job } from '../core/queue'
-import { runJob } from '../core/jobs/run'
+import { enqueue, type Job } from '../core/queue'
+import { claimWorkerJob, executeWorkerJob } from '../core/worker-runtime'
 import { requestScout } from '../core/autonomy'
 import { ensureStrategyParams } from '../core/agents'
 import { requestEvolution } from '../core/evolution'
@@ -48,21 +48,21 @@ console.log(
 await ensureStrategyParams()
 
 const started = Date.now()
+/** Same path as the worker: lease heartbeat every 10 seconds, so slow free models keep their job. */
 async function drain(kinds: Job['kind'][], label: string) {
   let count = 0
   for (;;) {
-    const job = await claimJob(kinds)
+    const job = await claimWorkerJob(kinds, () => false)
     if (!job) break
-    let failure: unknown
-    try {
-      await runJob(job)
-    } catch (error) {
-      failure = error
-    }
-    await finishJob(job, failure)
+    await executeWorkerJob(job, {
+      isStopping: () => false,
+      onHeartbeatError: () => console.error('  аренда задачи потеряна'),
+    })
     count++
-    const code = failure instanceof Error ? failure.message : null
-    console.log(`  ${label}: ${job.kind} ${code ? `не удалось (${code})` : 'готово'}`)
+    const [row] = await query('SELECT status,error_code FROM jobs WHERE id=$1', [job.id])
+    console.log(
+      `  ${label}: ${job.kind} ${row?.status === 'done' ? 'готово' : `не удалось (${row?.error_code}), статус ${row?.status}`}`,
+    )
   }
   return count
 }
