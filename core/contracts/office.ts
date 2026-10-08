@@ -27,17 +27,29 @@ export type OfficeOverview = {
     publicProducts: number
     orders: number
     realRevenueKopecks: number
+    /** Number of confirmed test payments (sandbox or Sepolia). Never revenue. */
     testPayments: number
+    /** Added by slice B: delivered orders, all time. */
+    ordersDelivered?: number
+    /** Added by slice B: sum of confirmed test payments in kopecks. Never revenue. */
+    testPaymentsKopecks?: number
   }
   worker: { alive: boolean; reason: string; nextAt: string | null }
   feed: { at: string; kind: string; text: string; link: string | null }[]
   needsOwner: { kind: string; text: string; link: string }[]
+  /** Added by slice B: what the farm is doing right now, with progress; null when idle. */
+  now?: { title: string; detail: string; step: number; steps: number } | null
 }
 export type OfficeIdea = {
   id: string
   title: string
+  /** Russian industry name, e.g. "Общепит и доставка". */
   category: string
+  /** Russian topic name, e.g. "Меню и описания блюд". */
   topic: string
+  /** Added by slice B: taxonomy ids for filters (`?category=<categoryId>`). */
+  categoryId?: string
+  topicId?: string
   status: IdeaStatus
   rankScore: number
   farmExecutable: boolean
@@ -77,10 +89,17 @@ export type OfficeIdeaList = {
   offset: number
   limit: number
   hasMore: boolean
+  /** Added by slice B: industries for the filter, from the server taxonomy. */
+  categories?: { id: string; label: string }[]
 }
 export type OfficeAgent = {
   id: string
+  /** "Разведчик А", copies "Разведчик А2". Computed on the server. */
   name: string
+  /** Added by slice B: short label "А", "А2". */
+  label?: string
+  /** Added by slice B: industry labels of params.focusCategories. */
+  focusLabels?: string[]
   status: 'active' | 'archived'
   generation: number
   parentId: string | null
@@ -146,6 +165,8 @@ export type OfficeProduct = {
   needsRefresh: boolean
   publicUrl: string
   stats: { orders: number; delivered: number; leads: number }
+  /** Added by slice B: 'sandbox' (sellable) or 'archived'. */
+  status?: string
 }
 export type OfficeOrderSummary = {
   id: string
@@ -158,6 +179,8 @@ export type OfficeOrderSummary = {
   product: { name: string; slug: string; version: number }
   createdAt: string
   attention: boolean
+  /** Added by slice B: agent of the order in office words, "Разведчик А2". */
+  agentName?: string
 }
 export type OfficeLead = {
   id: string
@@ -174,6 +197,37 @@ export type OfficeLead = {
   isDemo: boolean
   firstSeenAt: string
   lastSeenAt: string
+}
+/** Added by slice B: one page of a list endpoint. */
+export type OfficeList<T> = {
+  items: T[]
+  total: number
+  offset: number
+  limit: number
+  hasMore: boolean
+}
+/** `GET /api/office/orders?offset&attention`. */
+export type OfficeOrderList = OfficeList<OfficeOrderSummary>
+/** `GET /api/office/leads?stage&offset`. Stage changes: `POST /api/opportunities/[id]`. */
+export type OfficeLeadList = OfficeList<OfficeLead>
+/** `GET /api/office/products?offset`. */
+export type OfficeProductList = OfficeList<OfficeProduct>
+/** `GET /api/office/reports?offset`. */
+export type OfficeReportList = OfficeList<OfficeReport>
+/** Added by slice B: `GET /api/office/journal`, the technical log in plain words. */
+export type OfficeJournal = {
+  events: { id: string; at: string; kind: string; text: string }[]
+  jobs: {
+    id: string
+    kind: string
+    title: string
+    status: 'queued' | 'running' | 'done' | 'failed'
+    error: string | null
+    attempts: number
+    createdAt: string
+    startedAt: string | null
+    finishedAt: string | null
+  }[]
 }
 export type OfficeMoney = {
   daySpentKopecks: number
@@ -214,6 +268,8 @@ export type OfficeSettings = {
   leadsPerDay: number
   providers: { model: string; search: string; payment: string }
   limits: { dailyKopecks: number; monthlyKopecks: number }
+  /** Added by slice B: the 28-day season is open. A new one: POST /api/control {action:'restart_research'}. */
+  researchEnabled?: boolean
 }
 export type OfficeSettingsUpdate = Partial<
   Pick<
@@ -225,3 +281,10 @@ export type OfficeSettingsUpdate = Partial<
     | 'leadsPerDay'
   >
 >
+
+/** Added by slice B: answers of owner actions that queue work. */
+export type OfficeQueued = { id: string; status: string; reused: boolean }
+export type OfficeScoutRequest = { topicId?: string }
+export type OfficeScoutQueued = { jobs: { id: string; status: string }[]; reused: boolean }
+export type OfficeIdeaUpdate = { ownerNote?: string; status?: 'needs_human' | 'rejected' }
+export type OfficeVisibilityUpdate = { visibility: 'private' | 'public' }
