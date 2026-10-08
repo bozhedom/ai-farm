@@ -4,6 +4,7 @@ import { templateSchema, type Template } from './policy'
 import { config } from './config'
 import { budgetSummary, reserveBudget } from './budget'
 import { WorkerDraining } from './activity'
+import { lockResearchWindow } from './research-window'
 
 export type Job = {
   id: string
@@ -29,8 +30,7 @@ export async function enqueue(
 export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
   return transaction(async (db) => {
     // Serialize research claims across workers, including a manual run racing the scheduler.
-    if (kinds.includes('research'))
-      await query('SELECT id FROM system_state WHERE id=true FOR UPDATE', [], db)
+    if (kinds.includes('research')) await lockResearchWindow(db)
     const [row] = await query<Job>(
       `SELECT j.* FROM jobs j CROSS JOIN system_state s
       WHERE j.kind=ANY($1) AND j.status='queued' AND j.run_after<=now() AND j.attempts<j.max_attempts
@@ -113,10 +113,10 @@ async function deferDailyCampaign(job: Job, db: Connection) {
 /** Owners may start a new run when the previous one ends; parallel clicks share the active job. */
 export async function requestResearch(template?: Template) {
   if (template !== undefined) templateSchema.parse(template)
-  return transaction(async (db) => {
-    const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
+  const result = await transaction(async (db) => {
+    const state = await lockResearchWindow(db)
+    if (!state.research_enabled) return { error: 'RESEARCH_WINDOW_CLOSED' } as const
     if (state?.mode !== 'running') throw new Error('RESEARCH_PAUSED')
-    if (!state.research_enabled) throw new Error('RESEARCH_WINDOW_CLOSED')
     const [active] = await query(
       `SELECT id,status FROM jobs WHERE kind='research' AND status IN ('queued','running')
        AND (status='running' OR (dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND NOT (payload ? 'scheduleSlot')) OR $1)
@@ -139,6 +139,9 @@ export async function requestResearch(template?: Template) {
     )
     return { id: job.id as string, status: job.status as string, reused: false }
   })
+  // Keep the window closure and its audit committed when admission is denied.
+  if ('error' in result) throw new Error(result.error)
+  return result
 }
 export async function heartbeatJob(job: Job) {
   const result = await query(
@@ -194,7 +197,7 @@ export async function finishJob(job: Job, error?: unknown) {
     const terminal =
       !!code &&
       (job.attempts >= job.max_attempts ||
-        /POLICY|UNCERTAIN|BUDGET|INPUT|SOURCE|SCHEMA|REVIEW|OUTPUT|PROVIDER_CHANGED|RECIPE_REFRESH|TRANSLATION_LANGUAGE|^RESERVATION_CLOSED$/.test(
+        /POLICY|UNCERTAIN|BUDGET|INPUT|SOURCE|SCHEMA|REVIEW|OUTPUT|PROVIDER_CHANGED|RECIPE_REFRESH|TRANSLATION_LANGUAGE|^RESERVATION_CLOSED$|^RESEARCH_WINDOW_CLOSED$/.test(
           code,
         ))
     await query(

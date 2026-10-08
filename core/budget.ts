@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { activityContext, checkWorkerDrain, type CallActivity } from './activity'
+import { lockResearchWindow } from './research-window'
 
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
@@ -89,6 +90,8 @@ export async function meteredCall<T>(args: {
   if (args.activity?.provider === 'openrouter' && (maximumUsd !== 0 || args.maximum !== 0))
     throw new Error('OPENROUTER_FREE_MODEL_REQUIRED')
   const claim = await transaction(async (db) => {
+    // Window transitions and all budget admissions use the same lock order.
+    await query('SELECT id FROM system_state WHERE id=true FOR UPDATE', [], db)
     await query('SELECT pg_advisory_xact_lock(735093)', [], db)
     const [old] = await query('SELECT * FROM tool_calls WHERE call_key=$1', [args.key], db)
     if (old?.status === 'done') {
@@ -102,21 +105,17 @@ export async function meteredCall<T>(args: {
     }
     if (old) throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
     checkWorkerDrain()
-    const [state] = await query(
-      'SELECT mode,research_enabled FROM system_state WHERE id=true',
-      [],
-      db,
-    )
-    if (state?.mode === 'emergency_stop') throw new Error('STOPPED')
+    const state = await lockResearchWindow(db)
     const [reservation] = await query(
       'SELECT * FROM budget_reservations WHERE id=$1 FOR UPDATE',
       [args.reservationId],
       db,
     )
+    if (!state.research_enabled && reservation?.category === 'research')
+      return { error: new Error('RESEARCH_WINDOW_CLOSED') }
+    if (state.mode === 'emergency_stop') throw new Error('STOPPED')
     if (!reservation || reservation.status !== 'open') throw new Error('RESERVATION_CLOSED')
-    if (state?.mode === 'paused' && reservation.category === 'research') throw new Error('PAUSED')
-    if (!state?.research_enabled && reservation.category === 'research')
-      throw new Error('RESEARCH_WINDOW_CLOSED')
+    if (state.mode === 'paused' && reservation.category === 'research') throw new Error('PAUSED')
     if (
       !Number.isSafeInteger(args.maximum) ||
       args.maximum < 0 ||
@@ -168,6 +167,7 @@ export async function meteredCall<T>(args: {
     checkWorkerDrain()
     return { cached: false as const, id }
   })
+  if ('error' in claim) throw claim.error
   if (claim.cached) return claim.value
   try {
     const result = await args.invoke()

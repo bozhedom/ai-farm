@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { audit, query, transaction } from './db'
+import { POLICY } from './policy'
+import { lockResearchWindow } from './research-window'
 
 export type Score = {
   id: string
@@ -24,7 +26,7 @@ export function assess(
   obligations = false,
 ): Evaluation {
   const hold = (reason: string): Evaluation => ({
-    decision: ageDays >= 28 ? 'CLOSED' : 'HOLD',
+    decision: ageDays >= POLICY.researchWindowDays ? 'CLOSED' : 'HOLD',
     reason,
     winners: [],
     losers: [],
@@ -63,18 +65,10 @@ export function assess(
 
 export async function evaluateWeek(key: string) {
   await transaction(async (db) => {
-    const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
-    const age = Math.floor(
-      (Date.now() - new Date(state!.generation_started_at).getTime()) / 86400000,
-    )
-    const decision = age >= 28 ? 'CLOSED' : 'HOLD'
-    if (decision === 'CLOSED') {
-      await query('UPDATE system_state SET research_enabled=false WHERE id=true', [], db)
-    }
-    const reason =
-      age >= 28
-        ? 'Эксперимент завершён без денежного победителя: за 28 дней нет реальных сопоставимых продаж.'
-        : 'Тестовые платежи исключены из выручки. Данных для денежного отбора нет.'
+    const state = await lockResearchWindow(db)
+    if (state.research_window_expired) return
+    const decision = 'HOLD'
+    const reason = 'Тестовые платежи исключены из выручки. Данных для денежного отбора нет.'
     const rows = await query(
       'INSERT INTO evaluations(id,evaluation_key,generation,decision,reason,details) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(evaluation_key) DO NOTHING RETURNING id',
       [randomUUID(), key, state!.generation, decision, reason, { realRevenueKopecks: 0 }],

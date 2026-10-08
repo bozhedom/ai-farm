@@ -24,6 +24,7 @@ import { reviewContext } from './text-context'
 import { generateText } from './generate-text'
 import { sourceSocialDelivery } from '../source-posts'
 import { discoverOpportunities } from '../opportunities'
+import { lockResearchWindow } from '../research-window'
 
 export async function research(job: Job) {
   const strategies = await query(
@@ -263,17 +264,17 @@ export async function research(job: Job) {
         else throw error
       }
     }
-    await transaction(async (db) => {
-      const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
+    const publication = await transaction(async (db) => {
+      const state = await lockResearchWindow(db)
       const [lease] = await query(
         `SELECT id FROM jobs WHERE id=$1 AND status='running'
-         AND lease_token=$2 AND locked_until>now() FOR UPDATE`,
+         AND lease_token=$2 AND locked_until>clock_timestamp() FOR UPDATE`,
         [job.id, job.lease_token],
         db,
       )
       // The provider response and its charge remain in tool_calls. A late worker must
       // neither publish after cancellation nor close the reservation of a newer lease.
-      if (!lease) throw new Error('LEASE_LOST')
+      if (!lease) return { error: 'LEASE_LOST' }
       const accepted = !!spec && !blockedReason
       const count = (await query("SELECT id FROM products WHERE status='sandbox'", [], db)).length
       const [occupied] = await query(
@@ -342,6 +343,7 @@ export async function research(job: Job) {
         db,
       )
     })
+    if (publication?.error) throw new Error(publication.error)
   }
   await closeReservation(reservationId)
 }

@@ -38,6 +38,7 @@ describe('bounded service catalog', () => {
       maxProducts: 12,
       maxStrategies: 4,
       scheduledResearchPerDay: 1,
+      researchWindowDays: 28,
       maxInputChars: 4000,
       maxOutputChars: 12000,
       maxAttempts: 3,

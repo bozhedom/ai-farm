@@ -4,6 +4,7 @@ import { enqueue } from './queue'
 import type { budgetSummary } from './budget'
 import { operationsStatus } from './operations'
 import { enqueueResearchCampaign } from './research-campaign'
+import { lockResearchWindow } from './research-window'
 
 export async function setResearchScope(scope: 'rotate' | 'all') {
   if (!['rotate', 'all'].includes(scope)) throw new Error('RESEARCH_SCOPE_INVALID')
@@ -40,7 +41,7 @@ export async function setSchedule(enabled: boolean) {
 /** One UTC slot, shared by every worker. Paused work never accumulates new research. */
 export async function scheduleWork(now = new Date()) {
   return transaction(async (db) => {
-    const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
+    const state = await lockResearchWindow(db)
     const week = `evaluate:${Math.floor(now.getTime() / (7 * 86400000))}`
     if (!(await query('SELECT id FROM jobs WHERE dedupe_key=$1', [week], db)).length)
       await enqueue('evaluate', week, {}, db)
@@ -66,6 +67,7 @@ export async function scheduleWork(now = new Date()) {
       state.research_scope === 'all'
         ? await enqueueResearchCampaign(db, key)
         : await enqueue('research', key, {}, db)
+    if ('error' in job) return
     await audit(
       'research_scheduled',
       state.research_scope === 'all'

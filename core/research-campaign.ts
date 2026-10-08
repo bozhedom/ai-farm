@@ -3,17 +3,20 @@ import { audit, query, transaction, type Connection } from './db'
 import { config } from './config'
 import { templates } from './policy'
 import { enqueue } from './queue'
+import { lockResearchWindow } from './research-window'
 
 /** A bounded portfolio sweep: one durable job and one budget reservation per direction. */
 export async function requestResearchCampaign() {
-  return transaction((db) => enqueueResearchCampaign(db))
+  const result = await transaction((db) => enqueueResearchCampaign(db))
+  if ('error' in result) throw new Error(result.error)
+  return result
 }
 
 /** Called inside the scheduler transaction so the UTC slot and all directions commit together. */
 export async function enqueueResearchCampaign(db: Connection, scheduledSlot?: string) {
-  const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
+  const state = await lockResearchWindow(db)
+  if (!state.research_enabled) return { error: 'RESEARCH_WINDOW_CLOSED' } as const
   if (state?.mode !== 'running') throw new Error('RESEARCH_PAUSED')
-  if (!state.research_enabled) throw new Error('RESEARCH_WINDOW_CLOSED')
   const scheduleEnabled = config().AUTONOMY_ENABLED && state.schedule_enabled
   if (scheduledSlot && !scheduleEnabled) throw new Error('RESEARCH_CAMPAIGN_SCHEDULE_PAUSED')
   const [active] = await query(

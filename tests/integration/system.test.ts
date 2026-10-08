@@ -916,6 +916,195 @@ describe('durable autonomous pipeline', () => {
   })
 })
 
+describe('research window admission', () => {
+  it.each(['next-call', 'publication', 'expired-lease'] as const)(
+    'preserves an in-flight response at the deadline before %s and continues paid fulfillment',
+    async (boundary) => {
+      const created = await order()
+      await sandboxPayment(created.id)
+      const before = await query('SELECT id,version FROM products ORDER BY id')
+      await requestResearchCampaign()
+      const job = (await claimJob(['research']))!
+      const original = budget.meteredCall
+      const lastKey = `${job.id}:description:${boundary === 'next-call' ? 'search' : 'fixture-review'}`
+      vi.spyOn(budget, 'meteredCall').mockImplementation(async (args: any) => {
+        const result = await original(args)
+        if (args.key === lastKey) {
+          await query(
+            "UPDATE system_state SET generation_started_at=clock_timestamp()-interval '28 days'",
+          )
+          if (boundary === 'expired-lease')
+            await query(
+              "UPDATE jobs SET locked_until=clock_timestamp()-interval '1 second' WHERE id=$1",
+              [job.id],
+            )
+        }
+        return result
+      })
+      await executeWorkerJob(job, { isStopping: () => false, onHeartbeatError: vi.fn() })
+      expect((await query('SELECT research_enabled FROM system_state'))[0]!.research_enabled).toBe(
+        false,
+      )
+      expect(await query("SELECT id FROM evaluations WHERE decision='CLOSED'")).toHaveLength(1)
+      expect(await query('SELECT id,version FROM products ORDER BY id')).toEqual(before)
+      const calls = await query('SELECT status,call_key FROM tool_calls WHERE job_id=$1', [job.id])
+      expect(calls).toHaveLength(boundary === 'next-call' ? 1 : 7)
+      expect(calls.every((call) => call.status === 'done')).toBe(true)
+      const [saved] = await query('SELECT status,error_code,attempts FROM jobs WHERE id=$1', [
+        job.id,
+      ])
+      if (boundary === 'publication') {
+        expect(saved).toEqual({ status: 'done', error_code: null, attempts: 1 })
+        expect(await query('SELECT status FROM hypotheses WHERE job_id=$1', [job.id])).toEqual([
+          { status: 'backlog' },
+        ])
+      } else {
+        expect(saved).toEqual({
+          status: boundary === 'next-call' ? 'failed' : 'queued',
+          error_code: boundary === 'next-call' ? 'RESEARCH_WINDOW_CLOSED' : 'LEASE_LOST',
+          attempts: 1,
+        })
+        expect(await query('SELECT id FROM hypotheses WHERE job_id=$1', [job.id])).toHaveLength(0)
+      }
+      expect(await claimJob(['research'])).toBeUndefined()
+      expect(
+        await query("SELECT id FROM jobs WHERE kind='research' AND status IN ('queued','running')"),
+      ).toHaveLength(0)
+      const paid = (await claimJob(['fulfill']))!
+      await executeWorkerJob(paid, { isStopping: () => false, onHeartbeatError: vi.fn() })
+      expect((await orderDetails(created.id)).status).toBe('delivered')
+      expect(await query("SELECT id FROM evaluations WHERE decision='CLOSED'")).toHaveLength(1)
+    },
+  )
+
+  it('checks the database deadline after waiting for the accounting lock', async () => {
+    const blocker = await pool.connect()
+    let pending: Promise<Awaited<ReturnType<typeof requestResearch>> | Error> | undefined
+    try {
+      await blocker.query('BEGIN')
+      await blocker.query('SELECT pg_advisory_xact_lock(735093)')
+      await query(
+        "UPDATE system_state SET generation_started_at=clock_timestamp()-interval '28 days'+interval '300 milliseconds'",
+      )
+      pending = requestResearch().catch((error: Error) => error)
+      await vi.waitFor(async () => {
+        const [waiting] = await query(
+          "SELECT count(*)::int AS count FROM pg_locks WHERE locktype='advisory' AND objid=735093 AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
+        )
+        expect(waiting!.count).toBe(1)
+      })
+      await query(
+        "SELECT pg_sleep(GREATEST(0,extract(epoch FROM generation_started_at+interval '28 days'-clock_timestamp()))+0.02) FROM system_state",
+      )
+      await blocker.query('COMMIT')
+      const result = await pending
+      expect(result).toBeInstanceOf(Error)
+      expect((result as Error).message).toBe('RESEARCH_WINDOW_CLOSED')
+      expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(0)
+      expect(await query("SELECT id FROM evaluations WHERE decision='CLOSED'")).toHaveLength(1)
+    } finally {
+      await blocker.query('ROLLBACK')
+      blocker.release()
+      await pending
+    }
+  })
+
+  it('identifies reopened windows by the exact start timestamp within the same generation', async () => {
+    const old = await enqueue('research', 'old-window-work')
+    for (const timestamp of ['2000-01-01T00:00:00.000001Z', '2000-01-01T00:00:00.000002Z']) {
+      await query('UPDATE system_state SET research_enabled=true,generation_started_at=$1', [
+        timestamp,
+      ])
+      await expect(requestResearch()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+      await expect(requestResearchCampaign()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+    }
+    const records = await query(
+      "SELECT generation,evaluation_key FROM evaluations WHERE decision='CLOSED'",
+    )
+    expect(records).toHaveLength(2)
+    expect(new Set(records.map((record) => record.generation))).toEqual(new Set([1]))
+    expect(new Set(records.map((record) => record.evaluation_key)).size).toBe(2)
+    await query(
+      'UPDATE system_state SET research_enabled=true,generation_started_at=clock_timestamp()',
+    )
+    const fresh = await requestResearch('description')
+    expect(fresh.id).not.toBe(old.id)
+    expect((await query('SELECT status,error_code FROM jobs WHERE id=$1', [old.id]))[0]).toEqual({
+      status: 'failed',
+      error_code: 'RESEARCH_WINDOW_CLOSED',
+    })
+    expect((await query('SELECT research_enabled FROM system_state'))[0]!.research_enabled).toBe(
+      true,
+    )
+  })
+
+  it.each(['manual', 'campaign', 'schedule', 'claim'] as const)(
+    'closes an expired window at %s admission without waiting for another weekly evaluation',
+    async (admission) => {
+      vi.spyOn(settings, 'config').mockReturnValue({
+        ...settings.config(),
+        MODEL_PROVIDER: 'yandex',
+        SEARCH_PROVIDER: 'searxng',
+        AUTONOMY_ENABLED: true,
+      })
+      await query(
+        "UPDATE system_state SET generation_started_at=clock_timestamp()-interval '27 days'",
+      )
+      await evaluateWeek('last-weekly-check')
+      const queued = await enqueue('research', `manual-research:${randomUUID()}`)
+      const reservationId = await reserveBudget(`research:${queued.id}`, 'research')
+      const invoke = vi.fn(async () => ({ value: 'Сохранённое наблюдение', cost: 125 }))
+      const call = {
+        key: `${queued.id}:before-deadline`,
+        reservationId,
+        role: 'search',
+        maximum: 500,
+        demo: false,
+        invoke,
+      }
+      await meteredCall(call)
+      await query(
+        "UPDATE system_state SET generation_started_at=clock_timestamp()-interval '28 days'",
+      )
+      if (admission === 'manual')
+        await expect(requestResearch()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+      else if (admission === 'campaign')
+        await expect(requestResearchCampaign()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+      else if (admission === 'schedule') await scheduleWork()
+      else expect(await claimJob(['research'])).toBeUndefined()
+      expect((await query('SELECT research_enabled FROM system_state'))[0]!.research_enabled).toBe(
+        false,
+      )
+      expect(
+        (await query('SELECT status,error_code,attempts FROM jobs WHERE id=$1', [queued.id]))[0],
+      ).toEqual({ status: 'failed', error_code: 'RESEARCH_WINDOW_CLOSED', attempts: 0 })
+      expect(
+        (
+          await query('SELECT status,spent_kopecks FROM budget_reservations WHERE id=$1', [
+            reservationId,
+          ])
+        )[0],
+      ).toEqual({ status: 'closed', spent_kopecks: 125 })
+      await expect(meteredCall(call)).resolves.toBe('Сохранённое наблюдение')
+      expect(invoke).toHaveBeenCalledOnce()
+      expect((await budgetSummary()).daySpent).toBe(125)
+      await Promise.all(Array.from({ length: 4 }, () => scheduleWork()))
+      await expect(requestResearch()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+      await expect(requestResearchCampaign()).rejects.toThrow('RESEARCH_WINDOW_CLOSED')
+      expect(await claimJob(['research'])).toBeUndefined()
+      await evaluateWeek('another-weekly-check')
+      expect(await query("SELECT id FROM jobs WHERE kind='research'")).toHaveLength(1)
+      expect(await query("SELECT id FROM evaluations WHERE decision='CLOSED'")).toHaveLength(1)
+      expect(
+        await query(
+          "SELECT id FROM audit_events WHERE kind='evaluation' AND data->>'decision'='CLOSED'",
+        ),
+      ).toHaveLength(1)
+      expect(await query("SELECT id FROM evaluations WHERE decision='HOLD'")).toHaveLength(1)
+    },
+  )
+})
+
 describe('resumable worker shutdown', () => {
   it.each(['campaign', 'manual'] as const)(
     'resumes %s research after midnight with the same plan and call keys without spending an attempt',
