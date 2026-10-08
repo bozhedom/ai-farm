@@ -1,28 +1,28 @@
 /**
- * Old owner links were `/?view=<section>`. The root is now the public storefront, so those links
- * move to the office. Until each section has its own page (`/office/agents`, `/office/ideas`,
- * `/office/leads`, ...), the office keeps the `?view=` switch; update the targets here when the
- * pages exist: overview -> /office, strategies -> /office/agents, hypotheses -> /office/ideas,
- * opportunities -> /office/leads, others by name.
+ * Old owner links were `/?view=<section>` and `/office?view=<section>`. Each section now has its
+ * own page under /office, so those links go straight there.
  */
-const legacyViews: Record<string, { path: string; view?: string }> = {
-  overview: { path: '/office' },
-  directions: { path: '/office', view: 'directions' },
-  opportunities: { path: '/office', view: 'opportunities' },
-  guide: { path: '/office', view: 'guide' },
-  hypotheses: { path: '/office', view: 'hypotheses' },
-  strategies: { path: '/office', view: 'strategies' },
-  orders: { path: '/office', view: 'orders' },
-  audit: { path: '/office', view: 'audit' },
-  settings: { path: '/office', view: 'settings' },
+const legacyViews: Record<string, string> = {
+  overview: '/office',
+  guide: '/office',
+  directions: '/office/ideas',
+  hypotheses: '/office/ideas',
+  strategies: '/office/agents',
+  opportunities: '/office/leads',
+  orders: '/office/orders',
+  products: '/office/products',
+  catalog: '/office/products',
+  money: '/office/money',
+  audit: '/office/settings',
+  settings: '/office/settings',
 }
 
 export default defineNuxtRouteMiddleware((to) => {
-  if (to.path !== '/' || typeof to.query.view !== 'string') return
-  const target = legacyViews[to.query.view] || { path: '/office' }
+  if ((to.path !== '/' && to.path !== '/office') || typeof to.query.view !== 'string') return
+  const path = legacyViews[to.query.view] || '/office'
   const { view: _old, ...rest } = to.query
   return navigateTo(
-    { path: target.path, query: target.view ? { ...rest, view: target.view } : rest },
+    { path, query: rest, hash: to.query.view === 'audit' ? '#journal' : undefined },
     { redirectCode: 301, replace: true },
   )
 })
