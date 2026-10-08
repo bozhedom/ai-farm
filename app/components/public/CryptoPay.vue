@@ -160,7 +160,8 @@ const progress = computed(() =>
       </a>
     </div>
 
-    <template v-if="props.payment.canSubmit">
+    <!-- Once the network confirms a found transfer there is nothing left to enter. -->
+    <template v-if="props.payment.canSubmit && (waiting || props.payment.confirmations === 0)">
       <div v-if="waiting" class="wallet">
         <template v-if="!local">
           <button

@@ -13,8 +13,8 @@ services:
     profiles: ['app']
     restart: unless-stopped
     entrypoint: ['anvil']
-    # A block every 2 seconds, so confirmations grow without manual mining.
-    command: ['--host', '0.0.0.0', '--chain-id', '11155111', '--block-time', '2']
+    # A block every 4 seconds: confirmations grow by themselves, slow enough to watch.
+    command: ['--host', '0.0.0.0', '--chain-id', '11155111', '--block-time', '4']
     ports:
       - '127.0.0.1:18545:8545'
   web:
