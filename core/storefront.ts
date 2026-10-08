@@ -115,8 +115,6 @@ export function publicServiceProjection(
     inputLimit: options.inputLimit ?? publicInputLimit,
     priceKopecks: row.price_kopecks,
     currency: options.paymentMode === 'sepolia' ? 'TEST_ETH' : 'RUB',
-    version: row.version,
-    isDemo: row.is_demo,
     page: productPage(row.page),
   }
 }

@@ -83,8 +83,6 @@ describe('storefront rules', () => {
       inputLimit: POLICY.maxInputChars,
       priceKopecks: 149000,
       currency: 'RUB',
-      version: 3,
-      isDemo: false,
       page: { headline: 'Ответы, которые снимут звонки', forWhom: ['Салоны'] },
     })
     expect(
@@ -94,6 +92,9 @@ describe('storefront rules', () => {
         { paymentMode: 'sepolia' },
       ),
     ).toMatchObject({ currency: 'TEST_ETH', page: {}, name: service.label })
+    // Product versions and the demo flag are owner details; buyers never get them.
+    expect(view).not.toHaveProperty('version')
+    expect(view).not.toHaveProperty('isDemo')
   })
 
   it('converts rubles to test ETH with integer wei at the conditional rate', () => {

@@ -17,8 +17,6 @@ export type PublicService = {
   inputLimit: number
   priceKopecks: number
   currency: 'RUB' | 'TEST_ETH'
-  version: number
-  isDemo: boolean
   page: ProductPage
   /** Slice A: a short example for the input placeholder. */
   placeholder?: string
@@ -45,10 +43,14 @@ export type PublicOrderCreated = { orderId: string; token: string; url: string }
 export type PublicOrderView = {
   id: string
   status: PublicOrderStatus
-  service: { slug: string; name: string; promise: string; version: number }
+  service: { slug: string; name: string; promise: string }
   price: { kopecks: number; currency: 'RUB' | 'TEST_ETH'; test: boolean }
   payment:
-    | { mode: 'sandbox'; canConfirm: boolean }
+    | {
+        mode: 'sandbox'
+        /** False unless PUBLIC_SANDBOX_PAY: then the owner confirms the test payment. */
+        canConfirm: boolean
+      }
     | {
         mode: 'sepolia'
         chainId: number

@@ -115,7 +115,6 @@ export async function publicOrderView(token: string, now = new Date()): Promise<
       slug: order.slug,
       name: copy?.name || order.product_snapshot.name,
       promise: copy?.promise || order.product_snapshot.promise,
-      version: order.product_snapshot.version,
     },
     price: { kopecks: order.price_kopecks, currency: 'RUB', test: true },
     payment:
