@@ -1,7 +1,7 @@
 import { config, usesSourcePosts } from '../config'
 import { model } from '../providers'
 import { demoResult } from '../providers/demo'
-import { outputSchema, type ProductSpec } from '../policy'
+import { outputSchemaForTemplate, type ProductSpec } from '../policy'
 import {
   sourceSocialDelivery,
   sourcePostsSchema,
@@ -44,7 +44,7 @@ export async function generateText(args: {
     key: args.key,
     reservationId: args.reservationId,
     context: generationContext(args.product, args.input, args.approach),
-    schema: outputSchema,
+    schema: outputSchemaForTemplate(args.product.template),
     demoValue: { text: demoResult(args.product.template, args.input) },
   })
 }

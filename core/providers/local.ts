@@ -32,7 +32,7 @@ export function parseSearxResults(data: unknown): Evidence[] {
     }))
 }
 
-export async function localSearch(queryText: string) {
+export async function localSearch(queryText: string, minimumDomains: 0 | 2 = 2) {
   const url = new URL('/search', config().SEARXNG_URL)
   url.search = new URLSearchParams({
     q: queryText,
@@ -46,7 +46,9 @@ export async function localSearch(queryText: string) {
   const raw = await response.text()
   if (raw.length > 2_000_000) throw new Error('SEARCH_RESPONSE_TOO_LARGE')
   const value = parseSearxResults(JSON.parse(raw))
-  if (new Set(value.map((e) => new URL(e.url).hostname.replace(/^www\./, ''))).size < 2)
+  if (
+    new Set(value.map((e) => new URL(e.url).hostname.replace(/^www\./, ''))).size < minimumDomains
+  )
     throw new Error('SEARCH_INSUFFICIENT_SOURCES')
   return value
 }

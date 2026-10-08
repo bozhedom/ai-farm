@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { config, usesSourcePosts } from './config'
 import { audit, query, transaction } from './db'
 import { reserveBudget } from './budget'
-import { productSchema, validateInput } from './policy'
+import { productSchema, validateInput, validateTemplateInput } from './policy'
 import { orderProgress, paymentErrorText } from './order-progress'
 import { sourceSocialDelivery, validateSourcePostInput } from './source-posts'
 
@@ -28,7 +28,8 @@ export async function createOrder(productId: string, input: string, requestKey: 
       db,
     )
     if (!product) throw new Error('PRODUCT_NOT_FOUND')
-    productSchema.parse(product.spec)
+    const spec = productSchema.parse(product.spec)
+    validateTemplateInput(spec.template, input)
     if (product.template === 'social') {
       if (product.spec.promise === sourceSocialDelivery) validateSourcePostInput(input)
       else if (usesSourcePosts(config().MODEL_PROVIDER))

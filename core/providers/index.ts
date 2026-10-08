@@ -9,13 +9,9 @@ import { reportUsage } from '../activity'
 import { openaiModel } from './openai'
 import { OPENROUTER_OUTPUT_TOKENS, openrouterModel } from './openrouter'
 import { openaiMaximum, usdToKopecks } from './openai-cost'
+import { serviceByTemplate } from '../service-catalog'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
-const searchQueries: Record<Template, string> = {
-  description: 'описания карточек товаров услуги цена характеристики малого бизнеса',
-  faq: 'создание FAQ для сайта компании вопросы клиентов услуга',
-  social: 'написание коротких постов по материалам компании стоимость',
-}
 async function requestJson(url: string, body: unknown, headers: Record<string, string>) {
   const response = await fetch(url, {
     method: 'POST',
@@ -34,8 +30,12 @@ export async function search(
   template: Template,
   key: string,
   reservationId: string,
+  purpose: 'research' | 'customers' = 'research',
 ): Promise<Evidence[]> {
   const c = config()
+  if (!Object.hasOwn(serviceByTemplate, template)) throw new Error('TEMPLATE_UNSUPPORTED')
+  const service = serviceByTemplate[template]
+  const query = purpose === 'customers' ? service.clientSearchQuery : service.searchQuery
   const demo = c.SEARCH_PROVIDER === 'demo'
   return meteredCall({
     key,
@@ -43,36 +43,60 @@ export async function search(
     role: 'search',
     maximum: c.SEARCH_PROVIDER === 'yandex' ? c.SEARCH_COST_KOPECKS : 0,
     demo,
-    activity: { template, provider: c.SEARCH_PROVIDER, taskLabel: searchQueries[template] },
+    activity: {
+      template,
+      provider: c.SEARCH_PROVIDER,
+      taskLabel: purpose === 'customers' ? `Поиск запросов клиентов: ${query}` : query,
+    },
     invoke: async () => {
       if (demo)
         return {
           cost: 0,
-          value: [
-            {
-              url: 'https://example.com/demo-demand',
-              title: 'Демонстрация: предполагаемая потребность',
-              snippet: 'Синтетический пример. Спрос не проверен, веб-поиск не выполнялся.',
-              observedAt: new Date().toISOString(),
-              demo: true,
-            },
-            {
-              url: 'https://example.org/demo-alternative',
-              title: 'Демонстрация: бесплатная альтернатива',
-              snippet: 'Встроенные редакторы и самостоятельная работа могут заменить услугу.',
-              observedAt: new Date().toISOString(),
-              demo: true,
-            },
-          ],
+          value:
+            purpose === 'customers'
+              ? [
+                  {
+                    url: `https://customer-brief.example/${template}`,
+                    title: `Демонстрация запроса: ${service.label}`,
+                    snippet:
+                      'Вымышленный запрос заказчика для проверки интерфейса. Реального клиента, контакта или подтверждённого спроса нет.',
+                    observedAt: new Date().toISOString(),
+                    demo: true,
+                  },
+                  {
+                    url: `https://project-request.example/${template}`,
+                    title: 'Демонстрация: исходные материалы для текстовой услуги',
+                    snippet:
+                      'Синтетический пример открытого задания. Ссылка не является предложением работы; переписка и отправка отклика не выполнялись.',
+                    observedAt: new Date().toISOString(),
+                    demo: true,
+                  },
+                ]
+              : [
+                  {
+                    url: 'https://example.com/demo-demand',
+                    title: 'Демонстрация: предполагаемая потребность',
+                    snippet: 'Синтетический пример. Спрос не проверен, веб-поиск не выполнялся.',
+                    observedAt: new Date().toISOString(),
+                    demo: true,
+                  },
+                  {
+                    url: 'https://example.org/demo-alternative',
+                    title: 'Демонстрация: бесплатная альтернатива',
+                    snippet: 'Встроенные редакторы и самостоятельная работа могут заменить услугу.',
+                    observedAt: new Date().toISOString(),
+                    demo: true,
+                  },
+                ],
         }
       if (c.SEARCH_PROVIDER === 'searxng')
-        return { value: await localSearch(searchQueries[template]), cost: 0 }
+        return { value: await localSearch(query, purpose === 'customers' ? 0 : 2), cost: 0 }
       const data = await requestJson(
         'https://searchapi.api.cloud.yandex.net/v2/web/search',
         {
           query: {
             searchType: 'SEARCH_TYPE_RU',
-            queryText: searchQueries[template],
+            queryText: query,
             familyMode: 'FAMILY_MODE_STRICT',
           },
           folderId: c.YANDEX_FOLDER_ID,
@@ -84,7 +108,7 @@ export async function search(
       const value = parseSearchXml(
         Buffer.from(z.string().parse(data.rawData), 'base64').toString('utf8'),
       )
-      if (!value.length) throw new Error('SEARCH_EMPTY')
+      if (!value.length && purpose === 'research') throw new Error('SEARCH_EMPTY')
       return { value, cost: c.SEARCH_COST_KOPECKS }
     },
   })

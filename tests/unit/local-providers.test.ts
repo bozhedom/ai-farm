@@ -112,6 +112,14 @@ describe('local providers', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }))))
     await expect(localSearch('example')).rejects.toThrow('SEARCH_INSUFFICIENT_SOURCES')
   })
+  it('allows an empty candidate search without weakening research evidence requirements', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => new Response(JSON.stringify({ results: [] }))),
+    )
+    await expect(localSearch('customer requests', 0)).resolves.toEqual([])
+    await expect(localSearch('market research')).rejects.toThrow('SEARCH_INSUFFICIENT_SOURCES')
+  })
   it('validates streamed JSON and reports only character counters', async () => {
     const progress = vi.spyOn(activity, 'reportProgress').mockResolvedValue()
     const chunks = ['{"text":', '"Проверенный ответ"}']

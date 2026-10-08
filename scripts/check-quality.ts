@@ -1,46 +1,38 @@
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { qualityCases } from './fixtures/quality'
 
 // Override before importing core/db: a local acceptance run can never reach a paid adapter.
 const database = process.env.QUALITY_DATABASE_URL
 if (!database || !new URL(database).pathname.endsWith('_test'))
   throw new Error('QUALITY_DATABASE_MUST_END_IN_TEST')
-const endpoint = new URL(process.env.OLLAMA_URL || 'http://127.0.0.1:11434')
-if (!['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname))
-  throw new Error('LOCAL_OLLAMA_REQUIRED')
+const provider = process.env.QUALITY_PROVIDER || 'ollama'
+if (!['ollama', 'openrouter'].includes(provider)) throw new Error('FREE_QUALITY_PROVIDER_REQUIRED')
+if (provider === 'ollama') {
+  const endpoint = new URL(process.env.OLLAMA_URL || 'http://127.0.0.1:11434')
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname))
+    throw new Error('LOCAL_OLLAMA_REQUIRED')
+}
 Object.assign(process.env, {
   DATABASE_URL: database,
-  MODEL_PROVIDER: 'ollama',
+  MODEL_PROVIDER: provider,
   SEARCH_PROVIDER: 'searxng',
   AUTONOMY_ENABLED: 'false',
 })
 const { pool, query } = await import('../core/db')
 const { model } = await import('../core/providers')
 const { reserveBudget, closeReservation } = await import('../core/budget')
-const { reviewSchema, validateInput, validateOutput } = await import('../core/policy')
+const { reviewSchema, validateTemplateInput, validateOutput } = await import('../core/policy')
 const { reviewContext } = await import('../core/jobs/text-context')
 const { recipes } = await import('../core/templates')
 const { generateText } = await import('../core/jobs/generate-text')
 const { sourceSocialDelivery } = await import('../core/source-posts')
 const { config } = await import('../core/config')
 
-const cases = [
-  {
-    template: 'description' as const,
-    input:
-      'Термокружка «Север». Объём 450 мл. Корпус из стали, крышка из полипропилена. Цвет синий. Не подходит для микроволновой печи. Мыть вручную. Ремешок не входит в комплект.',
-  },
-  {
-    template: 'faq' as const,
-    input:
-      'Студия переплетает книги. Приём по предварительной записи, только по будням. Доставка не предоставляется. Срок и стоимость определяются после осмотра. Предоплата не требуется.',
-  },
-  {
-    template: 'social' as const,
-    input:
-      'Мастерская выпустила пеналы «Штрих» из хлопка. Размер 20 на 8 см. Доступны серый и зелёный цвета. Застёжка на молнии. Карандаши не входят в комплект. Ручная стирка при 30 градусах.',
-  },
-]
+const cases = process.env.QUALITY_TEMPLATE
+  ? qualityCases.filter((item) => item.template === process.env.QUALITY_TEMPLATE)
+  : qualityCases
+if (!cases.length) throw new Error('QUALITY_TEMPLATE_UNSUPPORTED')
 const run = randomUUID()
 const results: Record<string, unknown>[] = []
 try {
@@ -59,7 +51,7 @@ try {
     }
     let output: string | undefined
     try {
-      validateInput(item.input)
+      validateTemplateInput(item.template, item.input)
       const generated = await generateText({
         key: `${key}:generate`,
         reservationId,
@@ -91,7 +83,7 @@ try {
     }
   }
   const usage = await query(
-    'SELECT role,model,status,input_tokens,output_tokens,charged_kopecks FROM tool_calls WHERE call_key LIKE $1 ORDER BY created_at',
+    'SELECT role,model,status,input_tokens,output_tokens,charged_kopecks,actual_microusd,charged_microusd FROM tool_calls WHERE call_key LIKE $1 ORDER BY created_at',
     [`quality:${run}:%`],
   )
   mkdirSync('output/quality', { recursive: true })
@@ -102,8 +94,8 @@ try {
       {
         run,
         checkedAt: new Date().toISOString(),
-        model: config().OLLAMA_MODEL,
-        note: 'Три контрольных примера. PASS модели требует чтения человеком и не доказывает общее качество.',
+        model: provider === 'openrouter' ? config().OPENROUTER_MODEL : config().OLLAMA_MODEL,
+        note: `${cases.length} контрольных примеров. PASS модели требует чтения человеком и не доказывает общее качество.`,
         results,
         usage,
       },

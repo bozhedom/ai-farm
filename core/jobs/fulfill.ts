@@ -1,7 +1,7 @@
 import { audit, query, transaction } from '../db'
 import { closeReservation } from '../budget'
 import { model } from '../providers'
-import { reviewSchema, templateSchema, validateOutput, validateInput } from '../policy'
+import { reviewSchema, templateSchema, validateOutput, validateTemplateInput } from '../policy'
 import type { Job } from '../queue'
 import { reviewContext } from './text-context'
 import { generateText } from './generate-text'
@@ -13,9 +13,9 @@ export async function fulfill(job: Job) {
   if (!['paid', 'running'].includes(order.status)) throw new Error('ORDER_NOT_PAID')
   if (Date.now() - new Date(order.paid_at).getTime() > 30 * 60 * 1000)
     throw new Error('ORDER_REVIEW_REQUIRED')
-  validateInput(order.input)
-  await query("UPDATE orders SET status='running' WHERE id=$1 AND status='paid'", [order.id])
   const template = templateSchema.parse(order.product_snapshot.template)
+  validateTemplateInput(template, order.input)
+  await query("UPDATE orders SET status='running' WHERE id=$1 AND status='paid'", [order.id])
   const product = { template, promise: order.product_snapshot.promise as string }
   const output = await generateText({
     key: `${job.id}:generate`,
