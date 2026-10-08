@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Small daily cap so the limit test stays short. Set before config() is first read.
+// Small daily cap so the limit test stays short. Set before config() is first read. Buyers are
+// told apart by X-Forwarded-For from the local test client acting as the reverse proxy, and the
+// sandbox button is open to buyers as in a local demo.
 vi.hoisted(() => {
   process.env.PUBLIC_ORDERS_PER_DAY = '4'
+  process.env.TRUST_PROXY = 'true'
+  process.env.PUBLIC_SANDBOX_PAY = 'true'
 })
 
 import { pool, query } from '../../core/db'

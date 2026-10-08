@@ -50,6 +50,9 @@ const schema = z.object({
   PUBLIC_CONTACT: z.string().trim().max(200).default(''),
   PUBLIC_TERMS_URL: z.string().trim().default(''),
   PUBLIC_ORDERS_PER_DAY: z.coerce.number().int().min(0).max(1000).default(30),
+  // Trust X-Forwarded-For from a reverse proxy on a private address (Caddy in compose.edge.yaml).
+  // Off: the socket address is the buyer, and a forwarded header is ignored.
+  TRUST_PROXY: flag.default(false),
   PUBLIC_INDEXING: flag.default(false),
   SCOUT_RESERVE_KOPECKS: positive(3000),
   LEAD_RESERVE_KOPECKS: positive(2000),

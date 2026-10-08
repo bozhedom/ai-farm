@@ -11,7 +11,7 @@ import service from '../../../server/api/public/services/[slug].get'
 import createOrder from '../../../server/api/public/orders/index.post'
 import viewOrder from '../../../server/api/public/orders/[token].get'
 import payOrder from '../../../server/api/public/orders/[token]/pay.post'
-import resultTxt from '../../../server/api/public/orders/[token]/result.txt.get'
+import resultTxt from '../../../server/api/public/orders/[token]/result.txt'
 import dashboard from '../../../server/api/dashboard.get'
 import ownerOrder from '../../../server/api/orders/[id].get'
 import relink from '../../../server/api/orders/[id]/relink.post'
@@ -41,8 +41,8 @@ export async function fulfillNext() {
 
 /**
  * The real security middleware and route handlers on a plain h3 server, the same order Nitro
- * uses: middleware first, then the router. Requests come from 127.0.0.1, so a test can act as
- * different buyers through X-Forwarded-For (a private peer counts as the reverse proxy).
+ * uses: middleware first, then the router. Requests come from 127.0.0.1, so with TRUST_PROXY a
+ * test can act as different buyers through X-Forwarded-For (a private peer counts as the proxy).
  */
 export async function startPublicApp() {
   const app = createApp()
@@ -53,7 +53,7 @@ export async function startPublicApp() {
   router.post('/api/public/orders', createOrder)
   router.get('/api/public/orders/:token', viewOrder)
   router.post('/api/public/orders/:token/pay', payOrder)
-  router.get('/api/public/orders/:token/result.txt', resultTxt)
+  router.use('/api/public/orders/:token/result.txt', resultTxt)
   router.get('/api/dashboard', dashboard)
   router.get('/api/orders/:id', ownerOrder)
   router.post('/api/orders/:id/relink', relink)

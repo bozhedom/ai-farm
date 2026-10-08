@@ -15,6 +15,11 @@ services:
     depends_on:
       web:
         condition: service_healthy
+  web:
+    environment:
+      # Behind Caddy: trust the client address it writes to X-Forwarded-For. The web port itself
+      # is published on 127.0.0.1 only.
+      TRUST_PROXY: 'true'
 volumes:
   caddy-data:
   caddy-config:

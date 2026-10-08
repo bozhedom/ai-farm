@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto'
+import { isIPv6 } from 'node:net'
 import { config } from './config'
 import { audit, query } from './db'
 
@@ -19,11 +20,43 @@ export type PublicRoute = keyof typeof publicLimits
 /** Unknown order links across all buyers before an audit event, per 10 minutes. */
 export const probeLimit = { limit: 50, windowSeconds: 600 }
 
+/**
+ * The unit a limit counts. One IPv6 subscriber usually owns a whole /64, so IPv6 addresses
+ * count by their first 64 bits; IPv4-mapped addresses count as plain IPv4.
+ */
+export function limitAddress(ip: string) {
+  let address = ip.trim().toLowerCase()
+  const zone = address.indexOf('%')
+  if (zone >= 0) address = address.slice(0, zone)
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(address)
+  if (mapped) return mapped[1]!
+  if (!isIPv6(address)) return ip
+  const width = (groups: string[]) =>
+    groups.reduce((n, group) => n + (group.includes('.') ? 2 : 1), 0)
+  const [head = '', tail] = address.split('::')
+  const left = head ? head.split(':') : []
+  const right = tail ? tail.split(':') : []
+  const groups =
+    tail === undefined
+      ? left
+      : [...left, ...Array(8 - width(left) - width(right)).fill('0'), ...right]
+  return (
+    groups
+      .slice(0, 4)
+      .map((group) => parseInt(group, 16).toString(16))
+      .join(':') + '::/64'
+  )
+}
+
 export function clientKey(ip: string, secret = config().SESSION_SECRET) {
-  return createHmac('sha256', secret).update(`client:${ip}`).digest('hex')
+  return createHmac('sha256', secret)
+    .update(`client:${limitAddress(ip)}`)
+    .digest('hex')
 }
 export function rateLimitKey(route: string, ip: string, secret = config().SESSION_SECRET) {
-  return createHmac('sha256', secret).update(`${route}:${ip}`).digest('hex')
+  return createHmac('sha256', secret)
+    .update(`${route}:${limitAddress(ip)}`)
+    .digest('hex')
 }
 
 /** Next counter state for one hit. Pure, so tests can check window edges without a database. */

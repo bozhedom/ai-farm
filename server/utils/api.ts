@@ -1,14 +1,23 @@
 import { createError, readBody, type H3Event } from 'h3'
 import { z } from 'zod'
 
+/** A body that is not valid JSON: the same 400 as a body of the wrong shape. */
+class MalformedBody extends Error {}
+
 export async function body<T>(event: H3Event, schema: z.ZodType<T>): Promise<T> {
-  return schema.parse(await readBody(event))
+  let value: unknown
+  try {
+    value = await readBody(event)
+  } catch {
+    throw new MalformedBody('INVALID_INPUT')
+  }
+  return schema.parse(value)
 }
 export async function respond<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (error) {
-    if (error instanceof z.ZodError)
+    if (error instanceof z.ZodError || error instanceof MalformedBody)
       throw createError({
         statusCode: 400,
         statusMessage: 'INVALID_INPUT',

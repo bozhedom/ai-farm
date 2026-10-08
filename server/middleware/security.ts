@@ -21,6 +21,43 @@ export function isPublicRoute(method: string, path: string) {
   return publicRoutes.some((route) => route.methods.includes(method) && route.path.test(path))
 }
 
+/** The path exactly as the router sees it: no query, no normalization. */
+export function rawPath(url: string) {
+  return url.split(/[?#]/, 1)[0] || '/'
+}
+/**
+ * The router matches the raw path, while URL parsing turns `\` into `/` and folds `..`. A path
+ * that the two read differently could reach an owner handler past the public list, so such
+ * paths under /api and /order are refused outright.
+ */
+const ambiguous = /\\|%2e|%2f|%5c|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/i
+export function ambiguousPath(raw: string, normalized: string) {
+  const guarded = (path: string) => /^\/(?:api|order)(?:\/|$)/i.test(path)
+  return (guarded(raw) || guarded(normalized)) && ambiguous.test(raw)
+}
+
+/** Pages a search engine may index once PUBLIC_INDEXING is on; everything else is noindex. */
+export function indexablePage(path: string) {
+  return path === '/' || path === '/terms' || /^\/services\/[a-z0-9][a-z0-9-]{1,60}$/.test(path)
+}
+
+/**
+ * Order pages carry the buyer's text and result: never cached, and scripts only from this site.
+ * Nuxt hydrates with an inline script, so inline scripts stay allowed.
+ */
+export const orderPagePolicy = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+].join('; ')
+
 export default defineEventHandler(async (event) => {
   setHeader(event, 'X-Content-Type-Options', 'nosniff')
   setHeader(event, 'Referrer-Policy', 'no-referrer')
@@ -29,7 +66,15 @@ export default defineEventHandler(async (event) => {
   // Server-side rendering calls the API internally; pass the real client along for limits.
   // Client-sent values are replaced by our own signed one.
   stampClientIp(event)
-  const path = getRequestURL(event).pathname
+  const path = rawPath(event.path || '/')
+  if (ambiguousPath(path, getRequestURL(event).pathname))
+    throw createError({ statusCode: 400, statusMessage: 'BAD_PATH' })
+  if (!(config().PUBLIC_INDEXING && indexablePage(path)))
+    setHeader(event, 'X-Robots-Tag', 'noindex, nofollow')
+  if (path.startsWith('/order/')) {
+    setHeader(event, 'Cache-Control', 'no-store')
+    setHeader(event, 'Content-Security-Policy', orderPagePolicy)
+  }
   if (!path.startsWith('/api/')) return
   setHeader(event, 'Cache-Control', 'no-store')
   if (!read.includes(event.method)) {

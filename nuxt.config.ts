@@ -7,7 +7,7 @@ export default defineNuxtConfig({
     head: {
       htmlAttrs: { lang: 'ru' },
       title: 'AI Farm',
-      meta: [{ name: 'robots', content: 'noindex, nofollow' }],
+      // Indexing is decided per response by `X-Robots-Tag` in server/middleware/security.ts.
     },
   },
   // The owner office moved under /office. Old bookmarks keep working.

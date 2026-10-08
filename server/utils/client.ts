@@ -26,21 +26,34 @@ function signed(event: H3Event) {
 }
 
 /**
- * The buyer's address for limits. A signed address from our own middleware wins. Otherwise a
- * direct connection uses the socket address, and a reverse proxy on a private address (Caddy in
- * compose) passes the client in X-Forwarded-For, whose last entry is the one it added.
+ * The address behind a connection. X-Forwarded-For counts only with TRUST_PROXY and only from a
+ * proxy on a private address (Caddy in compose.edge.yaml); its last entry is the one the proxy
+ * added. Otherwise the socket address is the buyer, whatever the header says.
  */
-export function clientIp(event: H3Event) {
-  const trusted = signed(event)
-  if (trusted) return trusted
-  const peer = event.node.req.socket?.remoteAddress
+export function peerClientIp(
+  peer: string | undefined,
+  forwardedFor: string | undefined,
+  trustProxy: boolean,
+) {
   if (!peer) return 'internal'
-  const forwarded = getHeader(event, 'x-forwarded-for')
+  const forwarded = forwardedFor
     ?.split(',')
     .map((part) => part.trim())
     .filter(Boolean)
-  if (privatePeer.test(peer) && forwarded?.length) return forwarded.at(-1)!.slice(0, 64)
+  if (trustProxy && privatePeer.test(peer) && forwarded?.length)
+    return forwarded.at(-1)!.slice(0, 64)
   return peer
+}
+
+/** The buyer's address for limits. A signed address from our own middleware wins. */
+export function clientIp(event: H3Event) {
+  const trusted = signed(event)
+  if (trusted) return trusted
+  return peerClientIp(
+    event.node.req.socket?.remoteAddress,
+    getHeader(event, 'x-forwarded-for'),
+    config().TRUST_PROXY,
+  )
 }
 
 /** Replaces any client-sent address headers with our own signed value. */
