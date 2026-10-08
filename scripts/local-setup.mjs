@@ -63,7 +63,7 @@ run('docker', [
   'observer',
 ])
 console.log(
-  'Готово: http://localhost:3210. Пароль владельца находится в поле OWNER_PASSWORD файла .env.',
+  'Готово: витрина http://localhost:3210, кабинет http://localhost:3210/office. Пароль владельца находится в поле OWNER_PASSWORD файла .env.',
 )
 console.log(
   'Работают локальная модель, поиск, заказы, резервные копии и наблюдение. Платы за модельные и поисковые API нет.',

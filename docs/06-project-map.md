@@ -4,14 +4,15 @@
 
 ## Интерфейс
 
-- `app/pages/` — страницы Nuxt: вход, панель, каталог и отдельный заказ.
-- `app/pages/index.vue` — выбор раздела панели и действия владельца.
+- `app/pages/index.vue` — публичная витрина без пароля: опубликованные продукты из `GET /api/public/catalog` (`core/public-catalog.ts`).
+- `app/pages/office/` — кабинет владельца: `index.vue` (разделы через `?view=`), `login.vue`, `products.vue`, `orders/[id].vue`.
+- `app/middleware/legacy.global.ts` и `routeRules` в `nuxt.config.ts` — 301 со старых `/login`, `/catalog`, `/orders/*`, `/?view=` в `/office`.
 - `app/components/dashboard/` — отдельные разделы: обзор, исследования, стратегии, заказы, настройки и журнал. Кнопки передают действия странице через событие `control`.
 - `app/components/LiveActivity.vue` — текущие роли, очередь и результаты исследования.
 - `app/components/dashboard/Autonomy.vue` — состояние расписания, обработчика и очереди обязательств; `app/components/ProductHistory.vue` — загрузка сохранённых версий по запросу владельца.
 - `app/components/FarmShell.vue` — меню, общая оболочка и обновление данных.
 - `app/composables/useFarm.ts` — общее состояние панели, загрузка, русские подписи и сообщения ошибок.
-- `app/assets/` — стили приложения и пульта.
+- `app/assets/` — стили. `tokens.css` (глобальные токены) и `components.css` (компоненты, действуют только под классом `ds` на `<html>`: `useHead({ htmlAttrs: { class: 'ds' } })`) для новых страниц; `main.css`, `live.css`, `workspace.css` для старого кабинета.
 
 ## Сервер и фоновые задания
 
@@ -40,6 +41,9 @@
 - `core/config.ts`, `core/db.ts`, `core/auth.ts`, `core/activity.ts` — конфигурация, БД, сессии и наблюдение за вызовами.
 - `prompts/master.md` — общие инструкции всех модельных ролей. Разрешения и действия контролирует сервер.
 
+- `core/storefront.ts` — серверный список цен (`priceList`, `priceIds`), цены типов услуг по умолчанию, `publicSlug`, `publicServiceProjection`, рубли и wei без плавающей точки.
+- `core/contracts/` — общие типы API: `common.ts`, `public.ts` (покупатель), `office.ts` (кабинет).
+
 ## Данные, инфраструктура и проверки
 
 - `db/` — последовательные SQL-миграции. История, снимки заказов и версии продуктов сохраняются.
@@ -53,3 +57,15 @@
 Локальные `.env`, `.secrets/`, `.health/`, `backups/` и `output/` исключены из Git. Рабочую БД нельзя использовать для интеграционных тестов.
 
 Для изменения приложения обязательны `npm run typecheck`, `npm test`, `npm run test:integration`, `npm run build`, `npm run format:check`. Изменённый интерфейс проверяется в Playwright. Подробности — в [AGENTS.md](../AGENTS.md).
+
+## Срезы A и B, поток C и владение файлами
+
+Общий фундамент (миграция `014`, `core/config.ts`, `core/storefront.ts`, `core/contracts/*`, помощники `tests/integration/helpers/db.ts`) лежит в main. После него эти файлы не меняют; новые поля контрактов добавляются только по согласованию. Оплата только тестовая: sandbox или Sepolia.
+
+| Поток                | Worktree и БД              | Владеет                                                                                                                                                                                                                                                                                                                                                                                                  | Не трогает                                                                                                                                 |
+| -------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| A, публичный путь    | `wt-public`, `farm_a_test` | `db/015-*`, `core/orders.ts`, `core/public-orders.ts`, `core/public-catalog.ts`, `core/order-progress.ts`, `core/payments.ts`, `core/rate-limit.ts`, `server/middleware/security.ts`, `server/api/public/**`, `server/api/orders/**`, страницы `app/pages/{index,services,order,pay,terms}`                                                                                                              | `core/queue.ts`, `core/budget.ts`, `core/policy.ts`, `core/jobs/**`, `worker/`, `prompts/master.md`, `server/api/office/**`                |
+| B, ферма             | `wt-farm`, `farm_b_test`   | `db/017-020`, `core/taxonomy.ts`, `core/ideas.ts`, `core/agents.ts`, `core/evolution.ts`, `core/jobs/**`, `core/policy.ts`, `core/queue.ts`, `core/autonomy.ts`, `core/budget.ts`, `core/opportunities.ts`, `core/activity-feed.ts`, `core/providers/**`, `worker/`, `prompts/master.md`, `server/api/{dashboard,control}*`, `server/api/office/**`, `server/api/opportunities/**`, `scripts/migrate.ts` | `core/orders.ts`, `core/payments*.ts`, `core/public-*.ts`, `server/middleware/security.ts`, `server/api/public/**`, `server/api/orders/**` |
+| C, фронтенд кабинета | своя ветка                 | `app/pages/office/**`, `app/components/**`, `app/composables/**`, `app/middleware/legacy.global.ts` (цели редиректов на `/office/agents`, `/office/ideas`, `/office/leads`)                                                                                                                                                                                                                              | серверный код, миграции, контракты                                                                                                         |
+
+Срезы добавляют только новые файлы тестов (`tests/unit/*`, `tests/integration/*`); `tests/integration/system.test.ts` меняет только B и только там, где этого требует очередь. Порядок слияния любой.
