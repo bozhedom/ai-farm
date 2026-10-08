@@ -1,365 +1,404 @@
 <script setup lang="ts">
+import { formatEth } from '../../../../core/storefront'
+import { copyText, officeApi, useOfficeAction, useOfficeToast } from '~/composables/office/actions'
+import { useOwnerOrder } from '~/composables/office/data'
+import { orderNumber, rub, when } from '~/composables/office/format'
+import { orderBadge } from '~/composables/office/labels'
+
 const route = useRoute()
-const { productLink } = useServiceCatalog()
-const order = ref<any>(null),
-  hash = ref(''),
-  error = ref(''),
-  connectionError = ref(''),
-  busy = ref(false),
-  missing = ref(false),
-  loaded = ref(false),
-  resolutionReason = ref(''),
-  copyMessage = ref('')
-let loading = false,
-  stopped = false
-let timer: ReturnType<typeof setInterval>
-async function load() {
-  if (loading || stopped || missing.value) return
-  loading = true
-  const id = route.params.id
-  try {
-    const result = await $fetch('/api/orders/' + id, { timeout: 10000 })
-    if (!stopped && id === route.params.id) {
-      order.value = result
-      connectionError.value = ''
-    }
-  } catch (e: any) {
-    if (stopped || id !== route.params.id) return
-    if (e.statusCode === 401 || e.status === 401) await navigateTo('/office/login')
-    else if (e.statusCode === 404 || e.status === 404) {
-      missing.value = true
-      connectionError.value = ''
-    } else
-      connectionError.value = order.value
-        ? 'Не удалось обновить заказ. Показаны последние полученные данные.'
-        : 'Не удалось загрузить заказ. Проверьте соединение и повторите.'
-  } finally {
-    loading = false
-    if (!stopped && id === route.params.id) loaded.value = true
-  }
-}
-onMounted(() => {
-  void load()
-  timer = setInterval(() => void load(), 3000)
+const id = computed(() => String(route.params.id))
+const { data: order, status, pending, refresh } = useOwnerOrder(id)
+useHead({ title: computed(() => `Заказ №${orderNumber(id.value)}`) })
+const { busy, run } = useOfficeAction()
+const { show } = useOfficeToast()
+
+const reason = ref('')
+const hash = ref('')
+watch(id, () => {
+  reason.value = ''
+  hash.value = ''
 })
-onUnmounted(() => {
-  stopped = true
-  clearInterval(timer)
-})
-watch(
-  () => route.params.id,
-  () => {
-    order.value = null
-    hash.value = ''
-    error.value = ''
-    missing.value = false
-    loaded.value = false
-    connectionError.value = ''
-    resolutionReason.value = ''
-    copyMessage.value = ''
-    void load()
-  },
-)
-async function pay() {
-  if (busy.value) return
-  busy.value = true
-  error.value = ''
+
+const price = computed(() => (order.value?.price_kopecks ? rub(order.value.price_kopecks) : ''))
+const ethAmount = computed(() => {
   try {
-    await $fetch('/api/orders/' + route.params.id + '/pay', {
-      method: 'POST',
-      body:
-        order.value.payment_mode === 'sandbox'
-          ? { mode: 'sandbox' }
-          : { mode: 'sepolia', hash: hash.value },
-    })
-    hash.value = ''
-    await load()
-  } catch (e) {
-    error.value = errorText(e)
-  } finally {
-    busy.value = false
+    return order.value?.amount_wei ? formatEth(order.value.amount_wei) : ''
+  } catch {
+    return ''
   }
-}
+})
+const currentStep = computed(() => order.value?.steps.findIndex((s) => !s.done) ?? -1)
+const isTest = computed(() => order.value?.is_test_payment !== false)
+
 async function resolve() {
-  if (busy.value || !order.value?.progress.canResolve) return
-  busy.value = true
-  error.value = ''
-  try {
-    await $fetch('/api/orders/' + route.params.id + '/resolve', {
-      method: 'POST',
-      body: { reason: resolutionReason.value.trim() },
-    })
-    await load()
-    resolutionReason.value = ''
-  } catch (e) {
-    error.value = errorText(e)
-  } finally {
-    busy.value = false
-  }
+  const done = await run(
+    'resolve',
+    () => officeApi.resolveOrder(id.value, reason.value.trim()),
+    'Заказ закрыт без выдачи. Причина сохранена.',
+  )
+  if (done !== undefined) reason.value = ''
+}
+async function pay() {
+  if (!order.value) return
+  const body =
+    order.value.payment_mode === 'sandbox'
+      ? ({ mode: 'sandbox' } as const)
+      : ({ mode: 'sepolia', hash: hash.value.trim() } as const)
+  const done = await run(
+    'pay',
+    () => officeApi.payOrder(id.value, body),
+    'Оплата принята, пишем текст.',
+  )
+  if (done !== undefined) hash.value = ''
 }
 async function copyResult() {
-  try {
-    await navigator.clipboard.writeText(order.value.result)
-    copyMessage.value = 'Текст скопирован.'
-  } catch {
-    copyMessage.value = 'Копирование недоступно в этом браузере. Выделите текст или скачайте TXT.'
-  }
+  if (!order.value?.result) return
+  show(
+    (await copyText(order.value.result))
+      ? 'Текст скопирован.'
+      : 'Не получилось скопировать. Скачайте .txt.',
+    'ok',
+  )
 }
-const amount = computed(() => {
-  const value = BigInt(order.value?.amount_wei || '0'),
-    unit = 10n ** 18n
-  return `${value / unit}.${String(value % unit).padStart(18, '0')}`
-})
 function download() {
-  const blob = new Blob([order.value.result], { type: 'text/plain;charset=utf-8' }),
-    url = URL.createObjectURL(blob)
+  if (!order.value?.result) return
+  const blob = new Blob([order.value.result], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `ai-farm-${order.value.id.slice(0, 8)}.txt`
+  a.download = `zakaz-${orderNumber(order.value.id)}.txt`
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 </script>
 <template>
-  <FarmShell>
-    <NuxtLink class="back-link" to="/office?view=orders">Все заказы</NuxtLink>
-    <div class="page-heading">
-      <div>
-        <div class="eyebrow">ТЕСТОВЫЙ ЗАКАЗ / {{ String(route.params.id).slice(0, 8) }}</div>
-        <h1>
-          {{
-            order?.product_snapshot?.name ||
-            (missing ? 'Заказ не найден' : loaded ? 'Заказ недоступен' : 'Загружаем заказ…')
-          }}
-        </h1>
-        <p>Тестовый заказ. Реальные деньги не списываются.</p>
+  <div>
+    <NuxtLink class="back" to="/office/orders"
+      ><OfficeIcon name="back" size="sm" />Все заказы</NuxtLink
+    >
+    <OfficeState v-if="!order" :status="status" :pending="pending" @retry="refresh">
+      <template #missing>
+        <NuxtLink class="btn btn-sm" to="/office/orders">Все заказы</NuxtLink>
+      </template>
+    </OfficeState>
+    <template v-else>
+      <div class="page-head">
+        <div>
+          <h1>Заказ №{{ orderNumber(order.id) }}</h1>
+          <p>
+            {{ order.product_snapshot.name }}<template v-if="price">, {{ price }}</template
+            >. {{ order.source === 'public' ? 'С сайта' : 'Из кабинета' }},
+            {{ when(order.created_at) }}.
+          </p>
+        </div>
+        <div class="row head-badges">
+          <span v-if="isTest" class="badge badge-test">Тестовая оплата</span>
+          <OfficeBadge :badge="orderBadge(order.status)" />
+        </div>
       </div>
-      <span
-        v-if="order"
-        class="status-pill"
-        :class="order.status === 'delivered' ? 'good' : 'warn'"
-        >{{ labels[order.status] }}</span
-      >
-    </div>
-    <p v-if="error" class="notice error" role="alert">{{ error }}</p>
-    <p v-if="connectionError" class="notice error" role="alert">
-      {{ connectionError }} <button class="quiet" @click="load">Повторить загрузку</button>
-    </p>
-    <div v-if="missing" class="panel empty large">
-      <p>По этой ссылке нет заказа. Проверьте адрес или найдите нужный заказ в истории.</p>
-      <NuxtLink class="button secondary" to="/office?view=orders">Открыть все заказы</NuxtLink>
-    </div>
-    <template v-if="order">
-      <section class="panel" aria-label="Ход заказа">
-        <div class="section-heading">
+
+      <section class="card rise progress" aria-label="Ход заказа">
+        <div class="card-head">
           <h2>{{ order.progress.title }}</h2>
-          <span v-if="order.job" class="tag"
-            >Попытки {{ order.job.attempts }} / {{ order.job.max_attempts }}</span
+          <span v-if="order.job" class="badge badge-plain"
+            >Попытка {{ order.job.attempts }} из {{ order.job.max_attempts }}</span
           >
         </div>
         <p>{{ order.progress.detail }}</p>
-        <p v-if="order.progress.errorCode" class="muted small-text">
-          Код причины: <code>{{ order.progress.errorCode }}</code>
-        </p>
-        <p v-if="order.status === 'manual_review' && order.review?.reason">
+        <p
+          v-if="order.status === 'manual_review' && order.review?.reason"
+          class="note note-err why"
+        >
           {{ order.review.reason }}
         </p>
-        <p v-if="order.job?.status === 'queued' && order.job.error_code" class="muted small-text">
-          Повтор разрешён не раньше {{ dateTime(order.job.run_after) }}.
+        <p v-if="order.job?.status === 'queued' && order.job.run_after" class="small muted">
+          Повтор не раньше {{ when(order.job.run_after) }}.
         </p>
-        <ol class="order-steps">
+        <ol class="steps">
           <li
-            v-for="(step, index) in order.steps"
+            v-for="(step, i) in order.steps"
             :key="step.label"
-            :class="{ complete: step.done }"
+            :class="{ 'is-done': step.done, 'is-now': i === currentStep }"
           >
-            <span class="step-number" aria-hidden="true">{{
-              step.done ? '✓' : Number(index) + 1
-            }}</span>
-            <div>
-              <strong>{{ step.label }}</strong
-              ><span>{{
-                step.at ? dateTime(step.at) : step.done ? 'Время не сохранено' : 'Не выполнено'
-              }}</span>
-            </div>
+            <strong>{{ step.label }}</strong>
+            <span class="when">{{ step.at ? when(step.at) : step.done ? '' : 'ждём' }}</span>
           </li>
         </ol>
+        <details v-if="order.progress.errorCode" class="tech">
+          <summary>Для техподдержки</summary>
+          <code>{{ order.progress.errorCode }}</code>
+        </details>
       </section>
-      <section v-if="order.progress.canResolve" class="panel resolve-panel">
-        <h2>Закрыть тестовое обязательство</h2>
-        <p>
-          Изучите причину остановки и зафиксируйте решение. Закрытие не выдаёт текст, не имитирует
-          возврат и не добавляет выручку. Исходный материал, ошибки и подтверждение тестовой оплаты
-          останутся в истории.
+
+      <section
+        v-if="order.progress.canResolve"
+        class="card card-tint-sun rise"
+        aria-labelledby="resolve-title"
+      >
+        <h2 id="resolve-title">Закрыть без выдачи</h2>
+        <p class="small">
+          Текст покупателю не уйдёт, выручка не изменится. Исходник и история останутся.
         </p>
-        <form @submit.prevent="resolve">
-          <label for="resolution-reason">Причина закрытия</label
-          ><textarea
+        <form class="stack-sm resolve" @submit.prevent="resolve">
+          <label class="small strong" for="resolution-reason">Почему закрываете</label>
+          <textarea
             id="resolution-reason"
-            v-model="resolutionReason"
-            required
+            v-model="reason"
+            class="textarea"
+            rows="3"
             minlength="10"
             maxlength="1000"
-            rows="3"
-            placeholder="Что проверили и почему закрываете этот тестовый заказ"
-            aria-describedby="resolution-help"
+            required
+            placeholder="Покупатель прислал не тот текст, договорились заказать заново"
           />
-          <p id="resolution-help" class="muted small-text">
-            От 10 до 1 000 символов. Сохранённая причина будет видна в заказе.
-          </p>
-          <button
-            class="button secondary"
-            :disabled="busy || !!connectionError || resolutionReason.trim().length < 10"
-          >
-            {{ busy ? 'Сохраняем…' : 'Закрыть тестовый заказ' }}
-          </button>
+          <div class="row between">
+            <span class="xs muted">От 10 символов</span>
+            <button class="btn btn-danger" :disabled="!!busy || reason.trim().length < 10">
+              {{ busy === 'resolve' ? 'Закрываем' : 'Закрыть без выдачи' }}
+            </button>
+          </div>
         </form>
       </section>
-      <section v-if="order.status === 'closed'" class="panel">
-        <h2>Решение владельца</h2>
-        <p class="preserve-text">{{ order.resolution_reason }}</p>
-        <p v-if="order.closed_at" class="muted small-text">
-          Закрыт {{ dateTime(order.closed_at) }} без выдачи результата. Реальная выручка не
-          менялась.
+
+      <section v-if="order.status === 'closed'" class="card rise">
+        <h2>Ваше решение</h2>
+        <p class="pre">{{ order.resolution_reason }}</p>
+        <p v-if="order.closed_at" class="small muted">
+          Закрыт {{ when(order.closed_at) }} без выдачи текста.
         </p>
       </section>
-      <div class="two-columns order-columns">
-        <section class="panel">
-          <div class="section-heading">
-            <h2>Исходный материал</h2>
-            <span class="tag">Версия {{ order.product_snapshot.version }}</span>
+
+      <section
+        v-if="order.status === 'delivered' && order.result"
+        class="card rise"
+        aria-labelledby="result-title"
+      >
+        <div class="card-head">
+          <h2 id="result-title">Готовый текст</h2>
+          <div class="row">
+            <button type="button" class="btn btn-sm" @click="copyResult">
+              <OfficeIcon name="copy" size="sm" />Скопировать
+            </button>
+            <button type="button" class="btn btn-sm" @click="download">
+              <OfficeIcon name="download" size="sm" />Скачать .txt
+            </button>
           </div>
-          <p class="preserve-text">{{ order.input }}</p>
-          <div class="order-meta">
-            <span>Стратегия: {{ order.strategy_snapshot.name }}</span
-            ><span>Создан {{ dateTime(order.created_at) }}</span>
+        </div>
+        <div class="result-box">{{ order.result }}</div>
+        <p v-if="order.review?.reason" class="small muted review-line">
+          Проверка: {{ order.review.reason }}
+        </p>
+      </section>
+
+      <div class="cols">
+        <section class="card rise">
+          <div class="card-head">
+            <h2>Что прислал покупатель</h2>
+            <span class="badge badge-plain">Версия {{ order.product_snapshot.version }}</span>
           </div>
+          <p class="pre">{{ order.input }}</p>
+          <p v-if="order.strategy_snapshot?.name" class="small muted agent-line">
+            Агент: {{ order.strategy_snapshot.name }}
+          </p>
         </section>
-        <section class="panel payment-panel">
-          <div class="eyebrow">
-            {{
-              order.payment_mode === 'sandbox'
-                ? 'БЕЗ СПИСАНИЯ ДЕНЕГ'
-                : 'ETHEREUM SEPOLIA · CHAIN 11155111'
-            }}
-          </div>
-          <h2>Тестовая оплата</h2>
-          <strong v-if="order.payment_mode === 'sepolia'" class="payment-amount"
-            >{{ amount }}<small> TEST ETH</small></strong
-          >
+
+        <section class="card rise pay">
+          <h2>Оплата</h2>
+          <p v-if="order.payment_mode === 'sepolia' && ethAmount" class="eth">
+            <span class="num">{{ ethAmount }}</span> тестовых ETH, сеть Sepolia
+          </p>
           <template v-if="order.progress.canSubmit">
-            <template v-if="order.payment_mode === 'sandbox'">
-              <p>
-                После подтверждения сервис подготовит текст и проверит его. Страницу можно закрыть:
-                результат сохранится в заказе.
+            <button
+              v-if="order.payment_mode === 'sandbox'"
+              type="button"
+              class="btn btn-primary"
+              :disabled="!!busy"
+              @click="pay"
+            >
+              {{
+                busy === 'pay'
+                  ? 'Оплачиваем'
+                  : price
+                    ? `Оплатить ${price} (тест)`
+                    : 'Оплатить (тест)'
+              }}
+            </button>
+            <form v-else class="stack-sm" @submit.prevent="pay">
+              <p class="small">Переведите точную сумму тестовых ETH на адрес:</p>
+              <code class="wallet">{{ order.receiver }}</code>
+              <p v-if="order.expires_at" class="xs muted">
+                Счёт действует до {{ when(order.expires_at) }}. Ждём
+                {{ order.required_confirmations }} подтверждения сети.
               </p>
-              <button class="button primary" :disabled="busy || !!connectionError" @click="pay">
-                {{ busy ? 'Подтверждаем…' : 'Подтвердить тестовую оплату' }}
-              </button>
-            </template>
-            <form v-else @submit.prevent="pay">
-              <p>
-                Отправьте точную сумму тестового ETH на адрес ниже в сети Sepolia. Не отправляйте
-                реальные средства.
-              </p>
-              <code class="wallet-address">{{ order.receiver }}</code>
-              <p class="muted small-text">
-                Счёт действует до {{ dateTime(order.expires_at) }}. Нужно
-                {{ order.required_confirmations }} подтверждения(ий).
-              </p>
-              <label for="txhash">{{
-                order.tx_hash
-                  ? 'Другой хеш, если перевод был указан ошибочно'
-                  : 'Хеш тестовой транзакции'
+              <label class="small strong" for="txhash">{{
+                order.tx_hash ? 'Другой хеш, если указали не тот' : 'Хеш перевода'
               }}</label>
               <input
                 id="txhash"
                 v-model="hash"
+                class="input mono"
                 required
                 pattern="0x[0-9a-fA-F]{64}"
-                placeholder="0x…"
+                placeholder="0x5f2c…"
                 autocomplete="off"
               />
-              <button class="button primary" :disabled="busy || !!connectionError">
-                {{ busy ? 'Сохраняем…' : order.tx_hash ? 'Заменить хеш' : 'Проверять оплату' }}
+              <button class="btn btn-primary" :disabled="!!busy">
+                {{
+                  busy === 'pay'
+                    ? 'Сохраняем'
+                    : order.tx_hash
+                      ? 'Заменить хеш'
+                      : 'Проверить перевод'
+                }}
               </button>
             </form>
           </template>
-          <p v-else-if="order.paid_at" class="payment-success">
-            ✓ Тестовая оплата подтверждена {{ dateTime(order.paid_at) }}
+          <p v-else-if="order.paid_at" class="paid">
+            <span class="badge badge-ok">Оплачено</span> {{ when(order.paid_at) }}
           </p>
-          <p v-else class="muted">Приём новых платежей по этому счёту закрыт.</p>
-          <details v-if="order.payment_proof" class="payment-proof">
-            <summary>Сохранённое подтверждение Sepolia</summary>
-            <p class="small-text">
-              Блок {{ order.payment_proof.blockNumber }} ·
-              {{ dateTime(order.payment_proof.blockTime) }} · подтверждений на момент приёма:
-              {{ order.payment_proof.confirmations }}
+          <p v-else class="muted small">Счёт закрыт.</p>
+          <details v-if="order.payment_proof" class="tech">
+            <summary>Подтверждение в сети</summary>
+            <p class="xs muted">
+              Блок {{ order.payment_proof.blockNumber }}, {{ when(order.payment_proof.blockTime) }},
+              подтверждений {{ order.payment_proof.confirmations }}
             </p>
-            <code class="wallet-address">{{ order.payment_proof.hash }}</code>
+            <code class="wallet">{{ order.payment_proof.hash }}</code>
           </details>
         </section>
       </div>
-      <section v-if="order.paymentAttempts.length" class="panel" aria-label="История переводов">
-        <div class="section-heading">
-          <h2>История переводов</h2>
-          <span class="tag">Sepolia</span>
-        </div>
-        <p class="muted small-text">
-          Последние 20 хешей. Каждый остаётся закреплён за этим заказом после замены.
-        </p>
-        <div
-          v-for="attempt in order.paymentAttempts"
-          :key="attempt.tx_hash"
-          class="payment-attempt"
-        >
-          <div class="section-heading">
-            <span class="tag">{{
-              attempt.confirmed_at ? 'Подтверждён' : attempt.active ? 'Текущий хеш' : 'Заменён'
-            }}</span
-            ><span class="muted small-text">{{ dateTime(attempt.submitted_at) }}</span>
-          </div>
-          <code class="wallet-address">{{ attempt.tx_hash }}</code>
-          <p>
-            {{
-              attempt.errorText ||
-              (attempt.checked_at
-                ? `Подтверждений при последней сверке: ${attempt.confirmations}`
-                : 'Сверка ещё не завершена.')
-            }}
-          </p>
-          <p v-if="attempt.checked_at" class="muted small-text">
-            Последняя сверка {{ dateTime(attempt.checked_at) }}
-          </p>
-        </div>
-      </section>
-      <section v-if="order.status === 'delivered'" class="panel result-panel">
-        <div class="section-heading">
-          <div>
-            <div class="eyebrow">ПРОВЕРКА ПРОЙДЕНА</div>
-            <h2>Результат заказа</h2>
-          </div>
-          <div class="inline-actions">
-            <button class="button secondary" @click="copyResult">Копировать текст</button
-            ><button class="button secondary" @click="download">Скачать .txt</button>
-          </div>
-        </div>
-        <pre>{{ order.result }}</pre>
-        <p class="muted small-text">{{ order.review?.reason }}</p>
-        <p v-if="copyMessage" role="status">{{ copyMessage }}</p>
-      </section>
-      <div
-        v-if="['delivered', 'expired', 'closed'].includes(order.status)"
-        class="panel next-order"
+
+      <section
+        v-if="order.paymentAttempts.length"
+        class="card rise attempts"
+        aria-labelledby="attempts-title"
       >
-        <div>
-          <h2>{{ order.status === 'expired' ? 'Счёт истёк' : 'Попробовать другой материал' }}</h2>
-          <p>Новый заказ сохранит отдельный результат и актуальную версию услуги.</p>
-        </div>
-        <NuxtLink class="button primary" :to="productLink(order.product_id)"
-          >Создать новый заказ</NuxtLink
-        >
-      </div>
+        <h2 id="attempts-title">История оплаты</h2>
+        <ul>
+          <li v-for="a in order.paymentAttempts" :key="a.tx_hash">
+            <div class="row between">
+              <span
+                class="badge"
+                :class="a.confirmed_at ? 'badge-ok' : a.active ? 'badge-wait' : 'badge-off'"
+                >{{ a.confirmed_at ? 'Подтверждён' : a.active ? 'Текущий' : 'Заменён' }}</span
+              >
+              <span class="xs muted">{{ when(a.submitted_at) }}</span>
+            </div>
+            <code class="wallet">{{ a.tx_hash }}</code>
+            <p class="small">
+              {{
+                a.errorText ||
+                (a.checked_at
+                  ? `Подтверждений при последней проверке: ${a.confirmations}`
+                  : 'Ещё проверяем')
+              }}
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <p v-if="['delivered', 'expired', 'closed'].includes(order.status)" class="again">
+        <NuxtLink class="btn btn-ghost btn-sm" to="/office/products">Сделать новый заказ</NuxtLink>
+      </p>
     </template>
-  </FarmShell>
+  </div>
 </template>
+<style scoped>
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: var(--s-4);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.head-badges {
+  flex-wrap: wrap;
+}
+.progress,
+.card + .card,
+.cols {
+  margin-top: var(--s-5);
+}
+.progress {
+  margin-top: 0;
+}
+.why {
+  margin-top: var(--s-3);
+}
+.progress .steps {
+  margin-top: var(--s-5);
+}
+.tech {
+  margin-top: var(--s-4);
+  font-size: var(--text-sm);
+}
+.tech summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.resolve {
+  margin-top: var(--s-3);
+}
+.resolve .textarea {
+  background: var(--surface);
+}
+.pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.review-line,
+.agent-line {
+  margin-top: var(--s-3);
+}
+.cols {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: var(--s-5);
+  align-items: start;
+}
+.cols .card + .card {
+  margin-top: 0;
+}
+.pay h2 {
+  margin-bottom: var(--s-3);
+}
+.eth {
+  margin-bottom: var(--s-3);
+}
+.eth .num {
+  font-size: var(--text-xl);
+}
+.wallet {
+  display: block;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  font: 400 var(--text-xs) / 1.5 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.attempts ul {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-4);
+}
+.attempts li {
+  display: grid;
+  gap: 6px;
+}
+.again {
+  margin-top: var(--s-5);
+}
+@media (max-width: 1023px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 639px) {
+  .card-head {
+    flex-wrap: wrap;
+  }
+}
+</style>

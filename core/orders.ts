@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { config, usesSourcePosts } from './config'
-import { audit, query, transaction } from './db'
+import { audit, query, transaction, type Connection } from './db'
 import { reserveBudget } from './budget'
+import { deriveOrderToken, invoiceWei, orderTokenHash } from './public-orders'
 import { productSchema, validateInput, validateTemplateInput, type ProductSpec } from './policy'
 import { orderProgress, paymentErrorText } from './order-progress'
 import { sourceSocialDelivery, validateSourcePostInput } from './source-posts'
@@ -45,51 +46,14 @@ export async function createOrder(productId: string, input: string, requestKey: 
       db,
     )
     if (!product) throw new Error('PRODUCT_NOT_FOUND')
-    const spec = productSchema.parse(product.spec)
-    validateTemplateInput(spec.template, input)
-    if (product.template === 'social') {
-      if (product.spec.promise === sourceSocialDelivery) validateSourcePostInput(input)
-      else if (usesSourcePosts(config().MODEL_PROVIDER))
-        throw new Error('PRODUCT_RECIPE_REFRESH_REQUIRED')
-    }
-    const [strategy] = await query(
-      "SELECT * FROM strategies WHERE status='active' ORDER BY random() LIMIT 1",
-      [],
-      db,
-    )
-    if (!strategy) throw new Error('NO_ACTIVE_STRATEGY')
-    const id = randomUUID()
-    const reservationId = await reserveBudget(`order:${id}`, 'order', db)
-    const [amount] = await query(
-      "SELECT (100000000000000 + nextval('invoice_amount_sequence'))::text AS wei",
-      [],
-      db,
-    )
-    await query(
-      `INSERT INTO orders(id,request_key,product_id,product_snapshot,strategy_id,strategy_snapshot,generation,input,payment_mode,amount_wei,receiver,reservation_id,required_confirmations)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [
-        id,
-        requestKey,
-        productId,
-        { ...product.spec, version: product.version },
-        strategy.id,
-        {
-          id: strategy.id,
-          name: strategy.name,
-          approach: strategy.approach,
-          generation: strategy.generation,
-        },
-        state.generation,
-        input,
-        config().PAYMENT_MODE,
-        amount!.wei,
-        config().PAYMENT_MODE === 'sepolia' ? config().SEPOLIA_RECEIVER.toLowerCase() : 'sandbox',
-        reservationId,
-        config().SEPOLIA_CONFIRMATIONS,
-      ],
-      db,
-    )
+    checkProductInput(product, input)
+    const id = await insertOrder(db, {
+      product,
+      state,
+      input,
+      requestKey,
+      amountWei: (sequence) => (100000000000000n + sequence).toString(),
+    })
     await audit(
       'order_created',
       'Создан тестовый заказ и зарезервирован бюджет исполнения.',
@@ -97,6 +61,140 @@ export async function createOrder(productId: string, input: string, requestKey: 
       db,
     )
     return { id }
+  })
+}
+
+function checkProductInput(product: Record<string, any>, input: string) {
+  const spec = productSchema.parse(product.spec)
+  validateTemplateInput(spec.template, input)
+  if (product.template === 'social') {
+    if (product.spec.promise === sourceSocialDelivery) validateSourcePostInput(input)
+    else if (usesSourcePosts(config().MODEL_PROVIDER))
+      throw new Error('PRODUCT_RECIPE_REFRESH_REQUIRED')
+  }
+}
+
+/** Shared insert for owner and public orders; runs under the caller's system_state lock. */
+async function insertOrder(
+  db: Connection,
+  o: {
+    product: Record<string, any>
+    state: Record<string, any>
+    input: string
+    requestKey: string
+    /** Builds the unique invoice amount from the next value of `invoice_amount_sequence`. */
+    amountWei: (sequence: bigint) => string
+    source?: 'owner' | 'public'
+    priceKopecks?: number
+    accessTokenHash?: string | null
+    clientKey?: string | null
+  },
+) {
+  const [strategy] = await query(
+    "SELECT * FROM strategies WHERE status='active' ORDER BY random() LIMIT 1",
+    [],
+    db,
+  )
+  if (!strategy) throw new Error('NO_ACTIVE_STRATEGY')
+  const id = randomUUID()
+  const reservationId = await reserveBudget(`order:${id}`, 'order', db)
+  const [sequence] = await query("SELECT nextval('invoice_amount_sequence')::text AS n", [], db)
+  await query(
+    `INSERT INTO orders(id,request_key,product_id,product_snapshot,strategy_id,strategy_snapshot,generation,input,payment_mode,amount_wei,receiver,reservation_id,required_confirmations,source,price_kopecks,access_token_hash,client_key)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+    [
+      id,
+      o.requestKey,
+      o.product.id,
+      { ...o.product.spec, version: o.product.version },
+      strategy.id,
+      {
+        id: strategy.id,
+        name: strategy.name,
+        approach: strategy.approach,
+        generation: strategy.generation,
+      },
+      o.state.generation,
+      o.input,
+      config().PAYMENT_MODE,
+      o.amountWei(BigInt(sequence!.n)),
+      config().PAYMENT_MODE === 'sepolia' ? config().SEPOLIA_RECEIVER.toLowerCase() : 'sandbox',
+      reservationId,
+      config().SEPOLIA_CONFIRMATIONS,
+      o.source ?? 'owner',
+      o.priceKopecks ?? 0,
+      o.accessTokenHash ?? null,
+      o.clientKey ?? null,
+    ],
+    db,
+  )
+  return id
+}
+
+/**
+ * A buyer order from the public site. The product must be published; the secret link token is
+ * returned to the caller and only its sha256 is stored. A repeated `requestKey` with the same
+ * service and text returns the same order and link. Payments stay test-only, never revenue.
+ */
+export async function createPublicOrder(o: {
+  slug: string
+  input: string
+  requestKey: string
+  clientKey: string
+}): Promise<{ id: string; token: string; existing: boolean }> {
+  validateInput(o.input)
+  const token = deriveOrderToken(o.requestKey)
+  const hash = orderTokenHash(token)
+  return transaction(async (db) => {
+    const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
+    const [existing] = await query(
+      `SELECT o.id,o.input,o.source,o.access_token_hash,p.slug FROM orders o
+       JOIN products p ON p.id=o.product_id WHERE o.request_key=$1`,
+      [o.requestKey],
+      db,
+    )
+    if (existing) {
+      if (existing.source !== 'public' || existing.slug !== o.slug || existing.input !== o.input)
+        throw new Error('IDEMPOTENCY_CONFLICT')
+      // The owner replaced this link; the old request cannot bring it back.
+      if (existing.access_token_hash !== hash) throw new Error('ORDER_LINK_REPLACED')
+      return { id: existing.id, token, existing: true }
+    }
+    if (state?.mode !== 'running') throw new Error('NEW_ORDERS_PAUSED')
+    const [product] = await query(
+      "SELECT * FROM products WHERE slug=$1 AND status='sandbox' AND visibility='public'",
+      [o.slug],
+      db,
+    )
+    if (!product) throw new Error('PRODUCT_NOT_FOUND')
+    checkProductInput(product, o.input)
+    const c = config()
+    const [today] = await query(
+      `SELECT count(*)::int AS n FROM orders WHERE source='public'
+       AND created_at>=date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+      [],
+      db,
+    )
+    if (today!.n >= c.PUBLIC_ORDERS_PER_DAY) throw new Error('PUBLIC_ORDERS_LIMIT')
+    const id = await insertOrder(db, {
+      product,
+      state,
+      input: o.input,
+      requestKey: o.requestKey,
+      amountWei: (sequence) =>
+        invoiceWei(product.price_kopecks, c.TEST_ETH_RUB_RATE, sequence).toString(),
+      source: 'public',
+      priceKopecks: product.price_kopecks,
+      accessTokenHash: hash,
+      clientKey: o.clientKey,
+    })
+    await audit(
+      'public_order_created',
+      'Покупатель оформил заказ на сайте. Оплата тестовая, выручка не меняется.',
+      { orderId: id, productId: product.id, priceKopecks: product.price_kopecks },
+      db,
+    )
+    return { id, token, existing: false }
   })
 }
 

@@ -1,3 +1,5 @@
+import type { OrderStep, PublicOrderStatus } from './contracts/common'
+
 export const paymentErrors: Record<string, string> = {
   WRONG_CHAIN: 'RPC сообщил другую сеть. Подтверждение остановлено до восстановления Sepolia.',
   WRONG_RECEIVER: 'Адрес получателя не совпадает со счётом. Укажите хеш правильного перевода.',
@@ -129,5 +131,124 @@ export function orderProgress(
     canResolve:
       order.status === 'manual_review' && ['sandbox', 'sepolia'].includes(order.payment_mode),
     errorCode: job?.error_code || order.payment_error || null,
+  }
+}
+
+/** Buyer wording for payment problems. No codes, hashes or node details. */
+const buyerPaymentErrors: Record<string, string> = {
+  WRONG_AMOUNT: 'Сумма перевода не совпадает со счётом. Переведите точную сумму.',
+  WRONG_RECEIVER: 'Перевод ушёл на другой адрес. Проверьте адрес получателя.',
+  TX_REVERTED: 'Сеть отклонила перевод. Попробуйте отправить ещё раз.',
+  ONLY_NATIVE_TRANSFER_ALLOWED: 'Нужен обычный перевод тестового ETH, без токенов и контрактов.',
+  TX_OUTSIDE_INVOICE_WINDOW: 'Перевод сделан вне срока счёта, он не подходит к этому заказу.',
+  TX_HASH_MISMATCH: 'Не нашли такой перевод. Проверьте номер транзакции.',
+}
+export function publicPaymentText(code: string | null | undefined) {
+  return code ? buyerPaymentErrors[code] || null : null
+}
+
+type Tone = 'good' | 'warn'
+export type PublicProgress = {
+  status: PublicOrderStatus
+  steps: OrderStep[]
+  message: { title: string; detail: string; tone: Tone }
+}
+
+/**
+ * What a buyer sees about an order: a short status, four steps and one message. Strategies,
+ * product versions, attempts, error codes and model details never appear here.
+ */
+export function publicProgress(
+  order: Record<string, any>,
+  job: Record<string, any> | null,
+  generatedAt: Date | string | null,
+  state: Record<string, any>,
+  now = new Date(),
+): PublicProgress {
+  const iso = (value: Date | string | null | undefined) =>
+    value ? new Date(value).toISOString() : null
+  const delivered = order.status === 'delivered'
+  const paid = !!order.paid_at || ['paid', 'running', 'delivered'].includes(order.status)
+  const written = !!generatedAt || delivered
+  const steps: OrderStep[] = [
+    { label: 'Оплачен', at: iso(order.paid_at), done: paid },
+    { label: 'Пишем текст', at: iso(generatedAt), done: written },
+    { label: 'Проверяем', at: iso(order.delivered_at), done: delivered },
+    { label: 'Готово', at: iso(order.delivered_at), done: delivered },
+  ]
+  const say = (status: PublicOrderStatus, title: string, detail: string, tone: Tone = 'warn') => ({
+    status,
+    steps,
+    message: { title, detail, tone },
+  })
+  switch (order.status) {
+    case 'delivered':
+      return say('delivered', 'Готово', 'Текст ниже. Его можно скопировать или скачать.', 'good')
+    case 'closed':
+      return say('closed', 'Заказ закрыт', 'Владелец закрыл заказ без выдачи текста.')
+    case 'expired':
+      return say('expired', 'Срок оплаты истёк', 'Оформите заказ заново, это займёт минуту.')
+    case 'manual_review':
+      return paid
+        ? say(
+            'needs_attention',
+            'Текст не прошёл нашу проверку',
+            'Владелец посмотрит заказ вручную.',
+          )
+        : say(
+            'needs_attention',
+            'Проверяем перевод вручную',
+            'Перевод не подтвердился вовремя. Владелец посмотрит его сам.',
+          )
+    case 'awaiting_payment': {
+      if (!order.tx_hash) {
+        if (new Date(order.expires_at) <= now)
+          return say('awaiting_payment', 'Срок оплаты истёк', 'Оформите заказ заново.')
+        return order.payment_mode === 'sepolia'
+          ? say(
+              'awaiting_payment',
+              'Ждём перевод',
+              'Переведите точную сумму. Перевод мы найдём сами.',
+            )
+          : say('awaiting_payment', 'Ждём оплату', 'После оплаты сразу начнём писать текст.')
+      }
+      const problem = publicPaymentText(order.payment_error)
+      if (problem) return say('checking_payment', 'Перевод не подходит к заказу', problem)
+      const required = Number(order.required_confirmations) || 3
+      const confirmations = Math.min(Number(order.confirmations) || 0, required)
+      return confirmations > 0
+        ? say(
+            'checking_payment',
+            `Перевод найден, ждём подтверждений ${confirmations} из ${required}`,
+            'Обычно это 1-2 минуты. Страницу можно закрыть.',
+          )
+        : say(
+            'checking_payment',
+            'Перевод отправлен',
+            'Ждём, когда сеть его примет. Обычно это меньше минуты.',
+          )
+    }
+    default: {
+      const fresh =
+        !!state.worker_heartbeat &&
+        now.getTime() - new Date(state.worker_heartbeat).getTime() < 90000
+      if (written) return say('in_progress', 'Проверяем', 'Текст готов, проверяем его. Ещё минута.')
+      if (job?.status === 'queued' && Number(job.attempts) > 0)
+        return say('in_progress', 'Пишем текст', 'Не получилось с первого раза, пробуем ещё.')
+      if (fresh && order.status === 'paid' && state.mode !== 'emergency_stop')
+        return say(
+          'in_progress',
+          'Оплачено',
+          'Передаём заказ автору, это несколько секунд.',
+          'good',
+        )
+      if (!fresh || state.mode === 'emergency_stop')
+        return say(
+          'in_progress',
+          'Пишем текст',
+          'Немного задерживаемся. Страницу можно закрыть, текст появится здесь.',
+        )
+      return say('in_progress', 'Пишем текст', 'Обычно 2-5 минут. Страницу можно закрыть.')
+    }
   }
 }

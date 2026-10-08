@@ -43,6 +43,9 @@ const schema = z.object({
   TEST_ETH_RUB_RATE: positive(300000).refine((n) => n <= 1000000000),
   // The worker may find Sepolia transfers to SEPOLIA_RECEIVER by scanning new blocks.
   SEPOLIA_SCAN_ENABLED: flag.default(true),
+  // Local anvil node that imitates Sepolia (chain 11155111) for tests and demos. Allows plain
+  // HTTP to a loopback or compose host only. Never a public network, never real money.
+  SEPOLIA_LOCAL_NODE: flag.default(false),
   PUBLIC_SELLER: z.string().trim().max(200).default(''),
   PUBLIC_CONTACT: z.string().trim().max(200).default(''),
   PUBLIC_TERMS_URL: z.string().trim().default(''),
@@ -91,7 +94,8 @@ export function config(): Config {
   if (c.PAYMENT_MODE === 'sepolia') {
     if (!/^0x[0-9a-fA-F]{40}$/.test(c.SEPOLIA_RECEIVER) || /^0x0{40}$/.test(c.SEPOLIA_RECEIVER))
       throw new Error('SEPOLIA_RECEIVER_REQUIRED')
-    if (!c.SEPOLIA_RPC_URL.startsWith('https://')) throw new Error('HTTPS_RPC_REQUIRED')
+    if (!c.SEPOLIA_RPC_URL.startsWith('https://') && !(c.SEPOLIA_LOCAL_NODE && isLocalRpc(c)))
+      throw new Error('HTTPS_RPC_REQUIRED')
   }
   if (c.PUBLIC_TERMS_URL) {
     const terms = URL.canParse(c.PUBLIC_TERMS_URL) ? new URL(c.PUBLIC_TERMS_URL) : null
@@ -105,6 +109,18 @@ export function config(): Config {
     throw new Error('HTTPS_REQUIRES_SECURE_COOKIE')
   cached = c
   return c
+}
+
+/** Loopback or a compose service name: only for SEPOLIA_LOCAL_NODE (anvil). */
+export function isLocalRpc(c: Pick<Config, 'SEPOLIA_RPC_URL'>) {
+  const u = URL.canParse(c.SEPOLIA_RPC_URL) ? new URL(c.SEPOLIA_RPC_URL) : null
+  return (
+    !!u &&
+    u.protocol === 'http:' &&
+    !u.username &&
+    !u.password &&
+    ['127.0.0.1', 'localhost', '[::1]', 'anvil', 'host.docker.internal'].includes(u.hostname)
+  )
 }
 
 /** Free models distorted rewritten posts; their social service only lays out the full source text. */
