@@ -42,7 +42,10 @@ export async function saveOpportunities(
     const redact = (text: string) =>
       text
         .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, '[контакт в источнике]')
-        .replace(/(?:\+\d[\d ()-]{8,}\d)/g, '[контакт в источнике]')
+        // Any phone-like run of nine digits or more: +7, 8 (999), dots and dashes.
+        .replace(/\+?\d[\d\s().-]{7,}\d/g, (run) =>
+          run.replace(/\D/g, '').length >= 9 ? '[контакт в источнике]' : run,
+        )
     const title = redact(item.title).slice(0, 300).trim()
     const snippet = redact(item.snippet).slice(0, 1000).trim()
     if (!title || !snippet) return []

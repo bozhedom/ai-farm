@@ -7,7 +7,12 @@ import {
   jaccard,
   rankScore,
 } from '../../core/ideas'
-import { ideaSchemaForEvidence, validateIdea, type Evidence } from '../../core/policy'
+import {
+  ideaSchemaForEvidence,
+  validateIdea,
+  validateIdeaTopic,
+  type Evidence,
+} from '../../core/policy'
 import { demoIdea, demoScoutEvidence } from '../../core/providers/demo'
 import { taxonomyTopics } from '../../core/taxonomy'
 import { defaultParams } from '../../core/agents'
@@ -179,6 +184,30 @@ describe('idea validation', () => {
       'it-docs',
     )
     expect(human.suggestedTemplate).toBeNull()
+  })
+
+  it('blocks areas the master prompt excludes, whatever the critic says', () => {
+    for (const title of [
+      'Написание курсовых работ на заказ',
+      'Платные прогнозы на ставки на спорт',
+      'Эротический контент 18+ для взрослых',
+      'Агитация для кандидатов в депутаты',
+      'Перепродажа аккаунтов маркетплейсов',
+      'Отзывы на заказ для карточек',
+      'Сигналы для трейдинга криптовалют',
+      'Холодные звонки по базе клиентов',
+    ])
+      expect(() => validateIdea({ ...idea, title }, evidence, false, 'it-docs'), title).toThrow(
+        'POLICY_IDEA_TOPIC_BLOCKED',
+      )
+  })
+
+  it('lets every taxonomy angle and demo idea through the stop list', () => {
+    for (const topic of taxonomyTopics)
+      for (const angle of topic.angles)
+        expect(() =>
+          validateIdeaTopic(`${angle.title}\n${topic.audience}\n${angle.problem}`),
+        ).not.toThrow()
   })
 
   it('builds explicit demo ideas that pass the same validation', () => {

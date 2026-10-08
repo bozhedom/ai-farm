@@ -42,6 +42,25 @@ describe('reply draft validation', () => {
     )
   })
 
+  it('rejects short links, any domain zone, other schemes, messengers and disguised contacts', () => {
+    for (const tail of [
+      ' Короткая ссылка bit.ly/abc123',
+      ' Или vk.cc/xyz',
+      ' Наш сайт studio.xyz',
+      ' Звоните 8.900.123.45.67',
+      ' Пишите tg://resolve?domain=seller',
+      ' Напишите в телеграм seller_bot',
+      ' Почта shop(at)mail(dot)ru',
+      ' Ответим в WhatsApp',
+      ' mailto:shop?subject=x',
+      ' Пишите в личку',
+      ' Ozon.ru подойдёт',
+    ])
+      expect(() => validateReplyDraft(ok + tail, url), tail).toThrow(/POLICY_REPLY_(CONTACT|URL)/)
+    // Prices, counts and dates stay allowed.
+    expect(validateReplyDraft(ok + ' Цена 1 490 ₽ за 30 описаний до 08.10.', url)).toBeTruthy()
+  })
+
   it('rejects promises the product does not make', () => {
     expect(() => validateReplyDraft(ok + ' Даю скидку на первый заказ.', url)).toThrow(
       'POLICY_REPLY_PROMISE',

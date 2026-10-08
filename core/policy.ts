@@ -337,8 +337,30 @@ export function validateIdea(
       ...idea.uncertainties,
     ].join('\n'),
   )
+  validateIdeaTopic(
+    [idea.title, idea.audience, idea.problem, idea.revenueNote, idea.executionNote].join('\n'),
+  )
   // A template without a farm decision is only a hint; keep the stored decision consistent.
   return idea.farmExecutable ? idea : { ...idea, suggestedTemplate: null }
+}
+
+/**
+ * Areas the master prompt excludes from the pilot, as a hard server rule for ideas. The critic
+ * also refuses them, but a model decision alone is not a limit.
+ */
+const excludedIdeaTopics = [
+  /(?<![\p{L}])(?:казино|букмекер|беттинг|тотализатор|азартн|ставк[аиу]\s+на\s+спорт|ставок\s+на\s+спорт|прогноз[ыа]?\s+на\s+(?:спорт|матч|ставк))/iu,
+  /(?<![\p{L}])(?:эротик|эротическ|порно|интим|вебкам|18\s*\+|для\s+взрослых|секс)/iu,
+  /(?<![\p{L}])(?:агитац|предвыборн|избирательн|политическ|кандидат(?:а|ов|ам)?\s+в\s+депутат|выбор(?:ы|ов)\s+(?:депутат|мэр|президент|губернатор))/iu,
+  /(?:курсов(?:ая|ые|ых|ую)\s+работ|дипломн(?:ая|ые|ых|ую)\s+работ|контрольн(?:ая|ые|ых|ую)\s+работ|(?<![\p{L}])реферат|помощь\s+студент|студенческ[а-я]*\s+работ|решени[ея]\s+(?:тестов|экзамен))/iu,
+  /(?:отзыв[а-я]*\s+на\s+заказ|заказн[а-я]*\s+отзыв|фейков[а-я]*\s+отзыв|купить\s+отзыв|накрут|лайк[а-я]*\s+за\s+деньги|подписчик[а-я]*\s+за\s+деньги)/iu,
+  /(?:(?:продаж|перепродаж|аренд|покупк)[а-я]*\s+(?:готовых\s+)?аккаунт|аккаунт[а-я]*\s+на\s+продажу|(?:база|базы|баз)\s+(?:данных\s+)?(?:клиентов|контактов|номеров)|парсинг\s+(?:контакт|номер|почт))/iu,
+  /(?:(?:медицинск|юридическ|инвестиционн|финансов)[а-я]*\s+(?:услуг|консультац|помощ|совет)|сигнал[а-я]*\s+для\s+трейд|трейдинг|криптовалютн[а-я]*\s+(?:инвест|сигнал)|микрозайм)/iu,
+  /(?:обход[а-я]*\s+(?:блокиров|верификац|капч|captcha)|vpn\s+для\s+обход|рассылк|холодн[а-я]*\s+(?:звонк|письм|обзвон))/iu,
+]
+export function validateIdeaTopic(text: string) {
+  if (excludedIdeaTopics.some((pattern) => pattern.test(text)))
+    throw new Error('POLICY_IDEA_TOPIC_BLOCKED')
 }
 
 export const reportSchema = z
@@ -387,24 +409,36 @@ export type ReplyDraft = z.infer<typeof replyDraftSchema>
  * A reply draft is sent by a person, never by the farm. No contacts, mentions, foreign links or
  * promises that the product page does not make.
  */
+/** Phone-like runs: at least nine digits with spaces, dots, dashes or brackets in between. */
+export function hasPhoneNumber(text: string) {
+  for (const match of text.matchAll(/\+?\d[\d\s().\-]{6,}\d/g))
+    if (match[0].replace(/\D/g, '').length >= 9) return true
+  return false
+}
+const messengers =
+  /(?<![\p{L}])(?:телеграм|телеграмм|telegram|тг|tg|whats\s?app|ватсап|вотсап|вацап|viber|вайбер|skype|скайп|вконтакте|вк|vk|instagram|инстаграм|инста|директ|личк[аеуи]|в\s+лс|max\s+мессенджер|signal|discord|дискорд)(?![\p{L}])/iu
+const obfuscated =
+  /\((?:at|dot|собака|точка)\)|\[(?:at|dot|собака|точка)\]|\s(?:at|собака)\s.*\s(?:dot|точка)\s|(?:точка|dot)\s*(?:ру|ru|ком|com|рф|net|org)(?![\p{L}])/iu
+/** Any domain-like token, including short links and unusual zones. */
+const domainLike = /[\p{L}\d-]+\.(?:[a-z]{2,24}|рф|рус|орг|онлайн|сайт)(?![\p{L}\d])/iu
+const schemeLike = /(?<![\p{L}])[a-z][a-z0-9+.-]{1,20}:(?:\/\/|[^\s]*\?)/iu
+
+/**
+ * A reply draft is sent by a person, never by the farm. The only link is the public product
+ * page. No contacts, messengers, other domains or schemes, disguised addresses or promises
+ * that the product page does not make.
+ */
 export function validateReplyDraft(text: string, allowedUrl: string, productText = '') {
   replyDraftSchema.parse({ draft: text })
   validateContent(text)
-  if (/@/.test(text)) throw new Error('POLICY_REPLY_CONTACT')
-  for (const match of text.matchAll(/\+?\d[\d\s()-]{8,}\d/g))
-    if (match[0].replace(/\D/g, '').length >= 10) throw new Error('POLICY_REPLY_CONTACT')
-  const urls = [...text.matchAll(/(?:https?:\/\/|www\.)[^\s]+/giu)].map((m) =>
+  if (/@|＠/.test(text) || hasPhoneNumber(text) || obfuscated.test(text) || messengers.test(text))
+    throw new Error('POLICY_REPLY_CONTACT')
+  const urls = [...text.matchAll(/(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s]+/giu)].map((m) =>
     m[0].replace(/[.,;:!?)»"']+$/u, ''),
   )
   if (urls.some((url) => url !== allowedUrl)) throw new Error('POLICY_REPLY_URL')
   const rest = text.split(allowedUrl).join(' ')
-  if (
-    /(?:^|[\s(«"])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:ru|com|net|org|me|io|su|info|pro)\b/iu.test(
-      rest,
-    ) ||
-    /\.рф(?![\p{L}])/u.test(rest)
-  )
-    throw new Error('POLICY_REPLY_URL')
+  if (domainLike.test(rest) || schemeLike.test(rest)) throw new Error('POLICY_REPLY_URL')
   const allowed = productText.toLowerCase()
   for (const word of ['гарант', 'скидк', 'бесплатн'])
     if (text.toLowerCase().includes(word) && !allowed.includes(word))
@@ -427,8 +461,13 @@ export const productOfferSchema = productSchema.extend({
   priceId: z.enum(priceIds).optional(),
   page: productPageSchema.optional(),
 })
-export function validateProductOffer(value: unknown, expected: Template) {
-  const offer = productOfferSchema.parse(value)
+/** For a product built from an idea: price and page are required. */
+export const productOfferRequiredSchema = productSchema.extend({
+  priceId: z.enum(priceIds),
+  page: productPageSchema,
+})
+export function validateProductOffer(value: unknown, expected: Template, required = false) {
+  const offer = (required ? productOfferRequiredSchema : productOfferSchema).parse(value)
   const { priceId, page, ...base } = offer
   const spec = validateProduct(base, expected)
   if (page)
