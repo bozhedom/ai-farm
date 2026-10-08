@@ -16,7 +16,7 @@ import {
   validateInput,
   validateTemplateInput,
   validateProductOffer,
-  productOfferSchema,
+  productOfferRequiredSchema,
   type Template,
   type ProductSpec,
   type ProductPageSpec,
@@ -240,7 +240,7 @@ export async function research(job: Job) {
                   pageTask:
                     'Выбери priceId только из prices (обычно defaultPriceId). page: headline (обещание одной фразой), forWhom (кому подходит), youGet (что получит покупатель), limits (честные ограничения). Простой текст без HTML.',
                 },
-                schema: productOfferSchema,
+                schema: productOfferRequiredSchema,
                 demoValue: demoProductOffer(template, businessIdea),
               })
             : await model({
@@ -252,6 +252,7 @@ export async function research(job: Job) {
                 demoValue: demoSpecs[template],
               }),
           template,
+          !!businessIdea,
         )
         spec = offer.spec
         offerPrice = offer.priceKopecks
@@ -373,7 +374,11 @@ export async function research(job: Job) {
           offerPrice ??
           (occupied?.price_kopecks as number | undefined) ??
           defaultPriceKopecks[template]
-        const page = offerPage ?? occupied?.page ?? {}
+        // A product built from an idea carries its own page; it never inherits another idea's.
+        const page = sourceIdea ? offerPage! : (occupied?.page ?? {})
+        // The owner hid this product: a new version is built, but it stays off the storefront.
+        const hiddenByOwner =
+          !!occupied && occupied.visibility === 'private' && !!occupied.published_at
         await query(
           `INSERT INTO products(id,hypothesis_id,strategy_id,template,spec,is_demo,checks,version,slug,price_kopecks,
              idea_id,page,visibility,published_at)
@@ -386,9 +391,11 @@ export async function research(job: Job) {
            idea_id=COALESCE(EXCLUDED.idea_id,products.idea_id),
            price_kopecks=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.price_kopecks ELSE EXCLUDED.price_kopecks END,
            page=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.page ELSE EXCLUDED.page END,
-           visibility=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.visibility ELSE 'public' END,
+           visibility=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.visibility
+             WHEN products.visibility='private' AND products.published_at IS NOT NULL THEN 'private'
+             ELSE 'public' END,
            published_at=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.published_at
-             WHEN products.visibility='public' THEN COALESCE(products.published_at,now()) ELSE now() END`,
+             ELSE COALESCE(products.published_at,now()) END`,
           [
             productId,
             id,
@@ -414,8 +421,10 @@ export async function research(job: Job) {
         if (sourceIdea) {
           await query("UPDATE ideas SET status='productized' WHERE id=$1", [sourceIdea.id], db)
           await audit(
-            'product_published',
-            `Новый продукт на сайте: «${spec!.name}», ${formatRub(price)}.`,
+            hiddenByOwner ? 'product_updated' : 'product_published',
+            hiddenByOwner
+              ? `Новая версия продукта «${spec!.name}» готова. На сайте он скрыт по вашему решению.`
+              : `Новый продукт на сайте: «${spec!.name}», ${formatRub(price)}.`,
             {
               productId,
               ideaId: sourceIdea.id,
@@ -424,6 +433,7 @@ export async function research(job: Job) {
               priceKopecks: price,
               version,
               isDemo,
+              hidden: hiddenByOwner,
             },
             db,
           )

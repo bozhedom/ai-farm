@@ -1,17 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import { config } from '../config'
-import { audit, query } from '../db'
+import { audit, query, type Connection } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model, searchQuery } from '../providers'
 import { demoIdea, demoIdeaCritique } from '../providers/demo'
 import {
+  POLICY,
   ideaSchemaForEvidence,
   ideaSourceDomains,
   reviewSchema,
   validateIdea,
   type Evidence,
 } from '../policy'
-import type { Job } from '../queue'
+import { enqueue, type Job } from '../queue'
 import { categoryById, isTaxonomyTopic, topicById } from '../taxonomy'
 import { serviceCatalog } from '../service-catalog'
 import { defaultParams, ensureStrategyParams, parseParams } from '../agents'
@@ -48,6 +49,19 @@ export async function scout(job: Job) {
     return
   }
   if ((await query('SELECT id FROM ideas WHERE job_id=$1', [job.id])).length) return
+  // Hard daily cap on ideas, whoever asked for the scouting.
+  const [today] = await query(
+    `SELECT count(*)::int AS n FROM ideas
+     WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+  )
+  if ((today!.n as number) >= POLICY.maxIdeasPerDay) {
+    await audit('scout_skipped', 'Разведка пропущена: дневной лимит идей исчерпан.', {
+      jobId: job.id,
+      agentId: strategy.id,
+      limit: POLICY.maxIdeasPerDay,
+    })
+    return
+  }
   const params = parseParams(strategy.params) ?? defaultParams(0)
   const demo = config().MODEL_PROVIDER === 'demo'
   const reservationId = await reserveBudget(`scout:${job.id}`, 'scout')
@@ -61,7 +75,7 @@ export async function scout(job: Job) {
     await closeReservation(reservationId)
     throw new Error('SEARCH_INSUFFICIENT_SOURCES')
   }
-  const [memory, previousByAgent, [state]] = await Promise.all([
+  const [memory, previousByAgent] = await Promise.all([
     query(
       `SELECT title,critique->>'verdict' AS verdict,critique->>'reason' AS reason
        FROM ideas WHERE topic_id=$1 ORDER BY created_at DESC LIMIT 5`,
@@ -71,7 +85,6 @@ export async function scout(job: Job) {
       `SELECT count(*)::int AS n FROM ideas WHERE strategy_id=$1 AND generation=(SELECT generation FROM system_state WHERE id=true)`,
       [strategy.id],
     ),
-    query('SELECT generation FROM system_state WHERE id=true'),
   ])
   const context = {
     topic: {
@@ -152,7 +165,19 @@ export async function scout(job: Job) {
     demandSignals: idea.demandSignals.length,
   })
   const ideaId = randomUUID()
-  const saved = await withLease(job, async (db) => {
+  const saved = await withLease(job, async (db, window) => {
+    // Selection may have run while the model answered: re-read the agent and the generation
+    // under the same lock the selection takes.
+    const [current] = await query('SELECT status FROM strategies WHERE id=$1', [strategy.id], db)
+    if (current?.status !== 'active') {
+      await audit(
+        'scout_skipped',
+        'Разведка не сохранена: агент уволен отбором, пока шёл поиск.',
+        { jobId: job.id, agentId: strategy.id },
+        db,
+      )
+      return false
+    }
     const rows = await query(
       `INSERT INTO ideas(id,job_id,strategy_id,generation,topic_id,category,title,fingerprint,duplicate_of,
          research,evidence,critique,farm_executable,suggested_template,rank_score,status,is_demo)
@@ -162,7 +187,7 @@ export async function scout(job: Job) {
         ideaId,
         job.id,
         strategy.id,
-        state!.generation,
+        window.generation,
         topic.id,
         topic.category,
         idea.title,
@@ -208,8 +233,27 @@ export async function scout(job: Job) {
       db,
     )
     await maybeScheduleEvolution(db, new Date().toISOString().slice(0, 10))
+    await reportAfterManualScouts(job, db)
     return true
   })
   await closeReservation(reservationId)
   return saved ? ideaId : null
+}
+
+/**
+ * Owner scouting works without the schedule: after the last scout of a manual batch the
+ * manager report runs too, so ideas get statuses and the best ones go to research.
+ */
+async function reportAfterManualScouts(job: Job, db: Connection) {
+  const [self] = await query('SELECT dedupe_key FROM jobs WHERE id=$1', [job.id], db)
+  if (!String(self?.dedupe_key).startsWith('scout-manual:')) return
+  const [other] = await query(
+    `SELECT id FROM jobs WHERE kind='scout' AND dedupe_key LIKE 'scout-manual:%'
+     AND status IN ('queued','running') AND id<>$1 LIMIT 1`,
+    [job.id],
+    db,
+  )
+  if (other) return
+  const reportKey = `report:after-scouts:${job.id}`
+  await enqueue('report', reportKey, { kind: 'daily', reportKey }, db)
 }

@@ -11,6 +11,7 @@ import {
   type StrategyRow,
 } from './agents'
 import { maybeScheduleEvolution } from './evolution'
+import { POLICY } from './policy'
 import { categoryById, isTaxonomyTopic, taxonomyTopics, topicById } from './taxonomy'
 import type { budgetSummary } from './budget'
 import { operationsStatus } from './operations'
@@ -111,6 +112,17 @@ async function scheduleResearch(db: Connection, state: FarmState, now: Date) {
 
 const dayStartOf = (day: string) => new Date(`${day}T00:00:00.000Z`)
 
+/** Scouting jobs queued today, scheduled and manual: each can bring one idea. */
+async function scoutsToday(db: Connection) {
+  const [row] = await query(
+    `SELECT count(*)::int AS n FROM jobs WHERE kind='scout'
+     AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+    [],
+    db,
+  )
+  return row!.n as number
+}
+
 /** Topic rows exist for every taxonomy topic; scouting history is never deleted. */
 async function ensureTopics(db: Connection) {
   await query(
@@ -209,10 +221,13 @@ async function scheduleFarm(db: Connection, state: FarmState, now: Date, weekNum
     db,
   )
   const assignments: { agentId: string; topicId: string; category: string }[] = []
+  let scoutRoom = POLICY.maxIdeasPerDay - (await scoutsToday(db))
   for (let n = 1; n <= state.scouts_per_strategy_per_day; n++)
     for (const strategy of active) {
       const key = `scout:${day}:${strategy.id}:${n}`
       if ((await query('SELECT id FROM jobs WHERE dedupe_key=$1', [key], db)).length) continue
+      if (scoutRoom <= 0) continue
+      scoutRoom--
       const focus = parseParams(strategy.params)?.focusCategories ?? []
       const topic = await assignTopic(db, strategy.id, focus, day)
       await enqueue(
@@ -320,7 +335,12 @@ export async function requestScout(topicId?: string) {
     )
     if (!active.length) throw new Error('INVALID_POPULATION')
     const day = new Date().toISOString().slice(0, 10)
-    const chosen = topicId ? [[...active].sort((a, b) => a.ideas - b.ideas)[0]!] : active
+    const room = POLICY.maxIdeasPerDay - (await scoutsToday(db))
+    if (room <= 0) throw new Error('IDEAS_DAILY_LIMIT')
+    const chosen = (topicId ? [[...active].sort((a, b) => a.ideas - b.ideas)[0]!] : active).slice(
+      0,
+      room,
+    )
     const jobs = []
     const assignments: { agentId: string; topicId: string; category: string }[] = []
     for (const strategy of chosen) {

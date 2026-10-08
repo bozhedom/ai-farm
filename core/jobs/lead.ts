@@ -23,6 +23,7 @@ type ProductRow = {
   template: Template
   slug: string
   status: string
+  visibility: string
   spec: { name?: string; promise?: string }
   price_kopecks: number
   topic_id: string | null
@@ -36,7 +37,7 @@ export function publicProductUrl(slug: string) {
 export function leadTopic(title: string) {
   const clean = title
     .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, '')
-    .replace(/\+?\d[\d\s()-]{8,}\d/g, '')
+    .replace(/\+?\d[\d\s().-]{7,}\d/g, (run) => (run.replace(/\D/g, '').length >= 9 ? '' : run))
     .trim()
   const match = requestText.exec(clean.toLowerCase())
   return (match ? clean.slice(match.index) : clean).trim().slice(0, 120)
@@ -44,7 +45,7 @@ export function leadTopic(title: string) {
 
 async function loadProduct(id: string) {
   const [row] = await query<ProductRow>(
-    `SELECT p.id,p.template,p.slug,p.status,p.spec,p.price_kopecks,i.topic_id
+    `SELECT p.id,p.template,p.slug,p.status,p.visibility,p.spec,p.price_kopecks,i.topic_id
      FROM products p LEFT JOIN ideas i ON i.id=p.idea_id WHERE p.id=$1`,
     [id],
   )
@@ -143,7 +144,8 @@ export async function lead(job: Job) {
   if (job.payload.opportunityId) return leadDraft(job)
   const product = await loadProduct(job.payload.productId || '')
   if (!product) throw new Error('INPUT_PRODUCT_UNKNOWN')
-  if (product.status !== 'sandbox') return
+  // Replies point buyers at the product page: only products on the storefront qualify.
+  if (product.status !== 'sandbox' || product.visibility !== 'public') return
   templateSchema.parse(product.template)
   const reservationId = await reserveBudget(`lead:${job.id}`, 'lead')
   const evidence = await search(product.template, `${job.id}:customers`, reservationId, 'customers')
@@ -199,10 +201,16 @@ async function leadDraft(job: Job) {
   const productId =
     item.product_id ||
     (
-      await query("SELECT id FROM products WHERE template=$1 AND status='sandbox'", [item.template])
+      await query(
+        `SELECT id FROM products WHERE template=$1 AND status='sandbox' AND visibility='public'
+         ORDER BY published_at DESC NULLS LAST,id LIMIT 1`,
+        [item.template],
+      )
     )[0]?.id
   const product = productId ? await loadProduct(productId) : undefined
   if (!product) throw new Error('INPUT_PRODUCT_UNKNOWN')
+  if (product.status !== 'sandbox' || product.visibility !== 'public')
+    throw new Error('INPUT_PRODUCT_NOT_PUBLIC')
   const reservationId = await reserveBudget(`lead:${job.id}`, 'lead')
   const ok = await draftReply(job, reservationId, product, item as any)
   if (!ok)

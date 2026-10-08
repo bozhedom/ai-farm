@@ -502,6 +502,9 @@ export async function setProductVisibility(id: string, value: unknown) {
     if (!product) throw new Error('PRODUCT_NOT_FOUND')
     if (input.visibility === 'public' && product.status !== 'sandbox')
       throw new Error('PRODUCT_ARCHIVED')
+    // Demo output never goes on a storefront that runs a real model.
+    if (input.visibility === 'public' && product.is_demo && config().MODEL_PROVIDER !== 'demo')
+      throw new Error('PRODUCT_DEMO_ONLY')
     if (product.visibility === input.visibility) return
     await query(
       `UPDATE products SET visibility=$2,
@@ -730,8 +733,20 @@ export async function officeLeads(filter: unknown = {}): Promise<OfficeLeadList>
 export async function requestLeadDraft(id: string) {
   if (!z.uuid().safeParse(id).success) throw new Error('OPPORTUNITY_NOT_FOUND')
   return transaction(async (db) => {
-    const [lead] = await query('SELECT id FROM opportunities WHERE id=$1 FOR UPDATE', [id], db)
+    const [lead] = await query(
+      'SELECT id,product_id,template FROM opportunities WHERE id=$1 FOR UPDATE',
+      [id],
+      db,
+    )
     if (!lead) throw new Error('OPPORTUNITY_NOT_FOUND')
+    // A reply links to the product page, so the product must be on the storefront.
+    const [product] = await query(
+      `SELECT id FROM products WHERE status='sandbox' AND visibility='public'
+       AND (id=$1 OR ($1::uuid IS NULL AND template=$2)) LIMIT 1`,
+      [lead.product_id, lead.template],
+      db,
+    )
+    if (!product) throw new Error('PRODUCT_NOT_PUBLIC')
     const jobs = await query(
       'SELECT id,status FROM jobs WHERE dedupe_key LIKE $1 ORDER BY created_at',
       [`lead-draft:${id}:%`],

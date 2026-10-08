@@ -15,6 +15,7 @@ import {
   type StrategyRow,
 } from './agents'
 import { enqueue } from './queue'
+import { plural } from './activity-feed'
 import type { EvolutionStatus, ScoreComponent } from './contracts/office'
 
 export type Score = {
@@ -277,12 +278,17 @@ export function selectionReadiness(
   if (scored.length !== POLICY.maxStrategies)
     return hold('Для отбора нужны ровно четыре активных разведчика.')
   if (rotated) return hold('В этом поколении отбор уже был.')
-  if (missing.length) return hold(`Ждём данных: нужно по ${minIdeas} идей у каждого разведчика.`)
-  const gap = scored[1]!.total - scored[2]!.total
-  if (gap < POLICY.evolution.minGapMilli)
+  if (missing.length)
     return hold(
-      `Разрыв между вторым и третьим ${Math.floor(gap / 10)} пунктов, нужно не меньше ${POLICY.evolution.minGapMilli / 10}.`,
+      `Ждём данных: нужно не меньше ${minIdeas} ${minIdeas === 1 ? 'идеи' : 'идей'} у каждого разведчика.`,
     )
+  const gap = scored[1]!.total - scored[2]!.total
+  if (gap < POLICY.evolution.minGapMilli) {
+    const points = Math.floor(gap / 10)
+    return hold(
+      `Разрыв между вторым и третьим ${points} ${plural(points, 'пункт', 'пункта', 'пунктов')}, нужно не меньше ${POLICY.evolution.minGapMilli / 10}.`,
+    )
+  }
   return { ready: true, reason: 'Данных достаточно, можно проводить отбор.', missing: [] }
 }
 
@@ -586,9 +592,9 @@ export async function maybeScheduleEvolution(db: Connection, day: string) {
   if (counts!.n >= state.evolution_rounds_per_day) return null
   const ready = await query(
     `SELECT s.id,count(i.id)::int AS n FROM strategies s
-     LEFT JOIN ideas i ON i.strategy_id=s.id AND i.generation=$1
+     LEFT JOIN ideas i ON i.strategy_id=s.id AND i.generation=$1 AND ($2 OR NOT i.is_demo)
      WHERE s.status='active' GROUP BY s.id`,
-    [state.generation],
+    [state.generation, config().MODEL_PROVIDER === 'demo'],
     db,
   )
   if (

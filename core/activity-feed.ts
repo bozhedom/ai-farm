@@ -109,6 +109,11 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
         '/office/products',
       )
     case 'product_updated':
+      if (d.hidden)
+        return item(
+          `Новая версия продукта «${cleanText(d.name)}» готова. На сайте он скрыт по вашему решению.`,
+          '/office/products',
+        )
       if (d.ideaId) return []
       return item(`Вышла новая версия продукта «${templateLabel(d.template)}».`, '/office/products')
     case 'product_visibility':

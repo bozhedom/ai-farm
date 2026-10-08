@@ -50,6 +50,36 @@ describe('quality score', () => {
     expect(Number.isInteger(full.total)).toBe(true)
   })
 
+  it('does not punish executable ideas that still wait for their product check', () => {
+    // Two accepted executable ideas, no check finished yet: B does not apply.
+    const waiting = scoreStrategies([
+      metrics('w', { passed: 6, executablePassed: 0, builtPassed: 0 }),
+    ])[0]!
+    const human = scoreStrategies([metrics('h', { passed: 6 })])[0]!
+    expect(waiting.components.B).toBeNull()
+    expect(waiting.total).toBe(human.total)
+    const failed = scoreStrategies([
+      metrics('f', { passed: 6, executablePassed: 2, builtPassed: 0 }),
+    ])[0]!
+    expect(failed.components.B).toBe(0)
+  })
+
+  it('writes counts in correct Russian', () => {
+    const four = scoreStrategies(['a', 'b', 'c', 'd'].map((id) => metrics(id, { ideas: 1 })))
+    expect(selectionReadiness({ ...state, evolution_min_ideas: 2 }, four, false).reason).toBe(
+      'Ждём данных: нужно не меньше 2 идей у каждого разведчика.',
+    )
+    const close = scoreStrategies([
+      metrics('a', { passed: 6 }),
+      metrics('b', { passed: 5 }),
+      metrics('c', { passed: 5, duplicates: 1 }),
+      metrics('d', { passed: 0 }),
+    ])
+    expect(selectionReadiness(state, close, false).reason).toMatch(
+      /1 пункт,|2 пункта,|[05-9] пунктов,/,
+    )
+  })
+
   it('ranks by score, then the older agent wins a tie', () => {
     const ranked = scoreStrategies([
       metrics('copy', { createdAt: '2026-10-05T00:00:00.000Z' }),

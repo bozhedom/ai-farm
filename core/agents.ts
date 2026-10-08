@@ -240,7 +240,9 @@ export type AgentMetrics = {
   duplicates: number
   /** Sum over ideas of min(1000, 1000 * domains / 3). */
   sourceMilli: number
+  /** Accepted executable ideas whose product check has finished (passed or not). */
   executablePassed: number
+  /** Of those, checks that passed. Ideas still waiting for research are not counted. */
   builtPassed: number
   costKopecks: number
   reserveKopecks: number
@@ -270,22 +272,26 @@ export async function agentMetrics(
   db: Connection = pool,
 ): Promise<AgentMetrics[]> {
   if (!strategyIds.length) return []
+  // Demo ideas score agents only on a demo stand; real agents are never judged by them.
+  const includeDemo = config().MODEL_PROVIDER === 'demo'
   const [strategies, ideas, built, costs, orders] = await inOrder([
     () => query(`SELECT id,created_at FROM strategies WHERE id=ANY($1::uuid[])`, [strategyIds], db),
     () =>
       query(
         `SELECT id,strategy_id,critique->>'verdict' AS verdict,duplicate_of,farm_executable,
         research->'demandSignals' AS signals
-       FROM ideas WHERE generation=$1 AND strategy_id=ANY($2::uuid[])`,
-        [generation, strategyIds],
+       FROM ideas WHERE generation=$1 AND strategy_id=ANY($2::uuid[]) AND ($3 OR NOT is_demo)`,
+        [generation, strategyIds, includeDemo],
         db,
       ),
     () =>
       query(
-        `SELECT DISTINCT i.id,i.strategy_id FROM ideas i JOIN hypotheses h ON h.idea_id=i.id
-       WHERE i.generation=$1 AND i.strategy_id=ANY($2::uuid[]) AND h.status IN ('accepted','backlog')
-       AND i.farm_executable AND i.critique->>'verdict'='PASS'`,
-        [generation, strategyIds],
+        `SELECT i.id,i.strategy_id,bool_or(h.status IN ('accepted','backlog')) AS passed
+       FROM ideas i JOIN hypotheses h ON h.idea_id=i.id
+       WHERE i.generation=$1 AND i.strategy_id=ANY($2::uuid[]) AND ($3 OR NOT i.is_demo)
+       AND i.farm_executable AND i.critique->>'verdict'='PASS'
+       GROUP BY i.id,i.strategy_id`,
+        [generation, strategyIds, includeDemo],
         db,
       ),
     () =>
@@ -328,8 +334,8 @@ export async function agentMetrics(
       passed: own.filter((i) => i.verdict === 'PASS').length,
       duplicates: own.filter((i) => i.duplicate_of).length,
       sourceMilli,
-      executablePassed: own.filter((i) => i.verdict === 'PASS' && i.farm_executable).length,
-      builtPassed: built.filter((b) => b.strategy_id === s.id).length,
+      executablePassed: built.filter((b) => b.strategy_id === s.id).length,
+      builtPassed: built.filter((b) => b.strategy_id === s.id && b.passed).length,
       costKopecks: (costs.find((c) => c.strategy_id === s.id)?.cost as number | undefined) ?? 0,
       reserveKopecks: reserve,
       delivered: (order?.delivered as number | undefined) ?? 0,
