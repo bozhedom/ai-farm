@@ -39,6 +39,20 @@ const schema = z.object({
   DAILY_BUDGET_KOPECKS: positive(15000),
   ORDER_RESERVE_KOPECKS: positive(4000),
   RESEARCH_RESERVE_KOPECKS: positive(10000),
+  // Conditional test rate: whole rubles per 1 test ETH. Not a market rate; test ETH is never revenue.
+  TEST_ETH_RUB_RATE: positive(300000).refine((n) => n <= 1000000000),
+  // The worker may find Sepolia transfers to SEPOLIA_RECEIVER by scanning new blocks.
+  SEPOLIA_SCAN_ENABLED: flag.default(true),
+  PUBLIC_SELLER: z.string().trim().max(200).default(''),
+  PUBLIC_CONTACT: z.string().trim().max(200).default(''),
+  PUBLIC_TERMS_URL: z.string().trim().default(''),
+  PUBLIC_ORDERS_PER_DAY: z.coerce.number().int().min(0).max(1000).default(30),
+  PUBLIC_INDEXING: flag.default(false),
+  SCOUT_RESERVE_KOPECKS: positive(3000),
+  LEAD_RESERVE_KOPECKS: positive(2000),
+  REPORT_RESERVE_KOPECKS: positive(2000),
+  LEAD_DRAFTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(3),
+  IDEA_PRODUCTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(2),
   AUTONOMY_ENABLED: flag.default(true),
   POLL_INTERVAL_MS: positive(5000),
 })
@@ -79,6 +93,14 @@ export function config(): Config {
       throw new Error('SEPOLIA_RECEIVER_REQUIRED')
     if (!c.SEPOLIA_RPC_URL.startsWith('https://')) throw new Error('HTTPS_RPC_REQUIRED')
   }
+  if (c.PUBLIC_TERMS_URL) {
+    const terms = URL.canParse(c.PUBLIC_TERMS_URL) ? new URL(c.PUBLIC_TERMS_URL) : null
+    if (terms?.protocol !== 'https:' || terms.username || terms.password)
+      throw new Error('PUBLIC_TERMS_URL_INVALID')
+  }
+  // Search engines may index the public site only after the seller details and terms exist.
+  if (c.PUBLIC_INDEXING && (!c.PUBLIC_SELLER || !c.PUBLIC_CONTACT || !c.PUBLIC_TERMS_URL))
+    throw new Error('PUBLIC_INDEXING_REQUIRES_SELLER_TERMS')
   if (new URL(c.APP_ORIGIN).protocol === 'https:' && !c.SECURE_COOKIE)
     throw new Error('HTTPS_REQUIRES_SECURE_COOKIE')
   cached = c
