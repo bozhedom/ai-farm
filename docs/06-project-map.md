@@ -40,6 +40,7 @@
 - `core/operations.ts`, `core/observation.ts` — готовность служб и расчёт непрерывных 48 часов по сохранённым измерениям; `scripts/observe.ts` — независимый минутный наблюдатель без ключей и модели.
 - `core/config.ts`, `core/db.ts`, `core/auth.ts`, `core/activity.ts` — конфигурация, БД, сессии и наблюдение за вызовами.
 - `prompts/master.md` — общие инструкции всех модельных ролей. Разрешения и действия контролирует сервер.
+- Ферма ([19-farm-cycle.md](19-farm-cycle.md), [20-evolution.md](20-evolution.md)): `core/taxonomy.ts` (отрасли, темы, поисковые фразы), `core/ideas.ts` (отпечаток, повторы, балл, статусы), `core/agents.ts` (параметры, имена «Разведчик А2», метрики), `core/evolution.ts` (балл и раунд отбора), `core/jobs/{scout,report,lead,evolve}.ts`, расписание в `core/autonomy.ts`, лента в `core/activity-feed.ts`, данные кабинета в `core/office.ts` и `server/api/office/**`, подготовка показа `scripts/demo-prepare.ts`.
 
 - `core/storefront.ts` — серверный список цен (`priceList`, `priceIds`), цены типов услуг по умолчанию, `publicSlug`, `publicServiceProjection`, рубли и wei без плавающей точки.
 - `core/contracts/` — общие типы API: `common.ts`, `public.ts` (покупатель), `office.ts` (кабинет).

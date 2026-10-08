@@ -3,6 +3,7 @@ import type {
   OfficeAgents,
   OfficeIdea,
   OfficeIdeaList,
+  OfficeJournal,
   OfficeLead,
   OfficeMoney,
   OfficeOrderSummary,
@@ -160,7 +161,7 @@ export function useOfficeOrders() {
   return { ...resource, data: shown, more: () => (pages.value += 1) }
 }
 
-/** Leads come from `/api/opportunities`; older rows without drafts are normalised to `OfficeLead`. */
+/** Leads come from `/api/office/leads` (slice B); snake_case rows are still normalised. */
 function toLead(raw: Record<string, unknown>): OfficeLead {
   const pick = <T>(camel: string, snake: string, fallback: T): T =>
     (raw[camel] ?? raw[snake] ?? fallback) as T
@@ -187,7 +188,7 @@ export function useOfficeLeads() {
   const resource = useOfficeResource(
     () => `leads:${pages.value}`,
     () =>
-      pagedFetch<Record<string, unknown>>('/api/opportunities', {}, pages.value).then((page) => ({
+      pagedFetch<Record<string, unknown>>('/api/office/leads', {}, pages.value).then((page) => ({
         ...page,
         items: page.items.map(toLead),
       })),
@@ -291,7 +292,7 @@ export function useReadiness() {
   )
 }
 
-/** Technical journal. Until the office API has its own journal it reads the old dashboard. */
+/** Technical journal from `/api/office/journal`: events and jobs in plain words. */
 export type Journal = {
   audit: { id: number | string; message: string; created_at: string }[]
   jobs: {
@@ -308,9 +309,18 @@ export function useJournal(enabled: Ref<boolean>) {
   return useOfficeResource(
     () => (enabled.value ? 'journal' : null),
     () =>
-      officeFetch<Partial<Journal>>('/api/dashboard').then((raw) => ({
-        audit: Array.isArray(raw.audit) ? raw.audit.slice(0, 50) : [],
-        jobs: Array.isArray(raw.jobs) ? raw.jobs.slice(0, 20) : [],
+      officeFetch<Partial<OfficeJournal>>('/api/office/journal').then((raw) => ({
+        audit: (raw.events ?? [])
+          .slice(0, 50)
+          .map((event) => ({ id: event.id, message: event.text, created_at: event.at })),
+        jobs: (raw.jobs ?? []).slice(0, 20).map((job) => ({
+          id: job.id,
+          kind: job.kind,
+          status: job.status,
+          attempts: job.attempts,
+          error_code: job.error,
+          created_at: job.createdAt,
+        })),
       })),
     { interval: 10000 },
   )

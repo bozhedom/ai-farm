@@ -19,7 +19,12 @@ export const opportunityUpdateSchema = z
   .strict()
 
 /** Store only public search snippets. A result is a candidate, never a verified customer. */
-export async function saveOpportunities(jobId: string, template: Template, evidence: Evidence[]) {
+export async function saveOpportunities(
+  jobId: string,
+  template: Template,
+  evidence: Evidence[],
+  productId: string | null = null,
+) {
   templateSchema.parse(template)
   const candidates = evidence.slice(0, 6).flatMap((item) => {
     if (!safeSourceUrl(item.url)) return []
@@ -37,7 +42,10 @@ export async function saveOpportunities(jobId: string, template: Template, evide
     const redact = (text: string) =>
       text
         .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, '[контакт в источнике]')
-        .replace(/(?:\+\d[\d ()-]{8,}\d)/g, '[контакт в источнике]')
+        // Any phone-like run of nine digits or more: +7, 8 (999), dots and dashes.
+        .replace(/\+?\d[\d\s().-]{7,}\d/g, (run) =>
+          run.replace(/\D/g, '').length >= 9 ? '[контакт в источнике]' : run,
+        )
     const title = redact(item.title).slice(0, 300).trim()
     const snippet = redact(item.snippet).slice(0, 1000).trim()
     if (!title || !snippet) return []
@@ -47,15 +55,16 @@ export async function saveOpportunities(jobId: string, template: Template, evide
     let saved = 0
     for (const item of candidates) {
       const rows = await query(
-        `INSERT INTO opportunities(id,template,url,title,snippet,is_demo,first_job_id,last_job_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$7)
+        `INSERT INTO opportunities(id,template,url,title,snippet,is_demo,first_job_id,last_job_id,product_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8)
          ON CONFLICT(template,url,is_demo) DO UPDATE SET
-           title=EXCLUDED.title,snippet=EXCLUDED.snippet,last_seen_at=now(),last_job_id=EXCLUDED.last_job_id
+           title=EXCLUDED.title,snippet=EXCLUDED.snippet,last_seen_at=now(),last_job_id=EXCLUDED.last_job_id,
+           product_id=COALESCE(opportunities.product_id,EXCLUDED.product_id)
          WHERE opportunities.last_job_id<>EXCLUDED.last_job_id
            AND (SELECT (created_at,id) FROM jobs WHERE id=opportunities.last_job_id)
              < (SELECT (created_at,id) FROM jobs WHERE id=EXCLUDED.last_job_id)
          RETURNING id`,
-        [randomUUID(), template, item.url, item.title, item.snippet, item.demo, jobId],
+        [randomUUID(), template, item.url, item.title, item.snippet, item.demo, jobId, productId],
         db,
       )
       saved += rows.length
@@ -64,7 +73,7 @@ export async function saveOpportunities(jobId: string, template: Template, evide
       await audit(
         'opportunities_discovered',
         'Найдены потенциальные запросы на услуги. Актуальность и интерес заказчиков требуют проверки.',
-        { jobId, template, saved, demo: candidates.every((item) => item.demo) },
+        { jobId, template, saved, productId, demo: candidates.every((item) => item.demo) },
         db,
       )
     return saved
@@ -121,7 +130,8 @@ export async function opportunityList(filter: z.input<typeof opportunityListSche
   const condition = 'WHERE ($1::text IS NULL OR stage=$1) AND ($2::text IS NULL OR template=$2)'
   const [items, totals] = await Promise.all([
     query(
-      `SELECT id,template,url,title,snippet,is_demo,stage,note,first_seen_at,last_seen_at
+      `SELECT id,template,url,title,snippet,is_demo,stage,note,first_seen_at,last_seen_at,
+        product_id,reply_draft,reply_drafted_at,reply_error
       FROM opportunities ${condition} ORDER BY CASE stage WHEN 'new' THEN 0 WHEN 'saved' THEN 1
       WHEN 'contacted' THEN 2 WHEN 'won' THEN 3 ELSE 4 END,last_seen_at DESC,id LIMIT $3 OFFSET $4`,
       [...values, limit, input.offset],

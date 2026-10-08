@@ -34,7 +34,7 @@ describe('bounded service catalog', () => {
     expect(templates).toBe(serviceTemplates)
     expect(serviceCatalog.map((item) => item.id)).toEqual(serviceTemplates)
     expect(POLICY).toEqual({
-      version: 'v2',
+      version: 'v3',
       maxProducts: 12,
       maxStrategies: 4,
       scheduledResearchPerDay: 1,
@@ -44,6 +44,9 @@ describe('bounded service catalog', () => {
       maxAttempts: 3,
       chainId: 11155111,
       productionPayments: false,
+      evolution: { archiveShare: 0.5, minGapMilli: 50, defaultMinIdeas: 6 },
+      maxIdeasPerDay: 24,
+      maxLeadDraftsPerDay: 12,
     })
   })
 

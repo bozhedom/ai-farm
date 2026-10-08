@@ -8,7 +8,7 @@ import { scheduleWork } from '../core/autonomy'
 import { setTimeout as pause } from 'node:timers/promises'
 
 let stopping = false
-let researchBusy = false
+let farmBusy = false
 let ordersBusy = false
 let paymentsBusy = false
 let unavailableProviders = ''
@@ -22,9 +22,9 @@ process.on('SIGTERM', signal)
 process.on('SIGINT', signal)
 
 const isStopping = () => stopping
-function launch(job: Job, lane: 'orders' | 'research') {
+function launch(job: Job, lane: 'orders' | 'farm') {
   if (lane === 'orders') ordersBusy = true
-  else researchBusy = true
+  else farmBusy = true
   const promise = executeWorkerJob(job, {
     isStopping,
     onHeartbeatError: () => {
@@ -41,7 +41,7 @@ function launch(job: Job, lane: 'orders' | 'research') {
     .finally(() => {
       running.delete(promise)
       if (lane === 'orders') ordersBusy = false
-      else researchBusy = false
+      else farmBusy = false
     })
   running.add(promise)
 }
@@ -49,7 +49,7 @@ function launch(job: Job, lane: 'orders' | 'research') {
 await audit(
   'worker_started',
   config().AUTONOMY_ENABLED
-    ? 'Worker запущен. Расписание и обработка заказов включены.'
+    ? 'Worker запущен. Расписание фермы и обработка заказов включены.'
     : 'Worker запущен. Расписание выключено; выполняются ручные задания и принятые заказы.',
 )
 while (!stopping) {
@@ -90,12 +90,16 @@ while (!stopping) {
       const job = await claimWorkerJob(['fulfill'], isStopping)
       if (job) launch(job, 'orders')
     }
-    if (!researchBusy) {
-      // Financial HOLD/window expiry needs neither a model nor a working search provider.
+    if (!farmBusy) {
+      // Three lanes: orders, farm and payment reconciliation. The farm lane runs one job at a
+      // time. Financial HOLD, window expiry and the quality selection need neither a model nor
+      // search; reports, research, scouting and leads wait for both.
       const job =
-        (await claimWorkerJob(['evaluate'], isStopping)) ||
-        (ready.model && ready.search ? await claimWorkerJob(['research'], isStopping) : undefined)
-      if (job) launch(job, 'research')
+        (await claimWorkerJob(['evaluate', 'evolve'], isStopping)) ||
+        (ready.model && ready.search
+          ? await claimWorkerJob(['report', 'research', 'scout', 'lead'], isStopping)
+          : undefined)
+      if (job) launch(job, 'farm')
     }
     if (stopping) break
     await query(

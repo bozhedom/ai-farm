@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pool, query, transaction } from '../core/db'
+import { ensureStrategyParams } from '../core/agents'
 
 await transaction(async (db) => {
   await query('SELECT pg_advisory_xact_lock(735091)', [], db)
@@ -31,5 +32,7 @@ await transaction(async (db) => {
       )
     }
   }
+  // Server-owned agent parameters (policy v3); existing approach text is kept.
+  await ensureStrategyParams(db)
 })
 await pool.end()

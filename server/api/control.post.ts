@@ -2,7 +2,6 @@ import { defineEventHandler } from 'h3'
 import { z } from 'zod'
 import { audit, query, transaction } from '../../core/db'
 import { enqueue, requestResearch } from '../../core/queue'
-import { simulateEvolution } from '../../core/evolution'
 import { templateSchema } from '../../core/policy'
 import { body, respond } from '../utils/api'
 import { setResearchScope, setSchedule } from '../../core/autonomy'
@@ -31,9 +30,6 @@ export default defineEventHandler((event) =>
             ]),
           })
           .strict(),
-        z
-          .object({ action: z.literal('simulate'), generation: z.number().int().positive() })
-          .strict(),
       ]),
     )
     if (input.action === 'research') return requestResearch(input.template)
@@ -44,7 +40,6 @@ export default defineEventHandler((event) =>
       return setSchedule(input.action === 'schedule_on')
     if (input.action === 'evaluate')
       return enqueue('evaluate', `evaluate:${Math.floor(Date.now() / (7 * 86400000))}`)
-    if (input.action === 'simulate') return simulateEvolution(input.generation)
     if (input.action === 'restart_research')
       return transaction(async (db) => {
         await query(

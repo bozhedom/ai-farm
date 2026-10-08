@@ -54,6 +54,12 @@ const now = computed(() => {
       detail: 'Начатые заказы доделываем, новые поиски ждут.',
       live: false,
     }
+  if (v.now)
+    return {
+      title: v.now.title,
+      detail: `${v.now.detail} Шаг ${v.now.step} из ${v.now.steps}.`,
+      live: true,
+    }
   const latest = v.feed[0]
   const fresh = latest && clock.value.getTime() - new Date(latest.at).getTime() < 15 * 60000
   if (fresh)

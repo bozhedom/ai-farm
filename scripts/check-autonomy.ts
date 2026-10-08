@@ -218,7 +218,9 @@ async function assertSingleDelivery(id: string) {
 
 try {
   await query(
-    "UPDATE system_state SET mode='running',research_enabled=true,schedule_enabled=true,research_scope='all' WHERE id=true",
+    // The portfolio scenario measures research alone; the farm day is checked separately below.
+    `UPDATE system_state SET mode='running',research_enabled=true,schedule_enabled=true,research_scope='all',
+     scouts_per_strategy_per_day=0,leads_per_day=0 WHERE id=true`,
   )
   const workers = [start('worker/index.ts'), start('worker/index.ts')]
   await waitFor(
@@ -250,6 +252,42 @@ try {
     sources: 24,
     evaluations: 1,
   })
+
+  // Farm day with two real workers: scouting, report, idea research with publication, leads.
+  await query('UPDATE system_state SET scouts_per_strategy_per_day=1,leads_per_day=2 WHERE id=true')
+  const farmWorkers = [start('worker/index.ts'), start('worker/index.ts')]
+  await waitFor(
+    'FARM_DAY',
+    async () => {
+      const [farm] = await query(
+        `SELECT (SELECT count(*)::int FROM manager_reports WHERE kind='daily') AS reports,
+          (SELECT count(*)::int FROM jobs WHERE kind='lead' AND status='done') AS leads,
+          (SELECT count(*)::int FROM jobs WHERE kind IN ('scout','report','research','lead','evolve')
+             AND status IN ('queued','running')) AS open`,
+      )
+      return farm!.reports === 1 && farm!.leads > 0 && farm!.open === 0
+    },
+    60000,
+  )
+  await Promise.all(farmWorkers.map((worker) => stop(worker)))
+  const [day] = await query(
+    `SELECT (SELECT count(*)::int FROM ideas) AS ideas,
+       (SELECT count(DISTINCT topic_id)::int FROM ideas) AS topics,
+       (SELECT count(*)::int FROM jobs WHERE kind='scout') AS scouts,
+       (SELECT count(*)::int FROM jobs WHERE kind='scout' AND status='failed') AS failed_scouts,
+       (SELECT count(*)::int FROM products WHERE visibility='public' AND idea_id IS NOT NULL) AS public_products,
+       (SELECT count(*)::int FROM opportunities WHERE product_id IS NOT NULL) AS leads,
+       (SELECT count(*)::int FROM opportunities WHERE reply_draft IS NOT NULL) AS drafts`,
+  )
+  assert.equal(day!.scouts, 4)
+  assert.equal(day!.failed_scouts, 0)
+  assert.equal(day!.ideas, 4)
+  assert.equal(day!.topics, 4)
+  assert.ok(day!.public_products >= 1)
+  assert.ok(day!.leads >= 1)
+  assert.ok(day!.drafts >= 1)
+  await query('UPDATE system_state SET scouts_per_strategy_per_day=0,leads_per_day=0 WHERE id=true')
+  passed('farm_day_two_workers', day!)
 
   await query('UPDATE system_state SET schedule_enabled=false WHERE id=true')
   const orders: string[] = []
@@ -389,7 +427,7 @@ try {
       {
         run,
         checkedAt: new Date().toISOString(),
-        complete: results.length === 6,
+        complete: results.length === 7,
         note: 'Real worker processes and database; synthetic demo and localhost HTTP fixtures, sandbox payments. No real model quality, sales, cloud availability or 48-hour uptime claim.',
         results,
       },

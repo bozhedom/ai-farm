@@ -62,7 +62,7 @@ const ideaPrice = (agent: OfficeAgent) =>
 const focus = (agent: OfficeAgent) =>
   agent.parentId
     ? `Копия ${agentShort(nameOf(agent.parentId))}: ${mutationText(agent.mutation)}`
-    : agent.params.focusCategories.join(', ')
+    : (agent.focusLabels ?? agent.params.focusCategories).join(', ')
 
 const generations = computed(() => {
   const groups = new Map<number, OfficeAgent[]>()

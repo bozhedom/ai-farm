@@ -18,6 +18,7 @@
     "test:integration": "node --env-file=.env node_modules/vitest/vitest.mjs run tests/integration --maxWorkers=1",
     "test:e2e:office": "playwright test -c tests/e2e/playwright.config.ts",
     "test:autonomy": "node --env-file=.env --import tsx scripts/check-autonomy.ts",
+    "demo:prepare": "node --env-file=.env --import tsx scripts/demo-prepare.ts",
     "test:crypto": "node scripts/test-crypto.mjs",
     "anvil:pay": "node --env-file-if-exists=.env scripts/anvil-pay.mjs",
     "format": "prettier --write .",

@@ -8,6 +8,7 @@ import type {
   OfficeMode,
   ScoreComponent,
 } from '../../../core/contracts/office'
+import { categoryById } from '../../../core/taxonomy'
 
 /** Badge tones from the design system: `.badge-<tone>`, `.dot.<tone>`, `.bar.is-<tone>`. */
 export type Tone = 'ok' | 'wait' | 'err' | 'off' | 'copy' | 'test' | 'human' | 'sun' | 'plain'
@@ -141,7 +142,7 @@ const paramValue = (value: unknown): string =>
   Array.isArray(value)
     ? value.map(paramValue).join(', ')
     : typeof value === 'string'
-      ? valueLabels[value] || value
+      ? valueLabels[value] || categoryById[value]?.label || value
       : String(value ?? '')
 
 /** «тон: экспертный (раньше простой)». */
