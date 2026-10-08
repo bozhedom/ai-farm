@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Template } from '../../../core/policy'
 const { state: d, failure } = useFarm()
+const { services, serviceLabel, productLink, researchBlockedReason } = useServiceCatalog()
 defineProps<{ busy: boolean }>()
 const emit = defineEmits<{ control: [action: string] }>()
 const researchTemplate = useState<Template | ''>('research-template', () => '')
@@ -49,7 +50,7 @@ const steps = computed(() => [
   {
     title: 'Проверяет и собирает',
     text: 'Оценивает идею, создаёт услугу и проверяет пример текста.',
-    count: `Готово услуг: ${products.value.length} из 3`,
+    count: `Готово услуг: ${products.value.length} из ${d.value.config.maxProducts}`,
     to: '/catalog',
   },
   {
@@ -110,13 +111,13 @@ const steps = computed(() => [
           <label class="sr-only" for="home-template">Направление исследования</label>
           <select id="home-template" v-model="researchTemplate" :disabled="busy || !!failure">
             <option value="">Выбрать идею автоматически</option>
-            <option value="description">Описание товара</option>
-            <option value="faq">Вопросы и ответы</option>
-            <option value="social">Короткие публикации</option>
+            <option v-for="service in services" :key="service.id" :value="service.id">
+              {{ service.label }}
+            </option>
           </select>
           <button
             class="button primary"
-            :disabled="busy || !!failure || !d.autonomy.workerAlive"
+            :disabled="busy || !!researchBlockedReason"
             @click="emit('control', 'research')"
           >
             {{ busy ? 'Запускаем…' : 'Проверить идею' }}
@@ -131,10 +132,20 @@ const steps = computed(() => [
           Пауза
         </button>
       </div>
+      <p v-if="!stopped && researchBlockedReason && !active" class="muted small-text">
+        {{ researchBlockedReason }}
+      </p>
     </div>
     <div class="schedule-box">
       <strong>Автозапуск {{ d.autonomy.enabled ? 'включён' : 'выключен' }}</strong>
-      <p>Одно исследование в день. Заказы выполняются по мере оплаты.</p>
+      <p>
+        {{
+          d.state.research_scope === 'all'
+            ? 'Все направления раз в сутки, последовательно.'
+            : 'Одно направление в день, по очереди.'
+        }}
+        Заказы выполняются по мере оплаты.
+      </p>
       <button
         class="quiet"
         :disabled="busy || !!failure || !d.autonomy.allowed"
@@ -146,6 +157,21 @@ const steps = computed(() => [
         Разрешите автозапуск в настройках сервера.
       </p>
     </div>
+  </section>
+
+  <section class="panel portfolio-summary">
+    <div>
+      <h2>{{ services.length }} направлений, один рабочий цикл</h2>
+      <p>
+        Исследуйте весь набор задач: для каждой сохранится идея, решение критика и результат
+        проверки.
+      </p>
+    </div>
+    <NuxtLink class="button secondary" to="/?view=directions">{{
+      d.researchCampaign?.status === 'running'
+        ? 'Прогресс всех направлений →'
+        : 'Выбрать направления →'
+    }}</NuxtLink>
   </section>
 
   <div
@@ -184,12 +210,17 @@ const steps = computed(() => [
         Пока нет готовых услуг. Запустите проверку идеи. Если она пройдёт проверку, здесь появится
         форма заказа.
       </div>
-      <NuxtLink v-for="product in products" :key="product.id" to="/catalog" class="ready-service">
+      <NuxtLink
+        v-for="product in products"
+        :key="product.id"
+        :to="productLink(product.id)"
+        class="ready-service"
+      >
         <span class="service-symbol" aria-hidden="true">{{
-          product.template === 'description' ? 'Aa' : product.template === 'faq' ? '?' : '¶'
+          serviceLabel(product.template).slice(0, 1)
         }}</span>
         <div>
-          <strong>{{ labels[product.template] }}</strong>
+          <strong>{{ serviceLabel(product.template) }}</strong>
           <p>
             {{ product.delivery }}
           </p>

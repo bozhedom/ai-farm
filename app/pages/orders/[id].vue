@@ -1,15 +1,20 @@
 <script setup lang="ts">
 const route = useRoute()
+const { productLink } = useServiceCatalog()
 const order = ref<any>(null),
   hash = ref(''),
   error = ref(''),
   connectionError = ref(''),
-  busy = ref(false)
+  busy = ref(false),
+  missing = ref(false),
+  loaded = ref(false),
+  resolutionReason = ref(''),
+  copyMessage = ref('')
 let loading = false,
   stopped = false
 let timer: ReturnType<typeof setInterval>
 async function load() {
-  if (loading || stopped) return
+  if (loading || stopped || missing.value) return
   loading = true
   const id = route.params.id
   try {
@@ -19,10 +24,18 @@ async function load() {
       connectionError.value = ''
     }
   } catch (e: any) {
-    if (e.statusCode === 401) await navigateTo('/login')
-    else connectionError.value = 'Не удалось обновить заказ. Показаны последние полученные данные.'
+    if (stopped || id !== route.params.id) return
+    if (e.statusCode === 401 || e.status === 401) await navigateTo('/login')
+    else if (e.statusCode === 404 || e.status === 404) {
+      missing.value = true
+      connectionError.value = ''
+    } else
+      connectionError.value = order.value
+        ? 'Не удалось обновить заказ. Показаны последние полученные данные.'
+        : 'Не удалось загрузить заказ. Проверьте соединение и повторите.'
   } finally {
     loading = false
+    if (!stopped && id === route.params.id) loaded.value = true
   }
 }
 onMounted(() => {
@@ -39,10 +52,16 @@ watch(
     order.value = null
     hash.value = ''
     error.value = ''
+    missing.value = false
+    loaded.value = false
+    connectionError.value = ''
+    resolutionReason.value = ''
+    copyMessage.value = ''
     void load()
   },
 )
 async function pay() {
+  if (busy.value) return
   busy.value = true
   error.value = ''
   try {
@@ -59,6 +78,31 @@ async function pay() {
     error.value = errorText(e)
   } finally {
     busy.value = false
+  }
+}
+async function resolve() {
+  if (busy.value || !order.value?.progress.canResolve) return
+  busy.value = true
+  error.value = ''
+  try {
+    await $fetch('/api/orders/' + route.params.id + '/resolve', {
+      method: 'POST',
+      body: { reason: resolutionReason.value.trim() },
+    })
+    await load()
+    resolutionReason.value = ''
+  } catch (e) {
+    error.value = errorText(e)
+  } finally {
+    busy.value = false
+  }
+}
+async function copyResult() {
+  try {
+    await navigator.clipboard.writeText(order.value.result)
+    copyMessage.value = 'Текст скопирован.'
+  } catch {
+    copyMessage.value = 'Копирование недоступно в этом браузере. Выделите текст или скачайте TXT.'
   }
 }
 const amount = computed(() => {
@@ -82,7 +126,12 @@ function download() {
     <div class="page-heading">
       <div>
         <div class="eyebrow">ТЕСТОВЫЙ ЗАКАЗ / {{ String(route.params.id).slice(0, 8) }}</div>
-        <h1>{{ order?.product_snapshot?.name || 'Загружаем заказ…' }}</h1>
+        <h1>
+          {{
+            order?.product_snapshot?.name ||
+            (missing ? 'Заказ не найден' : loaded ? 'Заказ недоступен' : 'Загружаем заказ…')
+          }}
+        </h1>
         <p>Тестовый заказ. Реальные деньги не списываются.</p>
       </div>
       <span
@@ -93,7 +142,13 @@ function download() {
       >
     </div>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
-    <p v-if="connectionError" class="notice error" role="alert">{{ connectionError }}</p>
+    <p v-if="connectionError" class="notice error" role="alert">
+      {{ connectionError }} <button class="quiet" @click="load">Повторить загрузку</button>
+    </p>
+    <div v-if="missing" class="panel empty large">
+      <p>По этой ссылке нет заказа. Проверьте адрес или найдите нужный заказ в истории.</p>
+      <NuxtLink class="button secondary" to="/?view=orders">Открыть все заказы</NuxtLink>
+    </div>
     <template v-if="order">
       <section class="panel" aria-label="Ход заказа">
         <div class="section-heading">
@@ -129,6 +184,44 @@ function download() {
             </div>
           </li>
         </ol>
+      </section>
+      <section v-if="order.progress.canResolve" class="panel resolve-panel">
+        <h2>Закрыть тестовое обязательство</h2>
+        <p>
+          Изучите причину остановки и зафиксируйте решение. Закрытие не выдаёт текст, не имитирует
+          возврат и не добавляет выручку. Исходный материал, ошибки и подтверждение тестовой оплаты
+          останутся в истории.
+        </p>
+        <form @submit.prevent="resolve">
+          <label for="resolution-reason">Причина закрытия</label
+          ><textarea
+            id="resolution-reason"
+            v-model="resolutionReason"
+            required
+            minlength="10"
+            maxlength="1000"
+            rows="3"
+            placeholder="Что проверили и почему закрываете этот тестовый заказ"
+            aria-describedby="resolution-help"
+          />
+          <p id="resolution-help" class="muted small-text">
+            От 10 до 1 000 символов. Сохранённая причина будет видна в заказе.
+          </p>
+          <button
+            class="button secondary"
+            :disabled="busy || !!connectionError || resolutionReason.trim().length < 10"
+          >
+            {{ busy ? 'Сохраняем…' : 'Закрыть тестовый заказ' }}
+          </button>
+        </form>
+      </section>
+      <section v-if="order.status === 'closed'" class="panel">
+        <h2>Решение владельца</h2>
+        <p class="preserve-text">{{ order.resolution_reason }}</p>
+        <p v-if="order.closed_at" class="muted small-text">
+          Закрыт {{ dateTime(order.closed_at) }} без выдачи результата. Реальная выручка не
+          менялась.
+        </p>
       </section>
       <div class="two-columns order-columns">
         <section class="panel">
@@ -246,11 +339,27 @@ function download() {
             <div class="eyebrow">ПРОВЕРКА ПРОЙДЕНА</div>
             <h2>Результат заказа</h2>
           </div>
-          <button class="button secondary" @click="download">Скачать TXT ↓</button>
+          <div class="inline-actions">
+            <button class="button secondary" @click="copyResult">Копировать текст</button
+            ><button class="button secondary" @click="download">Скачать TXT ↓</button>
+          </div>
         </div>
         <pre>{{ order.result }}</pre>
         <p class="muted small-text">{{ order.review?.reason }}</p>
+        <p v-if="copyMessage" role="status">{{ copyMessage }}</p>
       </section>
+      <div
+        v-if="['delivered', 'expired', 'closed'].includes(order.status)"
+        class="panel next-order"
+      >
+        <div>
+          <h2>{{ order.status === 'expired' ? 'Счёт истёк' : 'Попробовать другой материал' }}</h2>
+          <p>Новый заказ сохранит отдельный результат и актуальную версию услуги.</p>
+        </div>
+        <NuxtLink class="button primary" :to="productLink(order.product_id)"
+          >Создать новый заказ →</NuxtLink
+        >
+      </div>
     </template>
   </FarmShell>
 </template>

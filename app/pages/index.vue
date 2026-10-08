@@ -1,10 +1,22 @@
 <script setup lang="ts">
 import type { Template } from '../../core/policy'
-const { state: d, refresh } = useFarm()
+const { state: d, failure, refresh } = useFarm()
 const researchTemplate = useState<Template | ''>('research-template', () => '')
 const route = useRoute()
 const pages: Record<string, { title: string; description: string }> = {
   overview: { title: 'Обзор', description: 'Идеи, готовые услуги и результаты работы.' },
+  directions: {
+    title: 'Направления',
+    description: 'Задачи покупателей, поиск спроса и выпуск проверенных услуг.',
+  },
+  opportunities: {
+    title: 'Клиенты',
+    description: 'Открытые источники, потенциальные запросы и ваши следующие действия.',
+  },
+  guide: {
+    title: 'Как пользоваться',
+    description: 'От первой проверки идеи до результата заказа и подготовки продаж.',
+  },
   hypotheses: {
     title: 'Исследования',
     description: 'Что проверили, что получилось и почему отказались от идеи.',
@@ -34,30 +46,40 @@ async function control(action: string, template?: Template) {
   try {
     const response = await $fetch<any>('/api/control', {
       method: 'POST',
-      body:
-        action === 'simulate'
+      body: action.startsWith('research_scope:')
+        ? { action: 'research_scope', scope: action.split(':')[1] }
+        : action === 'simulate'
           ? { action, generation: d.value.state.generation }
           : action === 'research'
             ? { action, template: template || researchTemplate.value || undefined }
-            : { action },
+            : action === 'cancel_research_all'
+              ? { action, campaignId: d.value.researchCampaign?.id }
+              : { action },
     })
     await refresh()
-    message.value =
-      action === 'research'
-        ? response.reused
-          ? 'Это исследование уже запущено. Следите за ним в разделе «Исследования».'
-          : 'Идея поставлена на проверку. Ход работы появится в разделе «Исследования».'
-        : (
-            {
-              running: 'Работа возобновлена.',
-              paused: 'Новые задачи на паузе. Принятые заказы выполняются.',
-              emergency_stop: 'Новые обращения к модели остановлены.',
-              schedule_on: 'Автозапуск включён.',
-              schedule_off: 'Автозапуск выключен.',
-              restart_research: 'Начат новый эксперимент. История сохранена.',
-              simulate: 'Две стратегии заменены на учебных данных. Деньги не учитывались.',
-            } as Record<string, string>
-          )[action] || 'Изменения сохранены.'
+    message.value = action.startsWith('research_scope:')
+      ? 'Режим следующего суточного исследования сохранён. Текущие задания продолжаются по прежнему плану.'
+      : action === 'research_all'
+        ? response.existing
+          ? 'Обзор направлений уже запущен. Его прогресс виден в разделе «Направления».'
+          : 'Обзор запущен. Направления проверяются по очереди в пределах общего бюджета.'
+        : action === 'research'
+          ? response.reused
+            ? 'Это исследование уже запущено. Следите за ним в разделе «Исследования».'
+            : 'Идея поставлена на проверку. Ход работы появится в разделе «Исследования».'
+          : (
+              {
+                running: 'Работа возобновлена.',
+                paused: 'Новые задачи на паузе. Принятые заказы выполняются.',
+                emergency_stop: 'Новые обращения к модели остановлены.',
+                schedule_on: 'Автозапуск включён.',
+                schedule_off: 'Автозапуск выключен.',
+                restart_research: 'Начат новый эксперимент. История сохранена.',
+                simulate: 'Две стратегии заменены на учебных данных. Деньги не учитывались.',
+                cancel_research_all:
+                  'Оставшиеся направления отменены. Начатая работа может завершиться; история сохранена.',
+              } as Record<string, string>
+            )[action] || 'Изменения сохранены.'
   } catch (e) {
     actionError.value = errorText(e)
   } finally {
@@ -78,7 +100,12 @@ async function control(action: string, template?: Template) {
     </div>
     <div v-if="message" class="notice" role="status">{{ message }}</div>
     <div v-if="actionError" class="notice error" role="alert">{{ actionError }}</div>
-    <div v-if="!d" class="empty large">Загружаем данные…</div>
+    <div v-if="!d" class="empty large" role="status">
+      <template v-if="failure"
+        >Данные пока недоступны.
+        <button class="quiet" @click="refresh">Повторить загрузку</button></template
+      ><template v-else>Загружаем данные…</template>
+    </div>
     <template v-else>
       <div v-if="d.config.modelProvider === 'demo'" class="notice">
         Демонстрация: ответы заданы заранее, поиск в интернете не выполняется.
@@ -94,6 +121,9 @@ async function control(action: string, template?: Template) {
         </button>
       </div>
       <DashboardOverview v-if="view === 'overview'" :busy="busy" @control="control" />
+      <DashboardDirections v-else-if="view === 'directions'" :busy="busy" @control="control" />
+      <DashboardOpportunities v-else-if="view === 'opportunities'" />
+      <DashboardGuide v-else-if="view === 'guide'" />
       <template v-else-if="view === 'hypotheses'"
         ><details class="panel activity-details" :open="!!d.autonomy.activeRun">
           <summary>Ход работы и предыдущие запуски</summary>

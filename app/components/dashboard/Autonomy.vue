@@ -2,6 +2,12 @@
 const { state: d, failure } = useFarm()
 defineProps<{ busy: boolean }>()
 const emit = defineEmits<{ control: [action: string] }>()
+function changeScope(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const next = select.value
+  select.value = d.value.state.research_scope || 'rotate'
+  emit('control', 'research_scope:' + next)
+}
 </script>
 
 <template>
@@ -29,6 +35,22 @@ const emit = defineEmits<{ control: [action: string] }>()
         <p>
           Поиск → гипотеза → критик → сборка → контрольный пример. Прошедшая проверку версия
           появляется в витрине автоматически.
+        </p>
+        <label for="research-scope">Что исследовать по расписанию</label>
+        <select
+          id="research-scope"
+          :value="d.state.research_scope || 'rotate'"
+          :disabled="busy || !!failure"
+          @change="changeScope"
+        >
+          <option value="rotate">Одно направление, по очереди</option>
+          <option value="all">Все направления, последовательно</option>
+        </select>
+        <p class="muted small-text">
+          Влияет на будущие суточные запуски. Полный обход проверяет все
+          {{ d.serviceCatalog.length }} направлений в пределах общего бюджета, с приоритетом
+          заказов. Выключение расписания приостанавливает ещё не начатые автоматические
+          исследования.
         </p>
         <p>
           <strong>Следующий запуск: </strong

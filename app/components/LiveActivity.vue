@@ -3,6 +3,7 @@ import type { Template } from '../../core/policy'
 import { stageState, stageLabels } from '~/utils/activity'
 
 const { state: d, failure } = useFarm()
+const { services, serviceLabel, researchBlockedReason } = useServiceCatalog()
 const props = defineProps<{ busy?: boolean }>()
 const emit = defineEmits<{ research: [template?: Template] }>()
 const researchTemplate = useState<Template | ''>('research-template', () => '')
@@ -65,6 +66,7 @@ const researchDisabled = computed(
     !d.value ||
     props.busy ||
     !online.value ||
+    !!researchBlockedReason.value ||
     d.value.state.mode !== 'running' ||
     !d.value.state.research_enabled ||
     researchActive.value,
@@ -229,7 +231,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
         <span v-if="online && current" class="live-provider"
           >{{ current.model || current.provider
           }}<template v-if="currentStrategy"> · {{ currentStrategy }}</template> ·
-          {{ labels[current.template] || 'Обработка заказа'
+          {{ current.template ? serviceLabel(current.template) : 'Обработка заказа'
           }}<template v-if="current.is_demo"> · демонстрация</template></span
         >
       </div>
@@ -311,9 +313,9 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
       и неопределённые запросы отдельно входят в сумму «С резервом».
     </p>
     <p class="muted small-text">
-      После исследования откройте <NuxtLink to="/?view=hypotheses">«Гипотезы»</NuxtLink>: там
+      После исследования откройте <NuxtLink to="/?view=hypotheses">«Исследования»</NuxtLink>: там
       сохраняются идея и решение критика. Принятая идея выпускает версию сервиса в
-      <NuxtLink to="/catalog">«Продуктах»</NuxtLink>. Отклонённая остаётся в истории с причиной.
+      <NuxtLink to="/catalog">«Услугах»</NuxtLink>. Отклонённая остаётся в истории с причиной.
     </p>
     <div class="live-toolbar">
       <p>
@@ -327,9 +329,9 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
         <label for="research-template">Направление исследования</label>
         <select id="research-template" v-model="researchTemplate" :disabled="researchDisabled">
           <option value="">Автоматический выбор</option>
-          <option value="description">Описание товара</option>
-          <option value="faq">Вопросы и ответы</option>
-          <option value="social">Публикации</option>
+          <option v-for="service in services" :key="service.id" :value="service.id">
+            {{ service.label }}
+          </option>
         </select>
         <button
           class="button primary small"
@@ -381,7 +383,7 @@ const focusedSummary = computed(() => (historical.value ? 'Сохранённы�
             <details :open="call.status === 'pending' || call.status === 'uncertain'">
               <summary>
                 <strong>{{ call.role === 'search' ? 'Поиск' : call.role }}</strong
-                ><span>{{ labels[call.template] || 'Заказ' }}</span
+                ><span>{{ call.template ? serviceLabel(call.template) : 'Заказ' }}</span
                 ><time>{{
                   call.finished_at
                     ? elapsed(call.created_at, call.finished_at)

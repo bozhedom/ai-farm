@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const { state: d } = useFarm()
+const { researchBlockedReason, serviceLabel, productLink } = useServiceCatalog()
 const props = defineProps<{ busy: boolean }>()
 const emit = defineEmits<{ control: [action: string] }>()
 const sourceHost = (url: string) => new URL(url).hostname
@@ -13,12 +14,15 @@ const sourceHost = (url: string) => new URL(url).hostname
     </p>
     <button
       class="button primary"
-      :disabled="props.busy || d.state.mode !== 'running' || !d.state.research_enabled"
+      :disabled="props.busy || !!researchBlockedReason"
       @click="emit('control', 'research')"
     >
       Проверить идею
     </button>
   </div>
+  <p v-if="researchBlockedReason" class="muted small-text" role="status">
+    {{ researchBlockedReason }} <NuxtLink to="/?view=directions">Направления и управление</NuxtLink>
+  </p>
   <div v-if="!d.hypotheses.length" class="panel empty large">
     Исследований пока нет. Нажмите «Проверить идею».
   </div>
@@ -36,14 +40,16 @@ const sourceHost = (url: string) => new URL(url).hostname
     </div>
     <p>{{ h.research.hypothesis }}</p>
     <p class="muted small-text">
-      {{ dateTime(h.created_at) }} ·
+      {{ serviceLabel(h.template) }} · {{ dateTime(h.created_at) }} ·
       {{
         h.is_demo ? 'Демопровайдер' : h.generated_by_model || 'Модель в старой записи не сохранена'
       }}
     </p>
     <p v-if="h.released_version" class="notice">
       По этой гипотезе выпущена версия {{ h.released_version }} сервиса.
-      <NuxtLink to="/catalog">Открыть витрину →</NuxtLink>
+      <NuxtLink :to="h.released_product_id ? productLink(h.released_product_id) : '/catalog'"
+        >Открыть услугу →</NuxtLink
+      >
       Сейчас витрина показывает последнюю версию; прежние заказы сохраняют свою.
     </p>
     <p v-else class="muted small-text">

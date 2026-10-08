@@ -1,35 +1,85 @@
 <script setup lang="ts">
-const { state: d, failure } = useFarm()
+const { state: d, failure, refresh } = useFarm()
+const { services, service, serviceLabel } = useServiceCatalog()
+const route = useRoute()
 const selected = ref(''),
   input = ref(''),
   busy = ref(false),
   error = ref('')
+const query = ref(''),
+  template = ref('')
 const selectedProduct = computed(() => d.value?.products.find((p: any) => p.id === selected.value))
+const products = computed(() =>
+  (d.value?.products || []).filter(
+    (p: any) =>
+      (!template.value || p.template === template.value) &&
+      `${p.spec.name} ${serviceLabel(p.template)} ${p.spec.audience} ${p.delivery}`
+        .toLocaleLowerCase('ru')
+        .includes(query.value.trim().toLocaleLowerCase('ru')),
+  ),
+)
+const availableDirections = computed(() =>
+  services.value.filter((item) => d.value?.products.some((p: any) => p.template === item.id)),
+)
+function resetFilters() {
+  query.value = ''
+  template.value = ''
+}
+const canOrder = computed(
+  () =>
+    selectedProduct.value?.status === 'sandbox' &&
+    !selectedProduct.value.needsRefresh &&
+    d.value?.state.mode === 'running' &&
+    !failure.value,
+)
 let requestKey = ''
+let linkedProduct = ''
 function renewRequest() {
   requestKey = crypto.randomUUID()
 }
 function fillSample() {
-  input.value = samples[d.value.products.find((p: any) => p.id === selected.value).template] || ''
+  input.value = service(selectedProduct.value.template)?.example || ''
   renewRequest()
 }
-const samples: Record<string, string> = {
-  description:
-    'Керамическая кружка «Утро». Объём 350 мл, матовая белая глазурь. Ручная работа. Подходит для горячих напитков. Мыть вручную.',
-  faq: 'Студия ремонтирует велосипеды. Диагностика занимает один рабочий день. Стоимость ремонта согласуется после диагностики. Доставка не предоставляется.',
-  social:
-    'Наша мастерская выпустила новую серию керамических кружек. Каждая кружка сделана вручную. Коллекция доступна в белом и синем цветах. Объём 350 мл.',
+async function choose(p: any, focus = true) {
+  if (selected.value !== p.id) {
+    selected.value = p.id
+    input.value = ''
+    error.value = ''
+    renewRequest()
+  }
+  if (focus) {
+    await nextTick()
+    document.getElementById('material')?.focus()
+  }
 }
-async function choose(p: any) {
-  selected.value = p.id
-  input.value = ''
+watch(
+  () => [route.query.product, d.value?.products],
+  () => {
+    if (typeof route.query.product !== 'string' || linkedProduct === route.query.product) return
+    const product = d.value?.products.find((p: any) => p.id === route.query.product)
+    if (product) {
+      linkedProduct = product.id
+      void choose(product, false)
+    }
+  },
+  { immediate: true },
+)
+async function resume() {
+  if (busy.value) return
+  busy.value = true
   error.value = ''
-  requestKey = crypto.randomUUID()
-  await nextTick()
-  document.getElementById('material')?.focus()
+  try {
+    await $fetch('/api/control', { method: 'POST', body: { action: 'running' } })
+    await refresh()
+  } catch (e) {
+    error.value = errorText(e)
+  } finally {
+    busy.value = false
+  }
 }
 async function order() {
-  if (busy.value) return
+  if (busy.value || !canOrder.value) return
   busy.value = true
   error.value = ''
   try {
@@ -46,11 +96,11 @@ async function order() {
 }
 </script>
 <template>
-  <FarmShell
-    ><div class="page-heading">
+  <FarmShell>
+    <div class="page-heading">
       <div>
         <h1>Готовые услуги</h1>
-        <p>Выберите задачу и проверьте результат на своём примере.</p>
+        <p>Выберите задачу и проверьте результат на своём материале.</p>
       </div>
       <span class="status-pill warn">Только тестовые заказы</span>
     </div>
@@ -62,100 +112,173 @@ async function order() {
       }}
       Материалы и результаты доступны только владельцу.
     </p>
-    <div v-if="!d?.products?.length" class="panel empty large">
-      Услуги появятся после успешной проверки идеи.<br /><NuxtLink to="/">Проверить идею</NuxtLink>
+    <div v-if="!d" class="panel empty large" role="status">
+      <template v-if="failure"
+        >Не удалось загрузить услуги.
+        <button class="quiet" @click="refresh">Повторить загрузку</button></template
+      ><template v-else>Загружаем услуги…</template>
     </div>
-    <div class="product-grid">
-      <article v-for="(p, i) in d?.products || []" :key="p.id" class="product-card">
-        <div class="product-art" :class="'art-' + i">
-          <span>{{ p.template === 'description' ? 'Aa' : p.template === 'faq' ? '?' : '≋' }}</span
-          ><small>{{ labels[p.template] }}</small
-          ><i /><i />
-        </div>
-        <div class="product-body">
-          <div class="eyebrow">{{ p.is_demo ? 'ДЕМО' : 'ПРОВЕРЕН ПРИМЕР' }} · V{{ p.version }}</div>
-          <h2>{{ p.spec.name }}</h2>
-          <p>
-            {{ p.delivery }}
-          </p>
-          <span class="product-audience">{{ p.spec.audience }}</span>
-          <details v-if="p.checks?.sample" class="product-preview">
-            <summary>Пример результата</summary>
-            <p>
-              Проверка качества: {{ labels[p.checks.normal] }} · {{ dateTime(p.checks.checkedAt) }}
-            </p>
-            <p v-if="p.checks.input">Исходный материал: {{ p.checks.input }}</p>
-            <pre>{{ p.checks.sample }}</pre>
-            <p v-if="p.checks.reason">{{ p.checks.reason }}</p>
-            <NuxtLink to="/?view=hypotheses">Исследования и источники</NuxtLink>
-          </details>
-          <ProductHistory :key="p.id + ':' + p.version" :product-id="p.id" />
-          <p v-if="p.needsRefresh" class="small-text">
-            Для локальной модели нужна новая версия публикаций.
-            <NuxtLink to="/?view=hypotheses">Запустите исследование</NuxtLink>.
-          </p>
-          <div class="product-bottom">
-            <div>
-              <strong>{{
-                d.config.paymentMode === 'sandbox' ? 'Без списания денег' : '≈ 0,0001 TEST ETH'
-              }}</strong
-              ><span>Тестовый заказ</span>
-            </div>
-            <button
-              class="button secondary small"
-              :disabled="
-                p.status !== 'sandbox' ||
-                p.needsRefresh ||
-                d.state.mode !== 'running' ||
-                !!failure ||
-                busy
-              "
-              @click="choose(p)"
-            >
-              {{
-                p.needsRefresh
-                  ? 'Нужно обновить услугу'
-                  : p.status === 'archived'
-                    ? 'В архиве'
-                    : d.state.mode !== 'running'
-                      ? 'Приём заказов на паузе'
-                      : 'Попробовать'
-              }}
-            </button>
+    <template v-else>
+      <div v-if="d.state.mode !== 'running'" class="notice">
+        <strong>{{
+          d.state.mode === 'emergency_stop'
+            ? 'Работа остановлена.'
+            : 'Приём новых заказов на паузе.'
+        }}</strong>
+        Продолжите работу, чтобы попробовать услугу.
+        <button class="button secondary small" :disabled="busy || !!failure" @click="resume">
+          Продолжить работу
+        </button>
+      </div>
+      <div v-if="!d.autonomy.workerAlive" class="notice">
+        Обработчик не на связи. Созданный заказ сохранится, а после оплаты будет ждать запуска
+        обработчика. <NuxtLink to="/?view=settings">Проверить состояние</NuxtLink>
+      </div>
+      <p v-if="error" class="notice error" role="alert">{{ error }}</p>
+      <div v-if="!d.products.length" class="panel empty large">
+        Услуги появятся после успешной проверки идеи.<br /><NuxtLink to="/?view=directions"
+          >Выбрать и исследовать направления →</NuxtLink
+        >
+      </div>
+      <template v-else>
+        <div class="catalog-filters">
+          <div>
+            <label for="service-search">Найти услугу</label
+            ><input
+              id="service-search"
+              v-model="query"
+              type="search"
+              placeholder="Название, задача или аудитория"
+            />
           </div>
+          <div>
+            <label for="service-type">Направление</label
+            ><select id="service-type" v-model="template">
+              <option value="">Все направления</option>
+              <option v-for="item in availableDirections" :key="item.id" :value="item.id">
+                {{ item.label }}
+              </option>
+            </select>
+          </div>
+          <span class="muted small-text" role="status"
+            >Услуг: {{ products.length }} из {{ d.products.length }}</span
+          >
         </div>
-      </article>
-    </div>
-    <form v-if="selected" class="panel order-form" @submit.prevent="order">
-      <div class="section-heading">
-        <h2>{{ d.products.find((p: any) => p.id === selected)?.spec.name }}</h2>
-        <button type="button" class="quiet" @click="selected = ''">Закрыть ×</button>
-      </div>
-      <label for="material">{{
-        d.products.find((p: any) => p.id === selected)?.spec.inputLabel
-      }}</label
-      ><textarea
-        id="material"
-        v-model="input"
-        required
-        minlength="30"
-        :maxlength="selectedProduct?.inputLimit || 4000"
-        rows="7"
-        placeholder="Только сведения, которые можно использовать. Без персональных данных и секретов."
-        @input="renewRequest"
-      />
-      <div class="form-helper">
-        <button type="button" class="quiet" @click="fillSample">Подставить пример</button
-        ><span>{{ input.length }} / {{ selectedProduct?.inputLimit || 4000 }}</span>
-      </div>
-      <p class="muted small-text">
-        Нажимая кнопку, вы подтверждаете право использовать исходный материал. Результат этого
-        стенда предназначен для тестирования.
-      </p>
-      <p v-if="error" class="error-text" role="alert">{{ error }}</p>
-      <button class="button primary" :disabled="busy || !!failure">
-        {{ busy ? 'Создаём…' : 'Создать тестовый заказ' }}
-      </button>
-    </form>
+        <form v-if="selectedProduct" class="panel order-form" @submit.prevent="order">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">НОВЫЙ ТЕСТОВЫЙ ЗАКАЗ</span>
+              <h2>{{ selectedProduct.spec.name }}</h2>
+            </div>
+            <button type="button" class="quiet" @click="selected = ''">Закрыть ×</button>
+          </div>
+          <p class="muted small-text">{{ selectedProduct.delivery }}</p>
+          <label for="material">{{
+            selectedProduct.spec.inputLabel || service(selectedProduct.template)?.inputLabel
+          }}</label>
+          <textarea
+            id="material"
+            v-model="input"
+            required
+            minlength="30"
+            :maxlength="selectedProduct.inputLimit || 4000"
+            rows="7"
+            placeholder="Только сведения, которые можно использовать. Без персональных данных и секретов."
+            aria-describedby="material-help"
+            @input="renewRequest"
+          />
+          <div class="form-helper">
+            <button
+              v-if="service(selectedProduct.template)?.example"
+              type="button"
+              class="quiet"
+              @click="fillSample"
+            >
+              Подставить пример</button
+            ><span>{{ input.length }} / {{ selectedProduct.inputLimit || 4000 }}</span>
+          </div>
+          <p id="material-help" class="muted small-text">
+            От 30 символов. Нажимая кнопку, вы подтверждаете право использовать исходный материал.
+            Результат предназначен для тестирования.
+          </p>
+          <p v-if="!canOrder" class="muted small-text">
+            {{
+              selectedProduct.needsRefresh
+                ? 'Сначала обновите услугу новым исследованием.'
+                : d.state.mode !== 'running'
+                  ? 'Продолжите работу с помощью кнопки выше.'
+                  : 'Эта услуга пока не принимает заказы.'
+            }}
+          </p>
+          <button class="button primary" :disabled="busy || !canOrder">
+            {{ busy ? 'Создаём…' : 'Создать тестовый заказ' }}
+          </button>
+        </form>
+        <div v-if="!products.length" class="panel empty">
+          Услуги не найдены.
+          <button class="quiet" @click="resetFilters">Сбросить фильтры</button>
+        </div>
+        <div class="product-grid">
+          <article
+            v-for="(p, i) in products"
+            :key="p.id"
+            class="product-card"
+            :class="{ 'product-selected': selected === p.id }"
+          >
+            <div class="product-art" :class="'art-' + (Number(i) % 3)">
+              <span aria-hidden="true">{{ serviceLabel(p.template).slice(0, 1) }}</span
+              ><small>{{ serviceLabel(p.template) }}</small>
+            </div>
+            <div class="product-body">
+              <div class="eyebrow">
+                {{ p.is_demo ? 'ДЕМО' : 'ПРОВЕРЕН ПРИМЕР' }} · V{{ p.version }}
+              </div>
+              <h2>{{ p.spec.name }}</h2>
+              <p>{{ p.delivery }}</p>
+              <span class="product-audience">{{ p.spec.audience }}</span>
+              <details v-if="p.checks?.sample" class="product-preview">
+                <summary>Пример результата</summary>
+                <p>
+                  Проверка качества: {{ labels[p.checks.normal] }} ·
+                  {{ dateTime(p.checks.checkedAt) }}
+                </p>
+                <p v-if="p.checks.input">Исходный материал: {{ p.checks.input }}</p>
+                <pre>{{ p.checks.sample }}</pre>
+                <p v-if="p.checks.reason">{{ p.checks.reason }}</p>
+                <NuxtLink to="/?view=hypotheses">Исследования и источники</NuxtLink>
+              </details>
+              <ProductHistory :key="p.id + ':' + p.version" :product-id="p.id" />
+              <p v-if="p.needsRefresh" class="small-text">
+                Для локальной модели нужна новая версия услуги.
+                <NuxtLink to="/?view=directions">Запустите исследование</NuxtLink>.
+              </p>
+              <div class="product-bottom">
+                <div>
+                  <strong>{{
+                    d.config.paymentMode === 'sandbox' ? 'Без списания денег' : '≈ 0,0001 TEST ETH'
+                  }}</strong
+                  ><span>Тестовый заказ</span>
+                </div>
+                <button
+                  class="button secondary small"
+                  :disabled="p.status !== 'sandbox' || p.needsRefresh || !!failure || busy"
+                  @click="choose(p)"
+                >
+                  {{
+                    p.needsRefresh
+                      ? 'Нужно обновить'
+                      : p.status === 'archived'
+                        ? 'В архиве'
+                        : selected === p.id
+                          ? 'К форме заказа ↑'
+                          : 'Попробовать'
+                  }}
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+      </template>
+    </template>
   </FarmShell>
 </template>
