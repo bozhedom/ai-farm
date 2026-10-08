@@ -16,6 +16,7 @@
     "typecheck": "nuxt typecheck && tsc --project tsconfig.core.json --noEmit",
     "test": "vitest run tests/unit",
     "test:integration": "node --env-file=.env node_modules/vitest/vitest.mjs run tests/integration --maxWorkers=1",
+    "test:e2e:office": "playwright test -c tests/e2e/playwright.config.ts",
     "test:autonomy": "node --env-file=.env --import tsx scripts/check-autonomy.ts",
     "test:crypto": "node scripts/test-crypto.mjs",
     "anvil:pay": "node --env-file-if-exists=.env scripts/anvil-pay.mjs",
@@ -40,6 +41,7 @@
   },
   "devDependencies": {
     "@noble/hashes": "2.4.0",
+    "@playwright/test": "1.63.0",
     "@types/node": "26.6.2",
     "@types/pg": "8.23.1",
     "prettier": "3.9.9",
