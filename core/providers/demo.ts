@@ -108,7 +108,9 @@ export function demoIdea(args: {
   previousOnTopic: number
 }): IdeaResearch {
   const { topic, params } = args
-  const angle = topic.angles[args.previousOnTopic % topic.angles.length]!
+  // Broad agents start from the second angle, which often needs a person.
+  const offset = params.ideaScope === 'broad' ? 1 : 0
+  const angle = topic.angles[(args.previousOnTopic + offset) % topic.angles.length]!
   const template = angle.template
   const domains = new Map<string, Evidence>()
   for (const item of args.evidence) {

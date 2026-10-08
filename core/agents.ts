@@ -78,6 +78,8 @@ export function agentLabels(rows: StrategyRow[]): Map<string, string> {
   return labels
 }
 export const agentName = (label: string) => `Разведчик ${label}`
+/** Founder position by letter (А 0, Б 1, ...): stable even when rows share a timestamp. */
+export const founderIndex = (label: string) => Math.max(0, letters.indexOf(label))
 
 export async function agentNames(db: Connection = pool) {
   const rows = await query<StrategyRow>(
@@ -198,7 +200,6 @@ export async function ensureStrategyParams(db: Connection = pool) {
   if (!missing.length) return 0
   const labels = agentLabels(rows)
   const resolved = new Map(rows.map((row) => [row.id, parseParams(row.params)]))
-  const founders = rows.filter((row) => !row.parent_id).sort(byAge)
   const paramsFor = (row: StrategyRow, depth = 0): StrategyParams => {
     const known = resolved.get(row.id)
     if (known) return known
@@ -206,12 +207,7 @@ export async function ensureStrategyParams(db: Connection = pool) {
     const value =
       parent && depth < 50
         ? paramsFor(parent, depth + 1)
-        : defaultParams(
-            Math.max(
-              0,
-              founders.findIndex((f) => f.id === row.id),
-            ),
-          )
+        : defaultParams(founderIndex(labels.get(row.id) ?? ''))
     resolved.set(row.id, value)
     return value
   }

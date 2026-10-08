@@ -11,6 +11,7 @@ import {
   agentMetrics,
   agentName,
   defaultParams,
+  founderIndex,
   parseParams,
   type StrategyRow,
 } from './agents'
@@ -253,8 +254,11 @@ async function ideaChecks(ids: string[]) {
 export const ideaListSchema = z
   .object({
     status: z.enum(['new', 'accepted', 'needs_human', 'rejected', 'productized']).optional(),
+    // An industry id or its Russian name, as shown in OfficeIdea.category.
     category: z
       .string()
+      .max(120)
+      .transform((value) => taxonomyCategories.find((c) => c.label === value)?.id ?? value)
       .refine((id) => Object.hasOwn(categoryById, id))
       .optional(),
     offset: z.coerce.number().int().min(0).max(100000000).default(0),
@@ -380,9 +384,9 @@ export async function officeAgents(): Promise<OfficeAgents> {
       [...byGeneration.entries()].map(([generation, ids]) => agentMetrics(generation, ids)),
     )
   ).flat()
-  const agents: OfficeAgent[] = strategies.map((s, index) => {
+  const agents: OfficeAgent[] = strategies.map((s) => {
     const m = metrics.find((x) => x.strategyId === s.id)
-    const params = parseParams(s.params) ?? defaultParams(index)
+    const params = parseParams(s.params) ?? defaultParams(founderIndex(label(s.id)))
     const live: ScoredAgent | undefined =
       s.status === 'active' ? scored.find((x) => x.strategyId === s.id) : undefined
     const stored = retiredRounds

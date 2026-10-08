@@ -308,5 +308,9 @@ export async function activityFeed(limit = 30, db: Connection = pool): Promise<F
     ),
     jobOrders: new Map(jobs.map((j) => [j.id as string, j.order_id as string])),
   }
-  return events.flatMap((event) => feedItems(event, ctx)).slice(0, limit)
+  // Repeated identical lines in a row (several lead searches) are shown once.
+  return events
+    .flatMap((event) => feedItems(event, ctx))
+    .filter((item, index, all) => index === 0 || all[index - 1]!.text !== item.text)
+    .slice(0, limit)
 }
