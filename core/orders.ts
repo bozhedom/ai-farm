@@ -2,9 +2,26 @@ import { randomUUID } from 'node:crypto'
 import { config, usesSourcePosts } from './config'
 import { audit, query, transaction } from './db'
 import { reserveBudget } from './budget'
-import { productSchema, validateInput, validateTemplateInput } from './policy'
+import { productSchema, validateInput, validateTemplateInput, type ProductSpec } from './policy'
 import { orderProgress, paymentErrorText } from './order-progress'
 import { sourceSocialDelivery, validateSourcePostInput } from './source-posts'
+
+export type OrderStatus =
+  'awaiting_payment' | 'paid' | 'running' | 'delivered' | 'expired' | 'manual_review' | 'closed'
+
+type OrderRecord = Record<string, any> & {
+  id: string
+  status: OrderStatus
+  payment_mode: 'sandbox' | 'sepolia'
+  product_snapshot: ProductSpec & { version: number }
+  result: string | null
+  review: { verdict: 'PASS' | 'REVISE' | 'BLOCKED'; reason: string } | null
+  payment_error: string | null
+  paid_at: Date | null
+  delivered_at: Date | null
+  closed_at: Date | null
+  resolution_reason: string | null
+}
 
 export async function createOrder(productId: string, input: string, requestKey: string) {
   validateInput(input)
@@ -84,7 +101,7 @@ export async function createOrder(productId: string, input: string, requestKey: 
 }
 
 export async function orderDetails(id: string) {
-  const [order] = await query('SELECT * FROM orders WHERE id=$1', [id])
+  const [order] = await query<OrderRecord>('SELECT * FROM orders WHERE id=$1', [id])
   if (!order) throw new Error('ORDER_NOT_FOUND')
   const [jobs, states, attempts] = await Promise.all([
     query(

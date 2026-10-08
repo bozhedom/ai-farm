@@ -53,3 +53,36 @@ it('preserves the reason for stopping an uncertain paid call', () => {
   expect(progress.detail).toContain('не списать деньги повторно')
   expect(progress.canSubmit).toBe(false)
 })
+it('offers owner resolution only for test review and keeps a closed order distinct from delivery', () => {
+  expect(
+    orderProgress({ status: 'manual_review', payment_mode: 'sandbox' }, null, state, now)
+      .canResolve,
+  ).toBe(true)
+  expect(
+    orderProgress({ status: 'manual_review', payment_mode: 'sepolia' }, null, state, now)
+      .canResolve,
+  ).toBe(true)
+  expect(
+    orderProgress({ status: 'manual_review', payment_mode: 'mainnet' }, null, state, now)
+      .canResolve,
+  ).toBe(false)
+  const closed = orderProgress(
+    {
+      status: 'closed',
+      payment_mode: 'sandbox',
+      paid_at: now,
+      resolution_reason: 'Тест завершён.',
+    },
+    { status: 'failed', error_code: 'OUTPUT_REVIEW_REQUIRED' },
+    { mode: 'emergency_stop' },
+    now,
+  )
+  expect(closed).toMatchObject({
+    title: 'Тестовый заказ закрыт',
+    canSubmit: false,
+    canResolve: false,
+    errorCode: 'OUTPUT_REVIEW_REQUIRED',
+  })
+  expect(closed.detail).toContain('без выдачи')
+  expect(closed.detail).toContain('возврат не выполнялся')
+})

@@ -28,6 +28,8 @@ const jobErrors: Record<string, string> = {
     'Проверка качества отклонила текст. Результат не выдан; требуется проверка владельцем.',
   OUTPUT_FORMAT_INVALID: 'Текст не соответствует формату услуги. Результат не выдан.',
   OUTPUT_FORMAT_REQUIRED: 'Текст не соответствует формату услуги. Результат не выдан.',
+  TRANSLATION_LANGUAGE_REQUIRED:
+    'В сохранённом материале не указан язык перевода. Автоматическое исполнение остановлено; требуется проверка владельцем.',
   OUTPUT_SOURCE_DUPLICATE: 'Модель не выбрала три разных оформления. Результат не выдан.',
   PRODUCT_RECIPE_REFRESH_REQUIRED:
     'Локальная модель не выполняет прежний рецепт публикаций. Снимок и обязательство сохранены; требуется проверка владельцем.',
@@ -60,6 +62,10 @@ export function orderProgress(
     title = 'Результат выдан'
     detail = 'Тестовая оплата подтверждена, текст прошёл проверку качества и сохранён.'
     tone = 'good'
+  } else if (order.status === 'closed') {
+    title = 'Тестовый заказ закрыт'
+    detail =
+      'Владелец завершил проверку и закрыл тестовое обязательство без выдачи. Причина, платёж и история расходов сохранены; возврат не выполнялся.'
   } else if (order.status === 'manual_review') {
     title = 'Нужна проверка владельцем'
     detail = order.paid_at
@@ -110,6 +116,8 @@ export function orderProgress(
     detail,
     tone,
     canSubmit,
+    canResolve:
+      order.status === 'manual_review' && ['sandbox', 'sepolia'].includes(order.payment_mode),
     errorCode: job?.error_code || order.payment_error || null,
   }
 }

@@ -17,6 +17,7 @@ import { runJob } from '../../core/jobs/run'
 import type { Template } from '../../core/policy'
 import * as providers from '../../core/providers'
 import { createOrder, orderDetails } from '../../core/orders'
+import { resolveOrder } from '../../core/order-resolution'
 import { paymentHash, paymentReceiver, paymentRpc } from '../fixtures/sepolia'
 import type { Invoice } from '../../core/payments'
 import { sandboxPayment, submitTransaction, reconcilePayments } from '../../core/payments'
@@ -846,6 +847,232 @@ describe('durable autonomous pipeline', () => {
         await query('SELECT status FROM budget_reservations WHERE dedupe_key=$1', [`order:${o.id}`])
       )[0]!.status,
     ).toBe('closed')
+  })
+})
+
+describe('owner resolution of test obligations', () => {
+  const reason = 'Проверка завершена: тестовый материал отклонён, выдача не требуется.'
+
+  it('closes review once, preserves evidence and costs, and removes the outstanding obligation', async () => {
+    const created = await order()
+    await sandboxPayment(created.id)
+    const original = providers.model
+    vi.spyOn(providers, 'model').mockImplementation(async (args: any) =>
+      args.role === 'Проверяющий'
+        ? args.schema.parse({
+            verdict: 'BLOCKED',
+            reason: 'В ответ добавлены неподтверждённые свойства.',
+          })
+        : original(args),
+    )
+    const job = (await claimJob(['fulfill']))!
+    await expect(runJob(job)).rejects.toThrow('OUTPUT_REVIEW_REQUIRED')
+    await finishJob(job, new Error('OUTPUT_REVIEW_REQUIRED'))
+    const [before] = await query('SELECT * FROM orders WHERE id=$1', [created.id])
+    const reservations = await query('SELECT * FROM budget_reservations ORDER BY id')
+    const calls = await query('SELECT * FROM tool_calls ORDER BY id')
+    const jobs = await query('SELECT * FROM jobs ORDER BY id')
+    const amounts = await budgetSummary()
+    await expect(simulateEvolution(1)).rejects.toThrow('OPEN_OBLIGATIONS')
+    expect((await orderDetails(created.id)).progress.canResolve).toBe(true)
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => resolveOrder(created.id, `  ${reason}  `)),
+    )
+    expect(
+      results.every((result) => result.closed_at.getTime() === results[0]!.closed_at.getTime()),
+    ).toBe(true)
+    expect(results[0]).toMatchObject({
+      id: created.id,
+      status: 'closed',
+      resolution_reason: reason,
+    })
+    expect((await query('SELECT * FROM orders WHERE id=$1', [created.id]))[0]).toEqual({
+      ...before,
+      status: 'closed',
+      closed_at: results[0]!.closed_at,
+      resolution_reason: reason,
+    })
+    expect(await query('SELECT * FROM budget_reservations ORDER BY id')).toEqual(reservations)
+    expect(await query('SELECT * FROM tool_calls ORDER BY id')).toEqual(calls)
+    expect(await query('SELECT * FROM jobs ORDER BY id')).toEqual(jobs)
+    expect(await budgetSummary()).toEqual(amounts)
+    expect(await query("SELECT id FROM audit_events WHERE kind='order_resolved'")).toHaveLength(1)
+    expect((await orderDetails(created.id)).progress).toMatchObject({
+      title: 'Тестовый заказ закрыт',
+      canSubmit: false,
+      canResolve: false,
+      errorCode: 'OUTPUT_REVIEW_REQUIRED',
+    })
+    await expect(
+      resolveOrder(created.id, 'Совсем другая причина завершения тестового заказа.'),
+    ).rejects.toThrow('ORDER_ALREADY_RESOLVED')
+    await runJob(job)
+    await finishJob(job)
+    expect(await query("SELECT id FROM audit_events WHERE kind='order_delivered'")).toHaveLength(0)
+    expect((await simulateEvolution(1))!.decision).toBe('SIMULATION')
+    expect(
+      (
+        await query('SELECT status,result,paid_at,delivered_at FROM orders WHERE id=$1', [
+          created.id,
+        ])
+      )[0],
+    ).toEqual({
+      status: 'closed',
+      result: null,
+      paid_at: before!.paid_at,
+      delivered_at: null,
+    })
+  })
+
+  it('refuses unrelated states and incomplete reasons without changing an order', async () => {
+    const created = await order()
+    await expect(resolveOrder(created.id, reason)).rejects.toThrow('ORDER_NOT_RESOLVABLE')
+    await expect(resolveOrder(created.id, '  коротко  ')).rejects.toBeInstanceOf(z.ZodError)
+    await expect(resolveOrder(created.id, 'я'.repeat(1001))).rejects.toBeInstanceOf(z.ZodError)
+    await expect(resolveOrder(randomUUID(), reason)).rejects.toThrow('ORDER_NOT_FOUND')
+    await sandboxPayment(created.id)
+    await expect(resolveOrder(created.id, reason)).rejects.toThrow('ORDER_NOT_RESOLVABLE')
+    const job = (await claimJob(['fulfill']))!
+    await runJob(job)
+    await finishJob(job)
+    await expect(resolveOrder(created.id, reason)).rejects.toThrow('ORDER_NOT_RESOLVABLE')
+    expect((await orderDetails(created.id)).status).toBe('delivered')
+    expect(await query("SELECT id FROM audit_events WHERE kind='order_resolved'")).toHaveLength(0)
+  })
+
+  it('keeps a pessimistically charged uncertain call after the owner closes its test order', async () => {
+    const [product] = await research()
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'yandex',
+      SEARCH_PROVIDER: 'searxng',
+    })
+    const created = await createOrder(product!.id, input, randomUUID())
+    await sandboxPayment(created.id)
+    const job = (await claimJob(['fulfill']))!
+    const [order] = await query('SELECT reservation_id FROM orders WHERE id=$1', [created.id])
+    const invoke = vi.fn(async () => {
+      throw new Error('NETWORK_TIMEOUT')
+    })
+    const call = {
+      key: `${job.id}:generate`,
+      reservationId: order!.reservation_id,
+      role: 'Исполнитель',
+      maximum: 500,
+      demo: false,
+      invoke,
+    }
+    await expect(meteredCall(call)).rejects.toThrow('NETWORK_TIMEOUT')
+    await finishJob(job, new Error('UNCERTAIN_CALL_REQUIRES_REVIEW'))
+    const before = await budgetSummary()
+    expect(before.daySpent).toBe(500)
+    await resolveOrder(created.id, reason)
+    expect(await budgetSummary()).toEqual(before)
+    expect(
+      (
+        await query('SELECT status,charged_kopecks,error_code FROM tool_calls WHERE call_key=$1', [
+          call.key,
+        ])
+      )[0],
+    ).toEqual({
+      status: 'uncertain',
+      charged_kopecks: 500,
+      error_code: 'NETWORK_TIMEOUT',
+    })
+    expect(
+      (
+        await query('SELECT status,spent_kopecks FROM budget_reservations WHERE id=$1', [
+          order!.reservation_id,
+        ])
+      )[0],
+    ).toEqual({ status: 'closed', spent_kopecks: 500 })
+    await expect(meteredCall(call)).rejects.toThrow('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    await runJob(job)
+    expect(invoke).toHaveBeenCalledOnce()
+    expect((await orderDetails(created.id)).status).toBe('closed')
+  })
+
+  it('retains an unresolved Sepolia payment and its attempts after explicit closure', async () => {
+    const created = await order()
+    await query("UPDATE orders SET payment_mode='sepolia',receiver=$2 WHERE id=$1", [
+      created.id,
+      paymentReceiver,
+    ])
+    await submitTransaction(created.id, paymentHash)
+    const [invoice] = await query('SELECT * FROM orders WHERE id=$1', [created.id])
+    await reconcilePayments(
+      paymentRpc({ eth_getTransactionByHash: { value: '0x1' } }, invoice as Invoice),
+    )
+    await query("UPDATE orders SET expires_at=now()-interval '25 hours' WHERE id=$1", [created.id])
+    await reconcilePayments()
+    const attempts = await query('SELECT * FROM payment_attempts WHERE order_id=$1', [created.id])
+    const [before] = await query('SELECT * FROM orders WHERE id=$1', [created.id])
+    await query("UPDATE system_state SET mode='emergency_stop'")
+    const closed = await resolveOrder(created.id, reason)
+    expect((await query('SELECT * FROM orders WHERE id=$1', [created.id]))[0]).toEqual({
+      ...before,
+      status: 'closed',
+      closed_at: closed.closed_at,
+      resolution_reason: reason,
+    })
+    const call = vi.fn(paymentRpc({}, invoice as Invoice))
+    await reconcilePayments(call)
+    expect(call).not.toHaveBeenCalled()
+    expect(await query('SELECT * FROM payment_attempts WHERE order_id=$1', [created.id])).toEqual(
+      attempts,
+    )
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toHaveLength(0)
+    expect((await orderDetails(created.id)).payment_error).toBe('WRONG_AMOUNT')
+  })
+
+  it('does not revive a closed obligation when an expired worker finishes a late QA call', async () => {
+    const created = await order()
+    await sandboxPayment(created.id)
+    const job = (await claimJob(['fulfill']))!
+    let signalStarted!: () => void, releaseCall!: () => void
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      releaseCall = resolve
+    })
+    const original = providers.model
+    vi.spyOn(providers, 'model').mockImplementation(async (args: any) => {
+      const output = await original(args)
+      if (args.role === 'Проверяющий') {
+        signalStarted()
+        await released
+      }
+      return output
+    })
+    const pending = runJob(job)
+    try {
+      await started
+      await query(
+        "UPDATE jobs SET attempts=max_attempts,locked_until=now()-interval '1 minute' WHERE id=$1",
+        [job.id],
+      )
+      await recoverJobs()
+      await resolveOrder(created.id, reason)
+    } finally {
+      releaseCall()
+      await pending
+    }
+    await finishJob(job)
+    const closed = await orderDetails(created.id)
+    expect(closed).toMatchObject({
+      status: 'closed',
+      result: null,
+      review: null,
+      delivered_at: null,
+      resolution_reason: reason,
+    })
+    expect(closed.job).toMatchObject({ status: 'failed', error_code: 'LEASE_EXPIRED' })
+    expect(await query("SELECT id FROM audit_events WHERE kind='order_delivered'")).toHaveLength(0)
+    expect(
+      await query("SELECT id FROM tool_calls WHERE job_id=$1 AND status='done'", [job.id]),
+    ).toHaveLength(2)
   })
 })
 
