@@ -5,14 +5,13 @@
 ## Интерфейс
 
 - `app/pages/index.vue` — публичная витрина без пароля: опубликованные продукты из `GET /api/public/catalog` (`core/public-catalog.ts`).
-- `app/pages/office/` — кабинет владельца: `index.vue` (разделы через `?view=`), `login.vue`, `products.vue`, `orders/[id].vue`.
-- `app/middleware/legacy.global.ts` и `routeRules` в `nuxt.config.ts` — 301 со старых `/login`, `/catalog`, `/orders/*`, `/?view=` в `/office`.
-- `app/components/dashboard/` — отдельные разделы: обзор, исследования, стратегии, заказы, настройки и журнал. Кнопки передают действия странице через событие `control`.
-- `app/components/LiveActivity.vue` — текущие роли, очередь и результаты исследования.
-- `app/components/dashboard/Autonomy.vue` — состояние расписания, обработчика и очереди обязательств; `app/components/ProductHistory.vue` — загрузка сохранённых версий по запросу владельца.
-- `app/components/FarmShell.vue` — меню, общая оболочка и обновление данных.
-- `app/composables/useFarm.ts` — общее состояние панели, загрузка, русские подписи и сообщения ошибок.
-- `app/assets/` — стили. `tokens.css` (глобальные токены) и `components.css` (компоненты, действуют только под классом `ds` на `<html>`: `useHead({ htmlAttrs: { class: 'ds' } })`) для новых страниц; `main.css`, `live.css`, `workspace.css` для старого кабинета.
+- `app/pages/office.vue` — общая оболочка кабинета (`OfficeShell`): меню, шторка и нижние вкладки на телефоне, живой статус, состояние «нет связи».
+- `app/pages/office/` — разделы кабинета: `index` (Главная), `ideas/` (рейтинг, карточка идеи, отчёты руководителя), `agents`, `products`, `orders/`, `leads` (Клиенты), `money`, `settings` (режим, расписание, отбор, состояние сервера, техжурнал), `login`.
+- `app/components/office/` — общие блоки кабинета: лента, бейджи, балл, пустые состояния, режим работы, факты идеи, история версий продукта.
+- `app/composables/office/` — загрузка по типам `core/contracts/office.ts` (`data.ts`), общий опрос раз в 5 секунд с паузой в скрытой вкладке (`resource.ts`), действия владельца (`actions.ts`), подписи и форматирование.
+- `app/middleware/legacy.global.ts` и `routeRules` в `nuxt.config.ts` — 301 со старых `/login`, `/catalog`, `/orders/*`, `/?view=`, `/office?view=` в разделы кабинета.
+- `app/assets/` — `tokens.css` (токены) и `components.css` (компоненты под классом `ds` на `<html>`).
+- `tests/e2e/office.spec.ts` — `npm run test:e2e:office`: все разделы на 1440 и 390 px с подменой `/api/office/**` типизированными данными из `tests/e2e/fixtures/office.ts`; снимки в `output/playwright/stream-c/`.
 
 ## Сервер и фоновые задания
 
