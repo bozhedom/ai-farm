@@ -2,13 +2,16 @@ import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { templateSchema, type Template } from './policy'
 import { config } from './config'
-import { budgetSummary, reserveBudget } from './budget'
+import { budgetSummary, reserveBudget, reserveFor, type BudgetCategory } from './budget'
 import { WorkerDraining } from './activity'
 import { lockResearchWindow } from './research-window'
 
+export type JobKind = 'research' | 'fulfill' | 'evaluate' | 'scout' | 'lead' | 'report' | 'evolve'
+/** Model-using farm work: one at a time across workers, stopped by pause and the closed window. */
+export const farmModelKinds = ['research', 'scout', 'lead', 'report'] as const
 export type Job = {
   id: string
-  kind: 'research' | 'fulfill' | 'evaluate'
+  kind: JobKind
   payload: Record<string, string>
   attempts: number
   max_attempts: number
@@ -29,25 +32,38 @@ export async function enqueue(
 }
 export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
   return transaction(async (db) => {
-    // Serialize research claims across workers, including a manual run racing the scheduler.
-    if (kinds.includes('research')) await lockResearchWindow(db)
+    // Serialize farm claims across workers, including a manual run racing the scheduler.
+    if (kinds.some((kind) => (farmModelKinds as readonly string[]).includes(kind)))
+      await lockResearchWindow(db)
+    // Priority: orders, then selection and reports, then research, scouting and leads.
+    // Scheduled jobs (daily slots and payload.scheduled) wait for the schedule switch.
     const [row] = await query<Job>(
       `SELECT j.* FROM jobs j CROSS JOIN system_state s
       WHERE j.kind=ANY($1) AND j.status='queued' AND j.run_after<=now() AND j.attempts<j.max_attempts
-      AND (j.kind='evaluate' OR (j.kind='research' AND s.mode='running' AND s.research_enabled) OR (j.kind='fulfill' AND s.mode<>'emergency_stop'))
-      AND (j.kind<>'research' OR NOT EXISTS (SELECT 1 FROM jobs active WHERE active.kind='research' AND active.status='running'))
-      AND (j.kind<>'research' OR (j.dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND NOT (j.payload ? 'scheduleSlot')) OR ($2 AND s.schedule_enabled))
-      ORDER BY CASE j.kind WHEN 'fulfill' THEN 0 ELSE 1 END,j.created_at,j.payload->>'campaignPosition',j.id
+      AND (j.kind='evaluate'
+        OR (j.kind=ANY($3) AND s.mode='running' AND s.research_enabled)
+        OR (j.kind IN ('fulfill','evolve') AND s.mode<>'emergency_stop'))
+      AND (NOT j.kind=ANY($3) OR NOT EXISTS (SELECT 1 FROM jobs active WHERE active.kind=ANY($3) AND active.status='running'))
+      AND ((j.dedupe_key !~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND NOT (j.payload ? 'scheduleSlot')
+            AND COALESCE(j.payload->>'scheduled','')<>'true')
+        OR ($2 AND s.schedule_enabled))
+      ORDER BY CASE j.kind WHEN 'fulfill' THEN 0 WHEN 'evolve' THEN 1 WHEN 'evaluate' THEN 1
+        WHEN 'report' THEN 2 WHEN 'research' THEN 3 WHEN 'scout' THEN 4 WHEN 'lead' THEN 5 ELSE 6 END,
+        j.created_at,j.payload->>'campaignPosition',j.id
       FOR UPDATE OF j SKIP LOCKED LIMIT 1`,
-      [kinds, config().AUTONOMY_ENABLED],
+      [kinds, config().AUTONOMY_ENABLED, farmModelKinds],
       db,
     )
     if (!row) return
-    if (row.kind === 'research' && row.payload.campaignId && (await deferDailyCampaign(row, db)))
+    if (
+      ((row.kind === 'research' && row.payload.campaignId) ||
+        ['scout', 'lead', 'report'].includes(row.kind)) &&
+      (await deferForDailyBudget(row, db))
+    )
       return
     const [claimed] = await query<Job>(
       `UPDATE jobs SET status='running', attempts=attempts+1,started_at=COALESCE(started_at,now()),
-      error_code=CASE WHEN error_code IN ('RESEARCH_DAILY_BUDGET_WAIT','WORKER_DRAINING') THEN null ELSE error_code END,
+      error_code=CASE WHEN error_code IN ('RESEARCH_DAILY_BUDGET_WAIT','FARM_DAILY_BUDGET_WAIT','WORKER_DRAINING') THEN null ELSE error_code END,
       locked_until=now()+interval '2 minutes', lease_token=$2 WHERE id=$1 RETURNING *`,
       [row.id, randomUUID()],
       db,
@@ -56,13 +72,14 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
   })
 }
 
-/** A depleted day can recover at midnight; exhausted task or lifetime limits cannot. */
-async function deferDailyCampaign(job: Job, db: Connection) {
+/**
+ * A depleted day can recover at midnight; exhausted task or lifetime limits cannot. Covers
+ * research campaign steps and the farm jobs (scout, lead, report).
+ */
+async function deferForDailyBudget(job: Job, db: Connection) {
   const c = config()
-  const reserve =
-    ['yandex', 'openai'].includes(c.MODEL_PROVIDER) || c.SEARCH_PROVIDER === 'yandex'
-      ? c.RESEARCH_RESERVE_KOPECKS
-      : 0
+  const category = job.kind as BudgetCategory
+  const reserve = reserveFor(category)
   if (reserve === 0 || reserve > c.DAILY_BUDGET_KOPECKS) return false
   await query('SELECT pg_advisory_xact_lock(735093)', [], db)
   // Existing reservations already own their envelope. Only meteredCall knows the next
@@ -71,7 +88,7 @@ async function deferDailyCampaign(job: Job, db: Connection) {
     (
       await query(
         'SELECT id FROM budget_reservations WHERE dedupe_key=$1',
-        [`research:${job.id}`],
+        [`${category}:${job.id}`],
         db,
       )
     ).length
@@ -91,20 +108,29 @@ async function deferDailyCampaign(job: Job, db: Connection) {
   if (budget.daySpent + outstanding <= c.DAILY_BUDGET_KOPECKS) {
     // Allocate under the same budget lock: a simultaneous order cannot consume the
     // checked room between this preflight and the worker's first reservation request.
-    await reserveBudget(`research:${job.id}`, 'research', db)
+    await reserveBudget(`${category}:${job.id}`, category, db)
     return false
   }
+  const research = job.kind === 'research'
   const [postponed] = await query(
-    `UPDATE jobs SET error_code='RESEARCH_DAILY_BUDGET_WAIT',
+    `UPDATE jobs SET error_code=$2,
      run_after=(date_trunc('day',now() AT TIME ZONE 'UTC')+interval '1 day 5 seconds') AT TIME ZONE 'UTC'
      WHERE id=$1 RETURNING run_after`,
-    [job.id],
+    [job.id, research ? 'RESEARCH_DAILY_BUDGET_WAIT' : 'FARM_DAILY_BUDGET_WAIT'],
     db,
   )
   await audit(
-    'research_daily_budget_wait',
-    'Направление ждёт следующего суточного бюджета. Попытки, расходы и обязательства сохранены.',
-    { jobId: job.id, campaignId: job.payload.campaignId, nextAt: postponed!.run_after },
+    research ? 'research_daily_budget_wait' : 'farm_daily_budget_wait',
+    research
+      ? 'Направление ждёт следующего суточного бюджета. Попытки, расходы и обязательства сохранены.'
+      : 'Дневной лимит исчерпан. Задача продолжится завтра.',
+    {
+      jobId: job.id,
+      kind: job.kind,
+      campaignId: job.payload.campaignId,
+      nextAt: postponed!.run_after,
+      dailyKopecks: c.DAILY_BUDGET_KOPECKS,
+    },
     db,
   )
   return true
@@ -172,7 +198,7 @@ export async function finishJob(job: Job, error?: unknown) {
             UNION SELECT reservation_id FROM orders WHERE id::text=$3
           )
         ) LIMIT 1`,
-        [job.id, `research:${job.id}`, job.payload.orderId || ''],
+        [job.id, `${job.kind}:${job.id}`, job.payload.orderId || ''],
         db,
       )
       if (!unresolved.length) {
@@ -219,7 +245,7 @@ export async function finishJob(job: Job, error?: unknown) {
       )
       await query(
         "UPDATE budget_reservations SET status='closed' WHERE dedupe_key=$1 OR id IN (SELECT reservation_id FROM orders WHERE id::text=$2)",
-        [`research:${job.id}`, job.payload.orderId || ''],
+        [`${job.kind}:${job.id}`, job.payload.orderId || ''],
         db,
       )
     }
@@ -255,7 +281,7 @@ export async function recoverJobs() {
         )
         await query(
           "UPDATE budget_reservations SET status='closed' WHERE dedupe_key=$1 OR id IN (SELECT reservation_id FROM orders WHERE id::text=$2)",
-          [`research:${row.id}`, row.payload.orderId || ''],
+          [`${row.kind}:${row.id}`, row.payload.orderId || ''],
           db,
         )
       }
@@ -290,5 +316,29 @@ export async function expireResearchSlots(day: string) {
         db,
       )
     }
+    // Scheduled scouting and lead slots of past days do not pile up after a pause either.
+    const farm = await query(
+      `UPDATE jobs SET status='failed',error_code='FARM_SLOT_EXPIRED',finished_at=now()
+      WHERE kind IN ('scout','lead') AND status='queued' AND started_at IS NULL
+      AND COALESCE(error_code,'')<>'FARM_DAILY_BUDGET_WAIT'
+      AND dedupe_key ~ '^(scout|lead):[0-9]{4}-[0-9]{2}-[0-9]{2}:'
+      AND substr(dedupe_key, strpos(dedupe_key, ':')+1, 10)<$1
+      RETURNING id,kind`,
+      [day],
+      db,
+    )
+    for (const job of farm)
+      await query(
+        "UPDATE budget_reservations SET status='closed' WHERE dedupe_key=$1",
+        [`${job.kind}:${job.id}`],
+        db,
+      )
+    if (farm.length)
+      await audit(
+        'farm_slots_expired',
+        'Вчерашние задачи разведки и поиска клиентов пропущены, чтобы не копить очередь.',
+        { jobIds: farm.map((job) => job.id) },
+        db,
+      )
   })
 }

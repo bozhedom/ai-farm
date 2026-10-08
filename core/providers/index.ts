@@ -10,6 +10,8 @@ import { openaiModel } from './openai'
 import { OPENROUTER_OUTPUT_TOKENS, openrouterModel } from './openrouter'
 import { openaiMaximum, usdToKopecks } from './openai-cost'
 import { serviceByTemplate } from '../service-catalog'
+import { allowedSearchPhrases } from '../taxonomy'
+import { demoScoutEvidence } from './demo'
 
 const master = () => readFileSync('prompts/master.md', 'utf8')
 async function requestJson(url: string, body: unknown, headers: Record<string, string>) {
@@ -91,25 +93,63 @@ export async function search(
         }
       if (c.SEARCH_PROVIDER === 'searxng')
         return { value: await localSearch(query, purpose === 'customers' ? 0 : 2), cost: 0 }
-      const data = await requestJson(
-        'https://searchapi.api.cloud.yandex.net/v2/web/search',
-        {
-          query: {
-            searchType: 'SEARCH_TYPE_RU',
-            queryText: query,
-            familyMode: 'FAMILY_MODE_STRICT',
-          },
-          folderId: c.YANDEX_FOLDER_ID,
-          responseFormat: 'FORMAT_XML',
-          groupSpec: { groupMode: 'GROUP_MODE_DEEP', groupsOnPage: 6, docsInGroup: 1 },
-        },
-        { Authorization: `Api-Key ${c.YANDEX_API_KEY}` },
-      )
-      const value = parseSearchXml(
-        Buffer.from(z.string().parse(data.rawData), 'base64').toString('utf8'),
-      )
+      const value = await yandexSearch(query)
       if (!value.length && purpose === 'research') throw new Error('SEARCH_EMPTY')
       return { value, cost: c.SEARCH_COST_KOPECKS }
+    },
+  })
+}
+
+async function yandexSearch(queryText: string) {
+  const c = config()
+  const data = await requestJson(
+    'https://searchapi.api.cloud.yandex.net/v2/web/search',
+    {
+      query: {
+        searchType: 'SEARCH_TYPE_RU',
+        queryText,
+        familyMode: 'FAMILY_MODE_STRICT',
+      },
+      folderId: c.YANDEX_FOLDER_ID,
+      responseFormat: 'FORMAT_XML',
+      groupSpec: { groupMode: 'GROUP_MODE_DEEP', groupsOnPage: 6, docsInGroup: 1 },
+    },
+    { Authorization: `Api-Key ${c.YANDEX_API_KEY}` },
+  )
+  return parseSearchXml(Buffer.from(z.string().parse(data.rawData), 'base64').toString('utf8'))
+}
+
+/**
+ * Search by a phrase from the server taxonomy (`core/taxonomy.ts`). Models never pick search
+ * phrases; any other text is refused before a provider is contacted.
+ */
+export async function searchQuery(
+  queryText: string,
+  key: string,
+  reservationId: string,
+  purpose: 'scout' | 'customers' = 'scout',
+): Promise<Evidence[]> {
+  if (!allowedSearchPhrases.has(queryText)) throw new Error('POLICY_SEARCH_QUERY')
+  const c = config()
+  const demo = c.SEARCH_PROVIDER === 'demo'
+  return meteredCall({
+    key,
+    reservationId,
+    role: 'search',
+    maximum: c.SEARCH_PROVIDER === 'yandex' ? c.SEARCH_COST_KOPECKS : 0,
+    demo,
+    activity: {
+      provider: c.SEARCH_PROVIDER,
+      taskLabel:
+        purpose === 'customers'
+          ? `Поиск запросов клиентов: ${queryText}`
+          : `Разведка: ${queryText}`,
+    },
+    invoke: async () => {
+      if (demo) return { cost: 0, value: purpose === 'scout' ? demoScoutEvidence(queryText) : [] }
+      if (c.SEARCH_PROVIDER === 'searxng')
+        return { value: await localSearch(queryText, 0), cost: 0 }
+      return { value: await yandexSearch(queryText), cost: c.SEARCH_COST_KOPECKS }
     },
   })
 }
@@ -176,7 +216,7 @@ export async function model<T>(args: {
     args.maxOutputTokens ??
     (c.MODEL_PROVIDER === 'openrouter'
       ? OPENROUTER_OUTPUT_TOKENS
-      : args.role === 'Исследователь'
+      : args.role === 'Исследователь' || args.role === 'Разведчик'
         ? 2800
         : 2000)
   // OpenAI also receives the schema separately from the system instructions.
@@ -231,6 +271,9 @@ export async function model<T>(args: {
             Архитектор: 'Проектирует текстовый сервис по принятой гипотезе',
             Исполнитель: 'Готовит текст по исходным данным',
             Проверяющий: 'Сверяет результат с исходными фактами и правилами',
+            Разведчик: 'Ищет идею заработка по теме и признаки спроса в источниках',
+            Руководитель: 'Пишет отчёт по серверным цифрам и рейтингу идей',
+            'Автор отклика': 'Готовит черновик отклика на публичный запрос',
           } as Record<string, string>
         )[args.role] || args.role,
     },

@@ -28,9 +28,29 @@ export async function budgetSummary(db: Connection = pool) {
   }
 }
 
+export type BudgetCategory = 'research' | 'order' | 'scout' | 'lead' | 'report'
+/** Farm work stops with the research window and pauses; accepted orders do not. */
+export const farmCategories: readonly BudgetCategory[] = ['research', 'scout', 'lead', 'report']
+
+/** Envelope per task. Free providers reserve nothing, as before. */
+export function reserveFor(category: BudgetCategory) {
+  const c = config()
+  const paid =
+    ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ||
+    (category !== 'order' && c.SEARCH_PROVIDER === 'yandex')
+  if (!paid) return 0
+  return {
+    order: c.ORDER_RESERVE_KOPECKS,
+    research: c.RESEARCH_RESERVE_KOPECKS,
+    scout: c.SCOUT_RESERVE_KOPECKS,
+    lead: c.LEAD_RESERVE_KOPECKS,
+    report: c.REPORT_RESERVE_KOPECKS,
+  }[category]
+}
+
 export async function reserveBudget(
   key: string,
-  category: 'research' | 'order',
+  category: BudgetCategory,
   db?: Connection,
 ): Promise<string> {
   if (!db) return transaction((tx) => reserveBudget(key, category, tx))
@@ -41,16 +61,10 @@ export async function reserveBudget(
     return existing.id
   }
   const c = config()
-  const limit =
-    !['yandex', 'openai'].includes(c.MODEL_PROVIDER) &&
-    (category === 'order' || c.SEARCH_PROVIDER !== 'yandex')
-      ? 0
-      : category === 'order'
-        ? c.ORDER_RESERVE_KOPECKS
-        : c.RESEARCH_RESERVE_KOPECKS
+  const limit = reserveFor(category)
   const s = await budgetSummary(db)
   const protectedOrders =
-    category === 'research' ? Math.min(100000, Math.floor(c.MONTHLY_BUDGET_KOPECKS / 3)) : 0
+    category !== 'order' ? Math.min(100000, Math.floor(c.MONTHLY_BUDGET_KOPECKS / 3)) : 0
   if (
     s.daySpent + s.outstanding + limit > c.DAILY_BUDGET_KOPECKS ||
     s.monthSpent + s.outstanding + limit + protectedOrders > c.MONTHLY_BUDGET_KOPECKS
@@ -111,11 +125,11 @@ export async function meteredCall<T>(args: {
       [args.reservationId],
       db,
     )
-    if (!state.research_enabled && reservation?.category === 'research')
-      return { error: new Error('RESEARCH_WINDOW_CLOSED') }
+    const farm = farmCategories.includes(reservation?.category)
+    if (!state.research_enabled && farm) return { error: new Error('RESEARCH_WINDOW_CLOSED') }
     if (state.mode === 'emergency_stop') throw new Error('STOPPED')
     if (!reservation || reservation.status !== 'open') throw new Error('RESERVATION_CLOSED')
-    if (state.mode === 'paused' && reservation.category === 'research') throw new Error('PAUSED')
+    if (state.mode === 'paused' && farm) throw new Error('PAUSED')
     if (
       !Number.isSafeInteger(args.maximum) ||
       args.maximum < 0 ||
