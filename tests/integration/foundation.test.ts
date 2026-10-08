@@ -67,7 +67,8 @@ describe('storefront foundation', () => {
     await query("UPDATE products SET visibility='public', published_at=now()")
     const catalog = await publicCatalog()
     expect(catalog.payment).toEqual({ mode: 'sandbox', test: true, label: 'Тестовая оплата' })
-    expect(catalog.acceptingOrders).toBe(false)
+    // Orders open with the buyer path (slice A) while the farm is running.
+    expect(catalog.acceptingOrders).toBe(true)
     expect(catalog.seller).toBeNull()
     expect(catalog.services).toHaveLength(1)
     expect(catalog.services[0]).toMatchObject({
