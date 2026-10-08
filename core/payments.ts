@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { config } from './config'
 import { audit, query, transaction, type Connection } from './db'
-import { closeReservation } from './budget'
+import { closeReservation, fundOrderReservation } from './budget'
 import { enqueue } from './queue'
 import { POLICY } from './policy'
+import { publicDayCounts } from './public-catalog'
 
 export type Rpc = (method: string, params: unknown[]) => Promise<any>
 export type Invoice = {
@@ -128,6 +129,29 @@ export async function verifySepoliaPayment(
   }
 }
 
+/** Why a paid public order may not start today, or null when it may. */
+export const capacityErrors: readonly string[] = Object.freeze([
+  'PAID_ORDERS_LIMIT',
+  'BUDGET_BLOCKED',
+])
+
+/**
+ * A public order holds no model budget until it is paid. Here, under the caller's system_state
+ * lock, it gets its reservation, within the daily cap of paid public orders.
+ */
+async function admitPublicOrder(db: Connection, order: Record<string, any>) {
+  if (order.source !== 'public') return null
+  if ((await publicDayCounts(db)).paid >= config().PUBLIC_PAID_ORDERS_PER_DAY)
+    return 'PAID_ORDERS_LIMIT'
+  try {
+    await fundOrderReservation(order.reservation_id, db)
+  } catch (error) {
+    if (error instanceof Error && error.message === 'BUDGET_BLOCKED') return 'BUDGET_BLOCKED'
+    throw error
+  }
+  return null
+}
+
 // Only called with a locked, payable order after sandbox validation or RPC verification.
 async function confirmPayment(
   db: Connection,
@@ -135,7 +159,30 @@ async function confirmPayment(
   hash: string,
   confirmations: number,
   proof: PaymentProof | null,
+  options: { refuseWhenFull?: boolean } = {},
 ) {
+  const blocked = await admitPublicOrder(db, order)
+  if (blocked && options.refuseWhenFull) throw new Error('PUBLIC_CAPACITY_REACHED')
+  if (blocked) {
+    // The transfer is real (in test ETH), so the order is paid, but the work does not start.
+    const [held] = await query(
+      `UPDATE orders SET status='manual_review',paid_at=now(),tx_hash=$2,confirmations=$3,
+       payment_error=$4,payment_proof=$5,payment_lease_token=null,payment_locked_until=null
+       WHERE id=$1 RETURNING *`,
+      [order.id, hash, confirmations, blocked, proof],
+      db,
+    )
+    await closeReservation(order.reservation_id, db)
+    await audit(
+      'public_order_held',
+      blocked === 'BUDGET_BLOCKED'
+        ? 'Тестовая оплата подтверждена, но бюджета модели на этот заказ нет. Заказ ждёт владельца.'
+        : 'Тестовая оплата подтверждена, но дневной предел оплаченных заказов исчерпан. Заказ ждёт владельца.',
+      { orderId: order.id, reason: blocked },
+      db,
+    )
+    return held
+  }
   const [updated] = await query(
     `UPDATE orders SET status='paid',paid_at=now(),tx_hash=$2,confirmations=$3,
      payment_error=null,payment_proof=$4,payment_lease_token=null,payment_locked_until=null
@@ -153,7 +200,11 @@ async function confirmPayment(
   return updated
 }
 
-export async function sandboxPayment(id: string) {
+/**
+ * Confirms a sandbox payment. `refuseWhenFull` (the buyer's own button) refuses a public order
+ * that cannot start today instead of taking it and holding it for the owner.
+ */
+export async function sandboxPayment(id: string, options: { refuseWhenFull?: boolean } = {}) {
   if (config().PAYMENT_MODE !== 'sandbox') throw new Error('SANDBOX_DISABLED')
   return transaction(async (db) => {
     // Serialize new obligations with generation changes; keep state -> order lock order.
@@ -164,7 +215,7 @@ export async function sandboxPayment(id: string) {
     if (['paid', 'running', 'delivered'].includes(order.status)) return order
     if (order.status !== 'awaiting_payment') throw new Error('ORDER_NOT_PAYABLE')
     if (new Date(order.expires_at) < new Date()) throw new Error('INVOICE_EXPIRED')
-    return confirmPayment(db, order, `sandbox:${id}`, 0, null)
+    return confirmPayment(db, order, `sandbox:${id}`, 0, null, options)
   })
 }
 

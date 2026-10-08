@@ -213,3 +213,54 @@ export async function meteredCall<T>(args: {
     throw error
   }
 }
+
+/**
+ * An order reservation that holds no budget yet: a public order before payment. It keeps the
+ * order's accounting row in place, but blocks every model call until `fundOrderReservation`.
+ */
+export async function openUnfundedReservation(key: string, db: Connection) {
+  const id = randomUUID()
+  await query(
+    "INSERT INTO budget_reservations(id,dedupe_key,category,limit_kopecks) VALUES ($1,$2,'order',0)",
+    [id, key],
+    db,
+  )
+  return id
+}
+
+/**
+ * Funds an unfunded order reservation at payment time with the same limits as `reserveBudget`.
+ * Throws BUDGET_BLOCKED without changing anything when the day or month has no room.
+ */
+export async function fundOrderReservation(id: string, db: Connection) {
+  await query('SELECT pg_advisory_xact_lock(735093)', [], db)
+  const [reservation] = await query(
+    'SELECT * FROM budget_reservations WHERE id=$1 FOR UPDATE',
+    [id],
+    db,
+  )
+  if (!reservation || reservation.status !== 'open' || reservation.category !== 'order')
+    throw new Error('RESERVATION_CLOSED')
+  const c = config()
+  const limit = ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? c.ORDER_RESERVE_KOPECKS : 0
+  if (reservation.limit_kopecks >= limit) return
+  const s = await budgetSummary(db)
+  const extra = limit - reservation.limit_kopecks
+  if (
+    s.daySpent + s.outstanding + extra > c.DAILY_BUDGET_KOPECKS ||
+    s.monthSpent + s.outstanding + extra > c.MONTHLY_BUDGET_KOPECKS
+  )
+    throw new Error('BUDGET_BLOCKED')
+  await query('UPDATE budget_reservations SET limit_kopecks=$2 WHERE id=$1', [id, limit], db)
+}
+
+/** Whether an order reservation could be funded right now. Reserves nothing. */
+export async function orderBudgetAvailable(db: Connection) {
+  const c = config()
+  const limit = ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? c.ORDER_RESERVE_KOPECKS : 0
+  const s = await budgetSummary(db)
+  return (
+    s.daySpent + s.outstanding + limit <= c.DAILY_BUDGET_KOPECKS &&
+    s.monthSpent + s.outstanding + limit <= c.MONTHLY_BUDGET_KOPECKS
+  )
+}

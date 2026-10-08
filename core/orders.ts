@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { config, usesSourcePosts } from './config'
 import { audit, query, transaction, type Connection } from './db'
-import { reserveBudget } from './budget'
-import { deriveOrderToken, invoiceWei, orderTokenHash } from './public-orders'
+import { openUnfundedReservation, orderBudgetAvailable, reserveBudget } from './budget'
+import { deriveOrderToken, invoiceUnique, invoiceWei, orderTokenHash } from './public-orders'
+import { publicDayCounts } from './public-catalog'
 import { productSchema, validateInput, validateTemplateInput, type ProductSpec } from './policy'
 import { orderProgress, paymentErrorText } from './order-progress'
 import { sourceSocialDelivery, validateSourcePostInput } from './source-posts'
@@ -24,6 +25,14 @@ type OrderRecord = Record<string, any> & {
   resolution_reason: string | null
 }
 
+/**
+ * Idempotency keys are stored as a hash. A public order's link is derived from its key, so the
+ * key itself never sits in the database.
+ */
+export function requestKeyHash(requestKey: string) {
+  return 'sha256:' + createHash('sha256').update(requestKey.toLowerCase()).digest('hex')
+}
+
 export async function createOrder(productId: string, input: string, requestKey: string) {
   validateInput(input)
   return transaction(async (db) => {
@@ -31,7 +40,7 @@ export async function createOrder(productId: string, input: string, requestKey: 
     const [state] = await query('SELECT * FROM system_state WHERE id=true FOR UPDATE', [], db)
     const [existing] = await query(
       'SELECT id,product_id,input FROM orders WHERE request_key=$1',
-      [requestKey],
+      [requestKeyHash(requestKey)],
       db,
     )
     if (existing) {
@@ -52,7 +61,7 @@ export async function createOrder(productId: string, input: string, requestKey: 
       state,
       input,
       requestKey,
-      amountWei: (sequence) => (100000000000000n + sequence).toString(),
+      amountWei: (sequence) => (100000000000000n + invoiceUnique(sequence)).toString(),
     })
     await audit(
       'order_created',
@@ -88,6 +97,8 @@ async function insertOrder(
     priceKopecks?: number
     accessTokenHash?: string | null
     clientKey?: string | null
+    /** Public orders hold no model budget until their payment is confirmed. */
+    fundOnPayment?: boolean
   },
 ) {
   const [strategy] = await query(
@@ -97,14 +108,16 @@ async function insertOrder(
   )
   if (!strategy) throw new Error('NO_ACTIVE_STRATEGY')
   const id = randomUUID()
-  const reservationId = await reserveBudget(`order:${id}`, 'order', db)
+  const reservationId = o.fundOnPayment
+    ? await openUnfundedReservation(`order:${id}`, db)
+    : await reserveBudget(`order:${id}`, 'order', db)
   const [sequence] = await query("SELECT nextval('invoice_amount_sequence')::text AS n", [], db)
   await query(
     `INSERT INTO orders(id,request_key,product_id,product_snapshot,strategy_id,strategy_snapshot,generation,input,payment_mode,amount_wei,receiver,reservation_id,required_confirmations,source,price_kopecks,access_token_hash,client_key)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
     [
       id,
-      o.requestKey,
+      requestKeyHash(o.requestKey),
       o.product.id,
       { ...o.product.spec, version: o.product.version },
       strategy.id,
@@ -135,6 +148,8 @@ async function insertOrder(
  * A buyer order from the public site. The product must be published; the secret link token is
  * returned to the caller and only its sha256 is stored. A repeated `requestKey` with the same
  * service and text returns the same order and link. Payments stay test-only, never revenue.
+ * No model budget is reserved here: an unpaid order must not block the farm. The budget is
+ * reserved when the payment is confirmed (`confirmPayment`).
  */
 export async function createPublicOrder(o: {
   slug: string
@@ -150,7 +165,7 @@ export async function createPublicOrder(o: {
     const [existing] = await query(
       `SELECT o.id,o.input,o.source,o.access_token_hash,p.slug FROM orders o
        JOIN products p ON p.id=o.product_id WHERE o.request_key=$1`,
-      [o.requestKey],
+      [requestKeyHash(o.requestKey)],
       db,
     )
     if (existing) {
@@ -161,32 +176,40 @@ export async function createPublicOrder(o: {
       return { id: existing.id, token, existing: true }
     }
     if (state?.mode !== 'running') throw new Error('NEW_ORDERS_PAUSED')
+    // Demo products are sold only on a demo stand; with a real model they do not exist here.
     const [product] = await query(
-      "SELECT * FROM products WHERE slug=$1 AND status='sandbox' AND visibility='public'",
-      [o.slug],
+      `SELECT * FROM products WHERE slug=$1 AND status='sandbox' AND visibility='public'
+       AND (NOT is_demo OR $2)`,
+      [o.slug, config().MODEL_PROVIDER === 'demo'],
       db,
     )
     if (!product) throw new Error('PRODUCT_NOT_FOUND')
     checkProductInput(product, o.input)
     const c = config()
-    const [today] = await query(
-      `SELECT count(*)::int AS n FROM orders WHERE source='public'
-       AND created_at>=date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
-      [],
+    const [open] = await query(
+      `SELECT count(*)::int AS n FROM orders WHERE source='public' AND client_key=$1
+       AND status='awaiting_payment' AND (expires_at>now() OR tx_hash IS NOT NULL)`,
+      [o.clientKey],
       db,
     )
-    if (today!.n >= c.PUBLIC_ORDERS_PER_DAY) throw new Error('PUBLIC_ORDERS_LIMIT')
+    if (open!.n >= c.PUBLIC_OPEN_ORDERS_PER_CLIENT) throw new Error('PUBLIC_OPEN_ORDERS_LIMIT')
+    const day = await publicDayCounts(db)
+    if (day.open >= c.PUBLIC_ORDERS_PER_DAY || day.paid >= c.PUBLIC_PAID_ORDERS_PER_DAY)
+      throw new Error('PUBLIC_ORDERS_LIMIT')
+    // Nothing is reserved yet, but an order the farm cannot pay for today is not taken.
+    if (!(await orderBudgetAvailable(db))) throw new Error('BUDGET_BLOCKED')
     const id = await insertOrder(db, {
       product,
       state,
       input: o.input,
       requestKey: o.requestKey,
       amountWei: (sequence) =>
-        invoiceWei(product.price_kopecks, c.TEST_ETH_RUB_RATE, sequence).toString(),
+        invoiceWei(product.price_kopecks, c.TEST_ETH_RUB_RATE, invoiceUnique(sequence)).toString(),
       source: 'public',
       priceKopecks: product.price_kopecks,
       accessTokenHash: hash,
       clientKey: o.clientKey,
+      fundOnPayment: true,
     })
     await audit(
       'public_order_created',

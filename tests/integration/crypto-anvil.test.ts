@@ -55,7 +55,7 @@ async function newOrder() {
     input:
       'Блокнот «Линия». Формат А5, 80 листов в точку, бумага 100 г/м². Обложка из картона. Цвет серый.',
     requestKey: randomUUID(),
-    clientKey: 'anvil-test',
+    clientKey: randomUUID(),
   })
   const view = await publicOrderView(created.token)
   if (view.payment.mode !== 'sepolia') throw new Error('SEPOLIA_MODE_EXPECTED')

@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto'
+import { createHash, createHmac, randomBytes, randomInt } from 'node:crypto'
 import { config } from './config'
 import { audit, query, transaction } from './db'
 import type { PublicOrderView, PublicPayRequest } from './contracts/public'
@@ -27,12 +27,21 @@ export function orderTokenHash(token: string) {
   return createHash('sha256').update(token).digest('hex')
 }
 
-/** Price rounded down to 0.000001 test ETH plus the unique invoice part (sequence < 10^12). */
+/** Price rounded down to 0.000001 test ETH plus the unique invoice part (`unique` < 10^12). */
 const uniqueSpan = 10n ** 12n
-export function invoiceWei(priceKopecks: number, rubPerEth: number, sequence: bigint) {
-  if (sequence <= 0n || sequence >= uniqueSpan) throw new Error('INVOICE_SEQUENCE_EXHAUSTED')
+export function invoiceWei(priceKopecks: number, rubPerEth: number, unique: bigint) {
+  if (unique <= 0n || unique >= uniqueSpan) throw new Error('INVOICE_SEQUENCE_EXHAUSTED')
   const base = (kopecksToWei(priceKopecks, rubPerEth) / uniqueSpan) * uniqueSpan
-  return (base > 0n ? base : uniqueSpan) + sequence
+  return (base > 0n ? base : uniqueSpan) + unique
+}
+
+/**
+ * The unique invoice part for a value of `invoice_amount_sequence`: the sequence times 1000 plus
+ * three random digits. Still unique per order, but the next invoice is no longer predictable.
+ */
+export function invoiceUnique(sequence: bigint, random = randomInt(1000)) {
+  if (sequence <= 0n) throw new Error('INVOICE_SEQUENCE_EXHAUSTED')
+  return sequence * 1000n + BigInt(random)
 }
 
 /** Short reference a buyer can read out loud. Not a secret and not a sequence number. */
@@ -127,7 +136,10 @@ export async function publicOrderView(token: string, now = new Date()): Promise<
             explorerUrl:
               order.tx_hash && !local ? `https://sepolia.etherscan.io/tx/${order.tx_hash}` : null,
           }
-        : { mode: 'sandbox', canConfirm: open && c.PAYMENT_MODE === 'sandbox' },
+        : {
+            mode: 'sandbox',
+            canConfirm: open && c.PAYMENT_MODE === 'sandbox' && c.PUBLIC_SANDBOX_PAY,
+          },
     steps: progress.steps,
     message: progress.message,
     result:
@@ -149,7 +161,9 @@ export async function payPublicOrder(token: string, request: PublicPayRequest, c
   const order = await findByToken(token)
   if (request.mode !== order.payment_mode) throw new Error('PAYMENT_MODE_MISMATCH')
   if (request.mode === 'sandbox') {
-    await sandboxPayment(order.id)
+    // Each paid order spends model budget; an anonymous button is only for a local demo.
+    if (!config().PUBLIC_SANDBOX_PAY) throw new Error('SANDBOX_PAY_DISABLED')
+    await sandboxPayment(order.id, { refuseWhenFull: true })
     return { ok: true as const }
   }
   if (order.status !== 'awaiting_payment' || new Date(order.expires_at) <= new Date())

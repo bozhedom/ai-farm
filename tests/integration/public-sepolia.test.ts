@@ -42,7 +42,7 @@ async function newOrder() {
     slug: 'description',
     input,
     requestKey: randomUUID(),
-    clientKey: 'test',
+    clientKey: randomUUID(),
   })
   const view = await publicOrderView(created.token)
   if (view.payment.mode !== 'sepolia') throw new Error('expected sepolia')

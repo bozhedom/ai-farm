@@ -1,5 +1,5 @@
 import { config } from './config'
-import { query } from './db'
+import { pool, query, type Connection } from './db'
 import type { PaymentModeInfo, ProductPage } from './contracts/common'
 import type { PublicCatalog, PublicService } from './contracts/public'
 import { serviceByTemplate, type ServiceTemplate } from './service-catalog'
@@ -166,15 +166,34 @@ export function buyerService(row: ProductRow): PublicService | null {
 
 const publicColumns = 'template,slug,version,price_kopecks,page,is_demo,spec,checks'
 
+/**
+ * Public orders of this UTC day: `open` counts orders created today that are still waiting for
+ * payment or got paid (expired ones free their slot), `paid` counts payments confirmed today.
+ */
+export async function publicDayCounts(db: Connection = pool) {
+  const [row] = await query(
+    `WITH day AS (SELECT date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS start)
+     SELECT
+       count(*) FILTER (WHERE created_at>=day.start
+         AND (paid_at IS NOT NULL OR status='awaiting_payment'))::int AS open,
+       count(*) FILTER (WHERE paid_at>=day.start)::int AS paid
+     FROM orders, day WHERE source='public' AND (created_at>=day.start OR paid_at>=day.start)`,
+    [],
+    db,
+  )
+  return { open: row!.open as number, paid: row!.paid as number }
+}
+
 /** Whether a buyer may start an order right now. */
 export async function acceptingOrders() {
   const c = config()
-  const [row] = await query(
-    `SELECT mode,(SELECT count(*)::int FROM orders WHERE source='public'
-       AND created_at>=date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS today
-     FROM system_state WHERE id=true`,
+  const [state] = await query('SELECT mode FROM system_state WHERE id=true')
+  const day = await publicDayCounts()
+  return (
+    state?.mode === 'running' &&
+    day.open < c.PUBLIC_ORDERS_PER_DAY &&
+    day.paid < c.PUBLIC_PAID_ORDERS_PER_DAY
   )
-  return row?.mode === 'running' && row.today < c.PUBLIC_ORDERS_PER_DAY
 }
 
 function seller() {

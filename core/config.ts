@@ -49,7 +49,15 @@ const schema = z.object({
   PUBLIC_SELLER: z.string().trim().max(200).default(''),
   PUBLIC_CONTACT: z.string().trim().max(200).default(''),
   PUBLIC_TERMS_URL: z.string().trim().default(''),
+  // Public orders created per UTC day that are still open or paid; expired ones free a slot.
   PUBLIC_ORDERS_PER_DAY: z.coerce.number().int().min(0).max(1000).default(30),
+  // Public orders that may be paid (and so spend model budget) per UTC day.
+  PUBLIC_PAID_ORDERS_PER_DAY: z.coerce.number().int().min(0).max(1000).default(10),
+  // Unpaid public orders one buyer address may hold open at once.
+  PUBLIC_OPEN_ORDERS_PER_CLIENT: z.coerce.number().int().min(1).max(20).default(2),
+  // Lets an anonymous buyer press the sandbox payment button. Only for a local demo: every such
+  // order spends real model budget. Off: the owner confirms sandbox payments in the office.
+  PUBLIC_SANDBOX_PAY: flag.default(false),
   // Trust X-Forwarded-For from a reverse proxy on a private address (Caddy in compose.edge.yaml).
   // Off: the socket address is the buyer, and a forwarded header is ignored.
   TRUST_PROXY: flag.default(false),

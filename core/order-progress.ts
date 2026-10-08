@@ -14,6 +14,12 @@ export const paymentErrors: Record<string, string> = {
   INVALID_BLOCK_HEIGHT: 'RPC вернул противоречивую высоту блока. Сверка повторится автоматически.',
   RPC_INVALID_RESPONSE: 'RPC вернул некорректные данные. Сверка повторится автоматически.',
   RPC_UNAVAILABLE: 'RPC временно недоступен. Сверка повторится автоматически.',
+  TX_ALREADY_USED:
+    'Хеш перевода на сумму этого счёта уже закреплён за другим заказом. Сверьте переводы вручную.',
+  PAID_ORDERS_LIMIT:
+    'Тестовая оплата подтверждена, но дневной предел оплаченных заказов с сайта исчерпан. Исполнение не запускалось.',
+  BUDGET_BLOCKED:
+    'Тестовая оплата подтверждена, но бюджета модели на исполнение не хватило. Исполнение не запускалось.',
 }
 export function paymentErrorText(code: string | null) {
   return code
@@ -82,8 +88,10 @@ export function orderProgress(
     title = 'Нужна проверка владельцем'
     detail = order.paid_at
       ? jobErrors[job?.error_code] ||
+        (!job && paymentErrorText(order.payment_error)) ||
         'Автоматические попытки остановлены. Причина и исходный материал сохранены.'
-      : 'За сутки после окончания счёта платёж не подтверждён. Автоматическая выдача остановлена, история перевода сохранена.'
+      : (order.payment_error === 'TX_ALREADY_USED' && paymentErrorText(order.payment_error)) ||
+        'За сутки после окончания счёта платёж не подтверждён. Автоматическая выдача остановлена, история перевода сохранена.'
   } else if (order.status === 'expired') {
     title = 'Срок счёта истёк'
     detail =
@@ -189,6 +197,18 @@ export function publicProgress(
     case 'expired':
       return say('expired', 'Срок оплаты истёк', 'Оформите заказ заново, это займёт минуту.')
     case 'manual_review':
+      if (paid && ['PAID_ORDERS_LIMIT', 'BUDGET_BLOCKED'].includes(order.payment_error))
+        return say(
+          'needs_attention',
+          'Оплата получена, но сегодня не успеем',
+          'На сегодня мы набрали заказов больше, чем можем сделать. Владелец посмотрит ваш заказ вручную.',
+        )
+      if (!paid && order.payment_error === 'TX_ALREADY_USED')
+        return say(
+          'needs_attention',
+          'Проверяем перевод вручную',
+          'Этот перевод указали и в другом заказе. Владелец разберётся сам.',
+        )
       return paid
         ? say(
             'needs_attention',

@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { ambiguousPath, indexablePage, rawPath } from '../../server/middleware/security'
 import { peerClientIp } from '../../server/utils/client'
 import { limitAddress } from '../../core/rate-limit'
+import { invoiceUnique, invoiceWei } from '../../core/public-orders'
+import { requestKeyHash } from '../../core/orders'
+import { publicProgress } from '../../core/order-progress'
 
 describe('raw request paths', () => {
   it('refuses paths that URL parsing and the router read differently', () => {
@@ -62,5 +65,50 @@ describe('buyer address for limits', () => {
     expect(limitAddress('::ffff:203.0.113.5')).toBe('203.0.113.5')
     expect(limitAddress('203.0.113.5')).toBe('203.0.113.5')
     expect(limitAddress('internal')).toBe('internal')
+  })
+})
+
+describe('invoice amounts and keys', () => {
+  it('keeps amounts unique per sequence value but not predictable', () => {
+    expect(invoiceUnique(42n, 7)).toBe(42007n)
+    expect(invoiceWei(49000, 300000, invoiceUnique(42n, 999))).toBe(1633000000042999n)
+    const seen = new Set<bigint>()
+    for (let n = 1n; n <= 500n; n++) seen.add(invoiceUnique(n))
+    expect(seen.size).toBe(500)
+    expect(() => invoiceUnique(0n)).toThrow('INVOICE_SEQUENCE_EXHAUSTED')
+  })
+
+  it('stores idempotency keys as a hash, case-insensitive like a uuid', () => {
+    const key = '3f2c1a9e-8b7d-4c6e-9a1b-2c3d4e5f6a7b'
+    expect(requestKeyHash(key)).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(requestKeyHash(key.toUpperCase())).toBe(requestKeyHash(key))
+    expect(requestKeyHash(key)).not.toContain(key)
+  })
+})
+
+describe('buyer wording for held orders', () => {
+  const base = {
+    status: 'manual_review',
+    payment_mode: 'sepolia',
+    required_confirmations: 3,
+    expires_at: new Date(),
+  }
+  it('does not promise work that will not start today', () => {
+    const view = publicProgress(
+      { ...base, paid_at: new Date(), payment_error: 'PAID_ORDERS_LIMIT' },
+      null,
+      null,
+      {},
+    )
+    expect(view.message.title).toBe('Оплата получена, но сегодня не успеем')
+    expect(view.steps[0]!.done).toBe(true)
+    expect(view.steps[1]!.done).toBe(false)
+  })
+  it('explains a transfer claimed by another order', () => {
+    const view = publicProgress({ ...base, payment_error: 'TX_ALREADY_USED' }, null, null, {})
+    expect(view).toMatchObject({
+      status: 'needs_attention',
+      message: { title: 'Проверяем перевод вручную' },
+    })
   })
 })
