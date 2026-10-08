@@ -3,7 +3,9 @@
 
 export type SavedOrder = { token: string; name: string; at: string }
 const storageKey = 'ai-farm:orders'
-const tokenPattern = /^[A-Za-z0-9_-]{43}$/
+/** A secret order link token: exactly 43 base64url characters. Anything else is not an order. */
+export const orderTokenPattern = /^[A-Za-z0-9_-]{43}$/
+const tokenPattern = orderTokenPattern
 
 export function savedOrders(): SavedOrder[] {
   try {

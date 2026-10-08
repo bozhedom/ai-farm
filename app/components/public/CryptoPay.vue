@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { PublicOrderView } from '../../../core/contracts/public'
-import { publicErrorCode, publicWhen } from '~/utils/public-site'
+import { orderTokenPattern, publicErrorCode, publicWhen } from '~/utils/public-site'
 
 type Sepolia = Extract<PublicOrderView['payment'], { mode: 'sepolia' }>
 const props = defineProps<{ payment: Sepolia; token: string; expiresAt: string }>()
 const emit = defineEmits<{ changed: [] }>()
 
+/** The chain from the server's invoice, as the wallet expects it: 11155111 -> '0xaa36a7'. */
+const chainHex = computed(() => '0x' + props.payment.chainId.toString(16))
 const sepolia = {
   chainId: '0xaa36a7',
   chainName: 'Sepolia',
@@ -37,6 +39,7 @@ const payErrors: Record<string, string> = {
   INVALID_INPUT: 'Номер транзакции выглядит иначе: 0x и 64 знака.',
 }
 async function sendHash(hash: string) {
+  if (!orderTokenPattern.test(props.token)) throw new Error('ORDER_NOT_FOUND')
   await $fetch(`/api/public/orders/${props.token}/pay`, {
     method: 'POST',
     body: { mode: 'sepolia', hash },
@@ -61,14 +64,14 @@ async function payWithWallet() {
     try {
       await eth.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: sepolia.chainId }],
+        params: [{ chainId: chainHex.value }],
       })
     } catch (e: any) {
       const code = e?.code ?? e?.data?.originalError?.code
       if (code !== 4902) throw e
       await eth.request({ method: 'wallet_addEthereumChain', params: [sepolia] })
     }
-    if (String(await eth.request({ method: 'eth_chainId' })).toLowerCase() !== sepolia.chainId)
+    if (String(await eth.request({ method: 'eth_chainId' })).toLowerCase() !== chainHex.value)
       throw Object.assign(new Error('chain'), { code: 'CHAIN' })
     walletStep.value = 'Подтвердите перевод в кошельке'
     hash = await eth.request({
@@ -78,6 +81,8 @@ async function payWithWallet() {
           from,
           to: props.payment.receiver,
           value: '0x' + BigInt(props.payment.amountWei).toString(16),
+          // The wallet refuses to sign for any other network, even if it switched meanwhile.
+          chainId: chainHex.value,
         },
       ],
     })

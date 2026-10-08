@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import type { PublicCatalog, PublicOrderView } from '../../../core/contracts/public'
 import { formatRub } from '../../../core/storefront'
-import { publicErrorCode, publicWhen, rememberOrder } from '~/utils/public-site'
+import { orderTokenPattern, publicErrorCode, publicWhen, rememberOrder } from '~/utils/public-site'
 
 const route = useRoute()
 const token = String(route.params.token)
+// Only a well-formed token ever reaches a URL: anything else (`..%2F`, slashes) is no order.
+const valid = orderTokenPattern.test(token)
 const [{ data: first, error: firstError }, { data: shop }] = await Promise.all([
-  useFetch<PublicOrderView>(`/api/public/orders/${token}`, { key: `order-${token}` }),
+  valid
+    ? useFetch<PublicOrderView>(`/api/public/orders/${token}`, { key: `order-${token}` })
+    : { data: ref<PublicOrderView | null>(null), error: ref(null) },
   useFetch<Pick<PublicCatalog, 'notice' | 'seller'>>('/api/public/catalog', {
     key: 'shop-frame',
     pick: ['notice', 'seller'],
   }),
 ])
 const order = ref<PublicOrderView | null>(first.value || null)
-const missing = ref(!first.value && publicErrorCode(firstError.value) === 'ORDER_NOT_FOUND')
+const missing = ref(
+  !valid || (!first.value && publicErrorCode(firstError.value) === 'ORDER_NOT_FOUND'),
+)
 const offline = ref(!first.value && !missing.value)
 const number = computed(() =>
   order.value ? order.value.id.replace(/-/g, '').slice(0, 6).toUpperCase() : '',
@@ -44,6 +50,7 @@ const paying = computed(
 )
 
 async function load() {
+  if (!valid) return
   try {
     order.value = await $fetch<PublicOrderView>(`/api/public/orders/${token}`)
     offline.value = false
@@ -85,6 +92,7 @@ const sandboxBusy = ref(false)
 const sandboxError = ref('')
 const stale = ref(false)
 async function paySandbox() {
+  if (!valid) return
   sandboxBusy.value = true
   sandboxError.value = ''
   try {
@@ -95,7 +103,11 @@ async function paySandbox() {
     stale.value = code === 'INVOICE_EXPIRED' || code === 'ORDER_NOT_PAYABLE'
     sandboxError.value = stale.value
       ? 'Ссылка на оплату устарела. Оформите заказ заново.'
-      : 'Оплата не прошла. Попробуйте ещё раз.'
+      : code === 'PUBLIC_CAPACITY_REACHED'
+        ? 'На сегодня заказов больше, чем мы успеем сделать. Загляните завтра.'
+        : code === 'SANDBOX_PAY_DISABLED'
+          ? 'Оплату этого заказа подтверждает продавец.'
+          : 'Оплата не прошла. Попробуйте ещё раз.'
   } finally {
     sandboxBusy.value = false
   }
@@ -168,8 +180,12 @@ onMounted(() => (mounted.value = true))
           <section v-if="paying" class="card card-pad-lg pay-card">
             <h2>Оплата</h2>
             <template v-if="order.payment.mode === 'sandbox'">
-              <p class="muted">
+              <p v-if="order.payment.canConfirm" class="muted">
                 Деньги не списываются: это тестовая кнопка вместо настоящей оплаты.
+              </p>
+              <p v-else class="muted">
+                Оплата тестовая, деньги не списываются. Её подтверждает продавец, после этого сразу
+                начнём писать текст. Страницу можно закрыть, ссылка сохранится.
               </p>
               <button
                 v-if="order.payment.canConfirm"
