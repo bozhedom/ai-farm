@@ -3,7 +3,7 @@ import { config, usesSourcePosts } from '../config'
 import { audit, query, transaction } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model, search } from '../providers'
-import { demoSpecs } from '../providers/demo'
+import { demoProductOffer, demoSpecs } from '../providers/demo'
 import { recipes } from '../templates'
 import {
   POLICY,
@@ -15,9 +15,11 @@ import {
   validateEvidence,
   validateInput,
   validateTemplateInput,
-  validateProduct,
+  validateProductOffer,
+  productOfferSchema,
   type Template,
   type ProductSpec,
+  type ProductPageSpec,
 } from '../policy'
 import type { Job } from '../queue'
 import { reviewContext } from './text-context'
@@ -25,7 +27,13 @@ import { generateText } from './generate-text'
 import { sourceSocialDelivery } from '../source-posts'
 import { discoverOpportunities } from '../opportunities'
 import { lockResearchWindow } from '../research-window'
-import { defaultPriceKopecks, publicSlug } from '../storefront'
+import {
+  defaultPriceKopecks,
+  formatRub,
+  priceIds,
+  priceKopecksFor,
+  publicSlug,
+} from '../storefront'
 
 export async function research(job: Job) {
   const strategies = await query(
@@ -33,6 +41,22 @@ export async function research(job: Job) {
   )
   if (strategies.length !== 4) throw new Error('INVALID_POPULATION')
   const [savedJob] = await query('SELECT payload FROM jobs WHERE id=$1', [job.id])
+  // Research of a ranked idea: the idea gives audience and problem, and a passed check
+  // publishes the product on the storefront with a listed price and a page.
+  const ideaId: string | undefined = savedJob!.payload.ideaId
+  const [sourceIdea] = ideaId
+    ? await query('SELECT id,title,research,strategy_id FROM ideas WHERE id=$1', [ideaId])
+    : []
+  if (ideaId && !sourceIdea) throw new Error('INPUT_IDEA_UNKNOWN')
+  const businessIdea = sourceIdea
+    ? {
+        title: sourceIdea.title as string,
+        audience: sourceIdea.research.audience as string,
+        problem: sourceIdea.research.problem as string,
+        revenueModel: sourceIdea.research.revenueModel as string,
+        revenueNote: sourceIdea.research.revenueNote as string,
+      }
+    : null
   let plan: { template: Template; strategy: { id: string; approach: string } }[]
   if (savedJob!.payload.plan) plan = JSON.parse(savedJob!.payload.plan)
   else {
@@ -58,8 +82,10 @@ export async function research(job: Job) {
               lastAttempt(a) - lastAttempt(b) || Number(hasProduct(a)) - Number(hasProduct(b)),
           )
           .slice(0, existing.length ? 1 : 2)
+    const preferred = strategies.find((s) => s.id === savedJob!.payload.strategyId)
     plan = selected.map((template, i) => {
       const strategy =
+        preferred ??
         strategies[
           ((savedJob!.payload.campaignId
             ? Number(savedJob!.payload.campaignPosition) - 1
@@ -137,7 +163,12 @@ export async function research(job: Job) {
         instruction:
           'Серверные расходы отдельно неизвестны: укажи это в uncertainties. Не подгоняй оценку под лимит. Если она выше лимита, гипотеза сохранится, но не будет выпущена.',
       },
-      task: 'Сформулируй узкую гипотезу для описанного в service текстового сервиса: конкретная аудитория, польза черновика и способ проверить её на исходных материалах. Не пересказывай статью из поиска как собственную идею. Ссылки — только из evidence, минимум два независимых домена. Цены конкурентов показывают их предложения, а не наши расходы и не доказанные продажи. Расходы оцени по costContext; неизвестное укажи в uncertainties.',
+      ...(businessIdea ? { businessIdea } : {}),
+      task:
+        'Сформулируй узкую гипотезу для описанного в service текстового сервиса: конкретная аудитория, польза черновика и способ проверить её на исходных материалах. Не пересказывай статью из поиска как собственную идею. Ссылки — только из evidence, минимум два независимых домена. Цены конкурентов показывают их предложения, а не наши расходы и не доказанные продажи. Расходы оцени по costContext; неизвестное укажи в uncertainties.' +
+        (businessIdea
+          ? ' Гипотеза уточняет идею businessIdea для этого сервиса: та же аудитория и проблема.'
+          : ''),
     }
     const idea = await model({
       role: 'Исследователь',
@@ -187,19 +218,44 @@ export async function research(job: Job) {
     let spec: ProductSpec | undefined
     let checks: Record<string, string> | undefined
     let blockedReason: string | undefined
+    let offerPrice: number | null = null
+    let offerPage: ProductPageSpec | null = null
     if (critique.verdict === 'PASS') {
       try {
-        spec = validateProduct(
-          await model({
-            role: 'Архитектор',
-            key: `${job.id}:${template}:build`,
-            reservationId,
-            context: { ...context, idea, critique, allowedTemplate: template },
-            schema: productSchema,
-            demoValue: demoSpecs[template],
-          }),
+        const offer = validateProductOffer(
+          businessIdea
+            ? await model({
+                role: 'Архитектор',
+                key: `${job.id}:${template}:build`,
+                reservationId,
+                context: {
+                  ...context,
+                  idea,
+                  critique,
+                  allowedTemplate: template,
+                  prices: priceIds.map((id) => ({ id, price: formatRub(priceKopecksFor(id)) })),
+                  defaultPriceId: priceIds.find(
+                    (id) => priceKopecksFor(id) === defaultPriceKopecks[template],
+                  ),
+                  pageTask:
+                    'Выбери priceId только из prices (обычно defaultPriceId). page: headline (обещание одной фразой), forWhom (кому подходит), youGet (что получит покупатель), limits (честные ограничения). Простой текст без HTML.',
+                },
+                schema: productOfferSchema,
+                demoValue: demoProductOffer(template, businessIdea),
+              })
+            : await model({
+                role: 'Архитектор',
+                key: `${job.id}:${template}:build`,
+                reservationId,
+                context: { ...context, idea, critique, allowedTemplate: template },
+                schema: productSchema,
+                demoValue: demoSpecs[template],
+              }),
           template,
         )
+        spec = offer.spec
+        offerPrice = offer.priceKopecks
+        offerPage = offer.page
         if (template === 'social' && usesSourcePosts(config().MODEL_PROVIDER))
           spec = {
             ...spec,
@@ -293,7 +349,7 @@ export async function research(job: Job) {
         state.research_enabled
       const id = randomUUID()
       const rows = await query(
-        'INSERT INTO hypotheses(id,job_id,template,strategy_id,title,status,evidence,research,critique,is_demo) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(job_id,template) DO NOTHING RETURNING id',
+        'INSERT INTO hypotheses(id,job_id,template,strategy_id,title,status,evidence,research,critique,is_demo,idea_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(job_id,template) DO NOTHING RETURNING id',
         [
           id,
           job.id,
@@ -305,6 +361,7 @@ export async function research(job: Job) {
           idea,
           blockedReason ? { verdict: 'BLOCKED', reason: blockedReason } : critique,
           config().MODEL_PROVIDER === 'demo',
+          sourceIdea?.id ?? null,
         ],
         db,
       )
@@ -312,12 +369,26 @@ export async function research(job: Job) {
       if (publish) {
         const productId = occupied?.id || randomUUID()
         const version = occupied ? occupied.version + 1 : 1
+        const price =
+          offerPrice ??
+          (occupied?.price_kopecks as number | undefined) ??
+          defaultPriceKopecks[template]
+        const page = offerPage ?? occupied?.page ?? {}
         await query(
-          `INSERT INTO products(id,hypothesis_id,strategy_id,template,spec,is_demo,checks,version,slug,price_kopecks)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          `INSERT INTO products(id,hypothesis_id,strategy_id,template,spec,is_demo,checks,version,slug,price_kopecks,
+             idea_id,page,visibility,published_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+             CASE WHEN $11::uuid IS NULL THEN 'private' ELSE 'public' END,
+             CASE WHEN $11::uuid IS NULL THEN NULL ELSE now() END)
            ON CONFLICT(template) DO UPDATE SET hypothesis_id=EXCLUDED.hypothesis_id,
            strategy_id=EXCLUDED.strategy_id,spec=EXCLUDED.spec,is_demo=EXCLUDED.is_demo,
-           checks=EXCLUDED.checks,version=EXCLUDED.version,updated_at=now()`,
+           checks=EXCLUDED.checks,version=EXCLUDED.version,updated_at=now(),
+           idea_id=COALESCE(EXCLUDED.idea_id,products.idea_id),
+           price_kopecks=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.price_kopecks ELSE EXCLUDED.price_kopecks END,
+           page=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.page ELSE EXCLUDED.page END,
+           visibility=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.visibility ELSE 'public' END,
+           published_at=CASE WHEN EXCLUDED.idea_id IS NULL THEN products.published_at
+             WHEN products.visibility='public' THEN COALESCE(products.published_at,now()) ELSE now() END`,
           [
             productId,
             id,
@@ -328,16 +399,35 @@ export async function research(job: Job) {
             checks,
             version,
             publicSlug(template),
-            defaultPriceKopecks[template],
+            occupied ? price : (offerPrice ?? defaultPriceKopecks[template]),
+            sourceIdea?.id ?? null,
+            sourceIdea ? page : {},
           ],
           db,
         )
         await query(
-          `INSERT INTO product_versions(product_id,version,hypothesis_id,strategy_id,spec,checks,is_demo)
-           VALUES($1,$2,$3,$4,$5,$6,$7)`,
-          [productId, version, id, strategy.id, spec, checks, isDemo],
+          `INSERT INTO product_versions(product_id,version,hypothesis_id,strategy_id,spec,checks,is_demo,price_kopecks,page)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [productId, version, id, strategy.id, spec, checks, isDemo, price, page],
           db,
         )
+        if (sourceIdea) {
+          await query("UPDATE ideas SET status='productized' WHERE id=$1", [sourceIdea.id], db)
+          await audit(
+            'product_published',
+            `Новый продукт на сайте: «${spec!.name}», ${formatRub(price)}.`,
+            {
+              productId,
+              ideaId: sourceIdea.id,
+              template,
+              name: spec!.name,
+              priceKopecks: price,
+              version,
+              isDemo,
+            },
+            db,
+          )
+        }
       }
       await audit(
         publish ? (occupied ? 'product_updated' : 'product_created') : 'hypothesis_reviewed',
@@ -351,6 +441,7 @@ export async function research(job: Job) {
           template,
           verdict: critique.verdict,
           isDemo: config().MODEL_PROVIDER === 'demo',
+          ideaId: sourceIdea?.id ?? null,
         },
         db,
       )
