@@ -1,24 +1,24 @@
 /* A quiet workspace: the work and its result come before diagnostics. */
 :root {
   --blue: #315ecb;
-  --ink: #243249;
-  --canvas: #f4f6fa;
-  --line: #e0e5ed;
-  --muted: #617087;
+  --legacy-ink: #243249;
+  --legacy-canvas: #f4f6fa;
+  --legacy-line: #e0e5ed;
+  --legacy-muted: #617087;
 }
 .sidebar {
   width: 224px;
   background: var(--paper);
-  color: var(--ink);
-  border-right: 1px solid var(--line);
+  color: var(--legacy-ink);
+  border-right: 1px solid var(--legacy-line);
   padding: 30px 18px;
 }
 .brand {
-  color: var(--ink);
+  color: var(--legacy-ink);
   font-size: 22px;
 }
 .brand small {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 12px;
 }
 .brand-mark {
@@ -41,7 +41,7 @@
   gap: 6px;
 }
 .sidebar nav a {
-  color: var(--muted);
+  color: var(--legacy-muted);
   padding: 12px 14px;
   gap: 12px;
   font-size: 14px;
@@ -56,7 +56,7 @@
 }
 .sidebar .secondary-nav {
   margin-top: 30px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--legacy-line);
   padding-top: 20px;
   gap: 2px;
 }
@@ -64,13 +64,13 @@
   text-align: left;
   padding: 12px 14px;
   font-size: 14px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .sidebar-bottom {
   padding: 30px 8px 0;
 }
 .sidebar-bottom p {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 12px;
 }
 .worker-state {
@@ -87,8 +87,8 @@
   padding: 32px 40px;
 }
 .topbar {
-  background: var(--canvas);
-  border-bottom: 1px solid var(--line);
+  background: var(--legacy-canvas);
+  border-bottom: 1px solid var(--legacy-line);
   height: 64px;
 }
 .topbar > span {
@@ -127,7 +127,7 @@
   background: #264ba6;
 }
 .eyebrow {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font: 500 11px var(--body);
   letter-spacing: 1px;
 }
@@ -159,7 +159,7 @@ select {
   border: 1px solid #c9d4e2;
   border-radius: 8px;
   background: var(--paper);
-  color: var(--ink);
+  color: var(--legacy-ink);
   font: inherit;
   padding: 11px 32px 11px 12px;
 }
@@ -172,7 +172,7 @@ summary:focus-visible {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 215px;
   background: var(--paper);
-  border: 1px solid var(--line);
+  border: 1px solid var(--legacy-line);
   border-left: 4px solid var(--blue);
   border-radius: 12px;
   padding: 28px;
@@ -193,7 +193,7 @@ summary:focus-visible {
 .work-copy > p {
   max-width: 670px;
   margin: 10px 0 16px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .work-actions {
   display: flex;
@@ -206,7 +206,7 @@ summary:focus-visible {
   padding: 11px 16px;
 }
 .schedule-box {
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--legacy-line);
   padding-left: 24px;
   align-self: center;
 }
@@ -215,7 +215,7 @@ summary:focus-visible {
 }
 .schedule-box p {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .schedule-box .quiet {
   text-align: left;
@@ -225,7 +225,7 @@ summary:focus-visible {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--legacy-line);
   border-radius: 12px;
   background: #eef2f8;
   margin-bottom: 24px;
@@ -236,7 +236,7 @@ summary:focus-visible {
   flex-direction: column;
   align-items: flex-start;
   padding: 22px;
-  color: var(--ink);
+  color: var(--legacy-ink);
   border-right: 1px solid #dce3ee;
 }
 .cycle-item:last-child {
@@ -264,7 +264,7 @@ summary:focus-visible {
 .cycle-item p {
   margin: 8px 0 16px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .cycle-item > strong {
   font-size: 12px;
@@ -296,9 +296,9 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   gap: 14px;
-  color: var(--ink);
+  color: var(--legacy-ink);
   padding: 19px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--legacy-line);
 }
 .ready-service:hover {
   text-decoration: none;
@@ -315,11 +315,11 @@ summary:focus-visible {
 .ready-service p {
   font-size: 13px;
   margin: 5px 0;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .ready-service small {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .service-symbol {
   width: 38px;
@@ -341,12 +341,12 @@ summary:focus-visible {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--legacy-line);
   padding: 13px 0;
 }
 .money-list dt,
 .settings-list dt {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 14px;
 }
 .money-list dd,
@@ -367,7 +367,7 @@ summary:focus-visible {
 }
 .revenue-note p {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--legacy-muted);
   margin: 8px 0 0;
 }
 .activity-details {
@@ -389,7 +389,7 @@ summary:focus-visible {
 }
 .setup-details {
   margin-top: 20px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--legacy-line);
   padding-top: 16px;
 }
 .setup-details p {
@@ -454,7 +454,7 @@ summary:focus-visible {
   }
   .schedule-box {
     border-left: 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--legacy-line);
     padding: 16px 0 0;
   }
   .schedule-box p {
@@ -479,7 +479,7 @@ summary:focus-visible {
     padding: 18px 22px 12px;
     gap: 14px;
     border-right: 0;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--legacy-line);
   }
   .brand {
     justify-content: flex-start;
@@ -786,7 +786,7 @@ summary:focus-visible {
   margin: 8px 0 20px;
 }
 .direction-details dt {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 12px;
   margin-bottom: 5px;
 }
@@ -812,7 +812,7 @@ summary:focus-visible {
   padding: 12px 16px;
   border-left: 3px solid #b7d6da;
   background: #f4f7fa;
-  color: var(--muted);
+  color: var(--legacy-muted);
   overflow-wrap: anywhere;
 }
 .direction-actions {
@@ -870,7 +870,7 @@ summary:focus-visible {
 }
 .help-list dd {
   margin: 6px 0 0;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .opportunity-card h2 {
   font-size: 18px;

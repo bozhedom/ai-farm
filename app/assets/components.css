@@ -1,0 +1,1603 @@
+/* AI Farm. Базовые компоненты. Требует tokens.css.
+   Все правила действуют только внутри :where(.ds), чтобы не задеть старые страницы кабинета.
+   Новая страница включает их так: useHead({ htmlAttrs: { class: 'ds' } }).
+   :where() не меняет специфичность. Когда старые стили уйдут, префикс можно снять. */
+
+/* ---------- База ---------- */
+:where(.ds) *,
+:where(.ds) *::before,
+:where(.ds) *::after {
+  box-sizing: border-box;
+}
+html:where(.ds) {
+  -webkit-text-size-adjust: 100%;
+}
+:where(.ds) body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font: 400 var(--text-md) / var(--leading-body) var(--font-body);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+:where(.ds) a {
+  color: var(--brand);
+  text-decoration: none;
+}
+:where(.ds) a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+:where(.ds) h1,
+:where(.ds) h2,
+:where(.ds) h3,
+:where(.ds) h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+:where(.ds) h1 {
+  font-size: var(--text-3xl);
+  font-weight: 800;
+  line-height: var(--leading-tight);
+  letter-spacing: -0.025em;
+}
+:where(.ds) h2 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: var(--leading-snug);
+}
+:where(.ds) h3 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: var(--leading-snug);
+}
+:where(.ds) h4 {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+:where(.ds) p {
+  margin: 0;
+}
+:where(.ds) p + p {
+  margin-top: var(--s-3);
+}
+:where(.ds) ul,
+:where(.ds) ol {
+  margin: 0;
+  padding-left: 20px;
+}
+:where(.ds) button,
+:where(.ds) input,
+:where(.ds) select,
+:where(.ds) textarea {
+  font: inherit;
+  color: inherit;
+}
+:where(.ds) img,
+:where(.ds) svg {
+  display: block;
+  max-width: 100%;
+}
+:where(.ds) :focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--r-sm);
+}
+:where(.ds) [hidden] {
+  display: none !important;
+}
+
+:where(.ds) .display {
+  font-size: var(--text-4xl);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+:where(.ds) .lead {
+  font-size: var(--text-lg);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+:where(.ds) .muted {
+  color: var(--muted);
+}
+:where(.ds) .small {
+  font-size: var(--text-sm);
+}
+:where(.ds) .xs {
+  font-size: var(--text-xs);
+}
+:where(.ds) .eyebrow {
+  display: block;
+  font: 600 var(--text-xs) / 1.2 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+:where(.ds) .mono {
+  font-family: var(--font-mono);
+  font-size: 0.93em;
+}
+:where(.ds) .num {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+:where(.ds) .num-lg {
+  font-size: var(--num-lg);
+}
+:where(.ds) .num-xl {
+  font-size: var(--num-xl);
+}
+:where(.ds) .strong {
+  font-weight: 600;
+}
+:where(.ds) .brand-text {
+  color: var(--brand);
+}
+:where(.ds) .stack > * + * {
+  margin-top: var(--s-4);
+}
+:where(.ds) .stack-sm > * + * {
+  margin-top: var(--s-2);
+}
+:where(.ds) .stack-lg > * + * {
+  margin-top: var(--s-8);
+}
+:where(.ds) .row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+:where(.ds) .row-wrap {
+  flex-wrap: wrap;
+}
+:where(.ds) .between {
+  justify-content: space-between;
+}
+:where(.ds) .grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+:where(.ds) .right {
+  text-align: right;
+}
+:where(.ds) .center {
+  text-align: center;
+}
+:where(.ds) .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+:where(.ds) .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+:where(.ds) .icon-sm {
+  width: 14px;
+  height: 14px;
+}
+:where(.ds) .icon-lg {
+  width: 24px;
+  height: 24px;
+}
+
+/* ---------- Публичный сайт ---------- */
+:where(.ds) .container {
+  width: 100%;
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+:where(.ds) .site-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--canvas) 86%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+:where(.ds) .site-head .container {
+  display: flex;
+  align-items: center;
+  gap: var(--s-6);
+  height: 64px;
+}
+:where(.ds) .site-nav {
+  display: flex;
+  gap: var(--s-5);
+  margin-left: auto;
+}
+:where(.ds) .site-nav a {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+:where(.ds) .site-nav a:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+:where(.ds) .site-foot {
+  border-top: 1px solid var(--line);
+  padding: var(--s-8) 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+:where(.ds) .site-foot .container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-8);
+  align-items: center;
+}
+:where(.ds) .section {
+  padding: var(--s-16) 0;
+}
+:where(.ds) .section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-bottom: var(--s-8);
+}
+:where(.ds) .section-head p {
+  color: var(--muted);
+  margin-top: var(--s-2);
+}
+
+:where(.ds) .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font: 800 19px / 1 var(--font-display);
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+:where(.ds) .brand:hover {
+  text-decoration: none;
+}
+:where(.ds) .brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--brand);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  flex: none;
+}
+:where(.ds) .brand-mark svg {
+  width: 18px;
+  height: 18px;
+}
+:where(.ds) .brand small {
+  display: block;
+  font: 500 12px / 1.2 var(--font-body);
+  color: var(--muted);
+  margin-top: 3px;
+  letter-spacing: 0;
+}
+
+/* ---------- Кабинет ---------- */
+:where(.ds) .office {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  min-height: 100vh;
+}
+:where(.ds) .office > div {
+  min-width: 0;
+}
+@media (min-width: 1024px) {
+  :where(.ds) .office {
+    background: linear-gradient(
+      90deg,
+      var(--surface-2) 0 var(--sidebar-w),
+      transparent var(--sidebar-w)
+    );
+  }
+}
+:where(.ds) .side {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: var(--s-5) var(--s-4);
+  border-right: 1px solid var(--line);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+:where(.ds) .side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+:where(.ds) .side-nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  color: var(--ink-2);
+  font-weight: 500;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+:where(.ds) .side-nav a:hover {
+  background: var(--canvas-deep);
+  color: var(--ink);
+  text-decoration: none;
+}
+:where(.ds) .side-nav a.is-active {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  font-weight: 600;
+}
+:where(.ds) .side-nav a .count {
+  margin-left: auto;
+  font: 600 var(--text-xs) / 1 var(--font-body);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 4px 7px;
+  color: var(--muted);
+}
+:where(.ds) .side-nav a.is-active .count {
+  background: var(--surface);
+  color: var(--brand-ink);
+  border-color: transparent;
+}
+:where(.ds) .side-nav .label {
+  padding: var(--s-4) 12px var(--s-1);
+}
+:where(.ds) .side-foot {
+  margin-top: auto;
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: var(--text-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+:where(.ds) .main {
+  min-width: 0;
+  padding: var(--s-8) var(--s-10) var(--s-16);
+}
+:where(.ds) .page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-bottom: var(--s-6);
+}
+:where(.ds) .page-head p {
+  color: var(--muted);
+  margin-top: var(--s-1);
+}
+:where(.ds) .topbar {
+  display: none;
+}
+:where(.ds) .tabbar {
+  display: none;
+}
+
+/* ---------- Кнопки ---------- */
+:where(.ds) .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: var(--text-md);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+:where(.ds) .btn:hover {
+  background: var(--surface-2);
+  border-color: var(--ink-2);
+  text-decoration: none;
+}
+:where(.ds) .btn:active {
+  transform: translateY(1px);
+}
+:where(.ds) .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+:where(.ds) .btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+:where(.ds) .btn-primary:hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+}
+:where(.ds) .btn-sun {
+  background: var(--sun);
+  border-color: var(--sun);
+  color: var(--sun-ink);
+}
+:where(.ds) .btn-sun:hover {
+  background: #f1b92a;
+  border-color: #f1b92a;
+}
+:where(.ds) .btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--brand);
+}
+:where(.ds) .btn-ghost:hover {
+  background: var(--brand-soft);
+  border-color: transparent;
+}
+:where(.ds) .btn-danger {
+  color: var(--st-err);
+}
+:where(.ds) .btn-danger:hover {
+  background: var(--st-err-soft);
+  border-color: var(--st-err);
+}
+:where(.ds) .btn-sm {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: var(--text-sm);
+  border-radius: var(--r-sm);
+}
+:where(.ds) .btn-lg {
+  min-height: 52px;
+  padding: 0 26px;
+  font-size: var(--text-lg);
+  border-radius: var(--r-lg);
+}
+:where(.ds) .btn-block {
+  width: 100%;
+}
+:where(.ds) .btn-icon {
+  padding: 0;
+  width: 42px;
+}
+:where(.ds) .btn.is-done {
+  background: var(--st-ok-soft);
+  border-color: var(--st-ok);
+  color: var(--st-ok-ink);
+}
+
+/* ---------- Поля ---------- */
+:where(.ds) .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+:where(.ds) .field > label {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+:where(.ds) .field .hint {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+:where(.ds) .input,
+:where(.ds) .select,
+:where(.ds) .textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+:where(.ds) .input:focus,
+:where(.ds) .select:focus,
+:where(.ds) .textarea:focus {
+  border-color: var(--brand);
+  box-shadow: var(--ring);
+  outline: none;
+}
+:where(.ds) .textarea {
+  min-height: 140px;
+  resize: vertical;
+  line-height: 1.5;
+}
+:where(.ds) .select {
+  appearance: none;
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+:where(.ds) .input::placeholder,
+:where(.ds) .textarea::placeholder {
+  color: #a3a7b0;
+}
+:where(.ds) .field.is-error .input {
+  border-color: var(--st-err);
+}
+:where(.ds) .field.is-error .hint {
+  color: var(--st-err);
+}
+:where(.ds) .check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: var(--text-sm);
+}
+:where(.ds) .check input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--brand);
+}
+:where(.ds) .switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+  border: 0;
+  cursor: pointer;
+  transition: background var(--dur-fast);
+  flex: none;
+}
+:where(.ds) .switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform var(--dur-fast) var(--ease);
+}
+:where(.ds) .switch[aria-checked='true'] {
+  background: var(--brand);
+}
+:where(.ds) .switch[aria-checked='true']::after {
+  transform: translateX(18px);
+}
+
+/* ---------- Карточки ---------- */
+:where(.ds) .card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--s-5);
+}
+:where(.ds) .card-pad-lg {
+  padding: var(--s-6) var(--s-8);
+}
+:where(.ds) .card-flat {
+  background: var(--surface-2);
+  border-color: transparent;
+}
+:where(.ds) .card-raised {
+  box-shadow: var(--shadow-md);
+  border-color: transparent;
+}
+:where(.ds) .card-tint-brand {
+  background: var(--brand-soft);
+  border-color: transparent;
+}
+:where(.ds) .card-tint-sun {
+  background: var(--sun-soft);
+  border-color: transparent;
+}
+:where(.ds) .card-tint-sky {
+  background: var(--sky-soft);
+  border-color: transparent;
+}
+:where(.ds) .card-tint-plum {
+  background: var(--plum-soft);
+  border-color: transparent;
+}
+:where(.ds) .card-tint-clay {
+  background: var(--clay-soft);
+  border-color: transparent;
+}
+:where(.ds) .card-ink {
+  background: var(--ink);
+  color: #f1efe8;
+  border-color: transparent;
+}
+:where(.ds) .card-ink h1,
+:where(.ds) .card-ink h2,
+:where(.ds) .card-ink h3 {
+  color: #fff;
+}
+:where(.ds) .card-ink .muted {
+  color: #b7bac3;
+}
+:where(.ds) .card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+:where(.ds) .card-head h2,
+:where(.ds) .card-head h3 {
+  margin: 0;
+}
+:where(.ds) .card-foot {
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+:where(.ds) .card-link {
+  display: block;
+  color: inherit;
+  transition:
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+:where(.ds) .card-link:hover {
+  text-decoration: none;
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Плитка с цифрой */
+:where(.ds) .stat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 124px;
+}
+:where(.ds) .stat .stat-label {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-weight: 500;
+}
+:where(.ds) .stat .num {
+  font-size: var(--num-lg);
+  margin-top: 2px;
+}
+:where(.ds) .stat .stat-note {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin-top: auto;
+}
+:where(.ds) .stat .delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 600;
+  color: var(--st-ok-ink);
+  background: var(--st-ok-soft);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  font-size: var(--text-xs);
+}
+:where(.ds) .stat .delta.is-neutral {
+  color: var(--muted);
+  background: var(--canvas-deep);
+}
+:where(.ds) .stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--s-4);
+}
+:where(.ds) .stat.is-money {
+  background: var(--surface);
+}
+:where(.ds) .stat.is-money .num {
+  color: var(--brand-ink);
+}
+:where(.ds) .stat.is-test .num {
+  color: var(--st-test-ink);
+}
+
+/* ---------- Бейджи статусов ---------- */
+:where(.ds) .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  font: 600 var(--text-xs) / 1.2 var(--font-body);
+  white-space: nowrap;
+  background: var(--canvas-deep);
+  color: var(--ink-2);
+}
+:where(.ds) .badge::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+:where(.ds) .badge-ok {
+  background: var(--st-ok-soft);
+  color: var(--st-ok-ink);
+}
+:where(.ds) .badge-wait {
+  background: var(--st-wait-soft);
+  color: var(--st-wait-ink);
+}
+:where(.ds) .badge-err {
+  background: var(--st-err-soft);
+  color: var(--st-err-ink);
+}
+:where(.ds) .badge-off {
+  background: var(--st-off-soft);
+  color: var(--st-off-ink);
+}
+:where(.ds) .badge-copy {
+  background: var(--st-copy-soft);
+  color: var(--st-copy-ink);
+}
+:where(.ds) .badge-test {
+  background: var(--st-test-soft);
+  color: var(--st-test-ink);
+}
+:where(.ds) .badge-human {
+  background: var(--st-human-soft);
+  color: var(--st-human-ink);
+}
+:where(.ds) .badge-sun {
+  background: var(--sun-soft);
+  color: var(--sun-ink);
+}
+:where(.ds) .badge-plain::before {
+  display: none;
+}
+:where(.ds) .badge-lg {
+  font-size: var(--text-sm);
+  padding: 6px 12px;
+}
+
+/* Живой индикатор */
+:where(.ds) .live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--st-ok-ink);
+}
+:where(.ds) .live-dot {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--st-ok);
+  flex: none;
+}
+:where(.ds) .live-dot::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--st-ok);
+  opacity: 0;
+}
+:where(.ds) .live-dot.is-wait {
+  background: var(--st-wait);
+}
+:where(.ds) .live-dot.is-wait::after {
+  border-color: var(--st-wait);
+}
+:where(.ds) .live-dot.is-off {
+  background: var(--st-off);
+}
+:where(.ds) .live-dot.is-off::after {
+  display: none;
+}
+
+/* ---------- Фильтры-чипы ---------- */
+:where(.ds) .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+:where(.ds) .chip {
+  white-space: nowrap;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-weight: 500;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast),
+    border-color var(--dur-fast);
+}
+:where(.ds) .chip:hover {
+  border-color: var(--ink-2);
+}
+:where(.ds) .chip.is-active {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+:where(.ds) .chip .n {
+  font-size: var(--text-xs);
+  opacity: 0.7;
+}
+
+/* ---------- Таблица и список ---------- */
+:where(.ds) .table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-md);
+}
+:where(.ds) .table th {
+  text-align: left;
+  font: 600 var(--text-xs) / 1.2 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+:where(.ds) .table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+:where(.ds) .table tr:last-child td {
+  border-bottom: 0;
+}
+:where(.ds) .table .num {
+  font-size: var(--text-xl);
+}
+:where(.ds) .table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+:where(.ds) .table tbody tr {
+  transition: background var(--dur-fast);
+}
+:where(.ds) .table tbody tr:hover {
+  background: var(--surface-2);
+}
+
+:where(.ds) .rows {
+  display: flex;
+  flex-direction: column;
+}
+:where(.ds) .rows > * {
+  padding: var(--s-4) 0;
+  border-bottom: 1px solid var(--line);
+}
+:where(.ds) .rows > *:last-child {
+  border-bottom: 0;
+}
+:where(.ds) .rows > *:first-child {
+  padding-top: 0;
+}
+
+/* Ранг в рейтинге */
+:where(.ds) .rank {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font: 800 15px / 1 var(--font-display);
+  background: var(--canvas-deep);
+  color: var(--ink-2);
+  flex: none;
+}
+:where(.ds) .rank.is-top {
+  background: var(--sun);
+  color: var(--sun-ink);
+}
+
+/* Балл */
+:where(.ds) .score {
+  display: inline-grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  min-width: 150px;
+}
+:where(.ds) .score .num {
+  font-size: 22px;
+}
+:where(.ds) .score .bar {
+  width: 100%;
+}
+:where(.ds) .bar {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--canvas-deep);
+  overflow: hidden;
+}
+:where(.ds) .bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+  transform-origin: left;
+}
+:where(.ds) .bar.is-sun > i {
+  background: var(--sun);
+}
+:where(.ds) .bar.is-wait > i {
+  background: var(--st-wait);
+}
+:where(.ds) .bar.is-err > i {
+  background: var(--st-err);
+}
+:where(.ds) .bar.is-off > i {
+  background: var(--st-off);
+}
+:where(.ds) .bar-lg {
+  height: 12px;
+}
+
+/* ---------- Лента событий ---------- */
+:where(.ds) .feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+:where(.ds) .feed li {
+  display: grid;
+  grid-template-columns: 54px 18px 1fr;
+  gap: 10px;
+  padding: 10px 0;
+  align-items: start;
+}
+:where(.ds) .feed time {
+  font: 500 var(--text-sm) / 1.6 var(--font-mono);
+  color: var(--muted);
+}
+:where(.ds) .feed .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin: 7px auto 0;
+  background: var(--st-off);
+  position: relative;
+}
+:where(.ds) .feed .dot::after {
+  content: '';
+  position: absolute;
+  top: 14px;
+  left: 4px;
+  width: 2px;
+  height: 32px;
+  background: var(--line);
+}
+:where(.ds) .feed li:last-child .dot::after {
+  display: none;
+}
+:where(.ds) .feed .dot.ok {
+  background: var(--st-ok);
+}
+:where(.ds) .feed .dot.wait {
+  background: var(--st-wait);
+}
+:where(.ds) .feed .dot.err {
+  background: var(--st-err);
+}
+:where(.ds) .feed .dot.copy {
+  background: var(--st-copy);
+}
+:where(.ds) .feed .dot.test {
+  background: var(--st-test);
+}
+:where(.ds) .feed .dot.sun {
+  background: var(--sun);
+}
+:where(.ds) .feed .text {
+  line-height: 1.45;
+}
+:where(.ds) .feed .text small {
+  display: block;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ---------- Пустое состояние ---------- */
+:where(.ds) .empty {
+  text-align: center;
+  padding: var(--s-12) var(--s-6);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+  color: var(--muted);
+}
+:where(.ds) .empty .icon-lg {
+  margin: 0 auto var(--s-3);
+  color: var(--brand);
+  width: 36px;
+  height: 36px;
+}
+:where(.ds) .empty h3 {
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+:where(.ds) .empty .btn {
+  margin-top: var(--s-4);
+}
+
+/* ---------- Шаги / статус заказа ---------- */
+:where(.ds) .steps {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+}
+:where(.ds) .steps li {
+  position: relative;
+  padding-top: 18px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+:where(.ds) .steps li::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--canvas-deep);
+}
+:where(.ds) .steps li.is-done::before {
+  background: var(--st-ok);
+}
+:where(.ds) .steps li.is-now::before {
+  background: linear-gradient(90deg, var(--st-ok) 0 60%, var(--canvas-deep) 60%);
+}
+:where(.ds) .steps li.is-done,
+:where(.ds) .steps li.is-now {
+  color: var(--ink);
+}
+:where(.ds) .steps li.is-now strong {
+  color: var(--brand-ink);
+}
+:where(.ds) .steps li strong {
+  display: block;
+  font-weight: 600;
+}
+:where(.ds) .steps li .when {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+:where(.ds) .steps li.is-now::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 60%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--st-ok);
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
+/* Три шага «как это работает» */
+:where(.ds) .how {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-5);
+  counter-reset: how;
+}
+:where(.ds) .how article {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  padding: var(--s-6);
+  border: 1px solid var(--line);
+  position: relative;
+}
+:where(.ds) .how article::before {
+  counter-increment: how;
+  content: counter(how);
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--sun);
+  color: var(--sun-ink);
+  display: grid;
+  place-items: center;
+  font: 800 18px / 1 var(--font-display);
+  margin-bottom: var(--s-4);
+}
+:where(.ds) .how h3 {
+  margin-bottom: 6px;
+}
+:where(.ds) .how p {
+  color: var(--ink-2);
+}
+
+/* ---------- Команда и поколения ---------- */
+:where(.ds) .agent {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+:where(.ds) .avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font: 800 17px / 1 var(--font-display);
+  color: #fff;
+  background: var(--brand);
+}
+:where(.ds) .avatar.is-lead {
+  background: var(--ink);
+  border-radius: 50%;
+}
+:where(.ds) .avatar.is-off {
+  background: var(--st-off);
+}
+:where(.ds) .avatar.is-copy {
+  background: var(--plum);
+}
+:where(.ds) .avatar.is-sky {
+  background: var(--sky);
+}
+:where(.ds) .avatar.is-clay {
+  background: var(--clay);
+}
+:where(.ds) .avatar.is-sun {
+  background: var(--sun);
+  color: var(--sun-ink);
+}
+:where(.ds) .agent.is-off .name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+:where(.ds) .gen {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: var(--s-5);
+  position: relative;
+}
+:where(.ds) .gen + .gen {
+  margin-top: var(--s-6);
+}
+:where(.ds) .gen-label {
+  position: sticky;
+  top: var(--s-4);
+  align-self: start;
+}
+:where(.ds) .gen-label strong {
+  display: block;
+  font: 800 var(--text-xl) / 1 var(--font-display);
+}
+:where(.ds) .gen-label span {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  display: block;
+  margin-top: 4px;
+}
+:where(.ds) .gen-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-3);
+}
+:where(.ds) .gen-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s-3) var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+:where(.ds) .gen-card.is-off {
+  background: var(--st-off-soft);
+  border-style: dashed;
+}
+:where(.ds) .gen-card.is-copy {
+  border-color: var(--plum);
+  box-shadow: inset 0 0 0 1px var(--plum);
+}
+:where(.ds) .gen-card .parent {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+:where(.ds) .gen-card .parent b {
+  color: var(--plum);
+  font-weight: 600;
+}
+
+/* ---------- Код / результат ---------- */
+:where(.ds) .result-box {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s-5);
+  white-space: pre-wrap;
+  line-height: 1.6;
+  font-size: var(--text-md);
+  max-height: 420px;
+  overflow: auto;
+}
+:where(.ds) .quote {
+  border-left: 3px solid var(--sun);
+  padding: 2px 0 2px 14px;
+  color: var(--ink-2);
+}
+
+/* ---------- Уведомление одной строкой ---------- */
+:where(.ds) .note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
+  background: var(--st-test-soft);
+  color: var(--st-test-ink);
+}
+:where(.ds) .note-wait {
+  background: var(--st-wait-soft);
+  color: var(--st-wait-ink);
+}
+:where(.ds) .note-err {
+  background: var(--st-err-soft);
+  color: var(--st-err-ink);
+}
+:where(.ds) .note-ok {
+  background: var(--st-ok-soft);
+  color: var(--st-ok-ink);
+}
+
+/* ---------- Раскрытие ---------- */
+:where(.ds) .disclosure {
+  display: none;
+}
+:where(.ds) .disclosure.is-open {
+  display: block;
+}
+:where(.ds) [data-toggle] .icon {
+  transition: transform var(--dur) var(--ease);
+}
+:where(.ds) [data-toggle][aria-expanded='true'] .icon {
+  transform: rotate(180deg);
+}
+
+/* ---------- Движение ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  :where(.ds) .rise {
+    animation: rise var(--dur-slow) var(--ease) both;
+  }
+  :where(.ds) .rise:nth-child(2) {
+    animation-delay: 60ms;
+  }
+  :where(.ds) .rise:nth-child(3) {
+    animation-delay: 120ms;
+  }
+  :where(.ds) .rise:nth-child(4) {
+    animation-delay: 180ms;
+  }
+  :where(.ds) .rise:nth-child(5) {
+    animation-delay: 240ms;
+  }
+  :where(.ds) .rise:nth-child(6) {
+    animation-delay: 300ms;
+  }
+  :where(.ds) .live-dot::after {
+    animation: ping 1.8s var(--ease) infinite;
+  }
+  :where(.ds) .bar > i {
+    animation: grow var(--dur-slow) var(--ease) both;
+  }
+  :where(.ds) .bar.is-live > i {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0 40%,
+      rgba(255, 255, 255, 0.35) 50%,
+      transparent 60% 100%
+    );
+    background-size: 200% 100%;
+    animation:
+      grow var(--dur-slow) var(--ease) both,
+      shimmer 1.6s linear infinite;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.8;
+  }
+  80%,
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+@keyframes grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---------- Адаптив ---------- */
+@media (max-width: 1023px) {
+  :where(.ds) .office {
+    grid-template-columns: 1fr;
+  }
+  :where(.ds) .side {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(300px, 86vw);
+    z-index: 40;
+    transform: translateX(-105%);
+    transition: transform var(--dur) var(--ease);
+    box-shadow: var(--shadow-lg);
+  }
+  :where(.ds) body.menu-open .side {
+    transform: none;
+  }
+  :where(.ds) .topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: 56px;
+    padding: 0 var(--gutter);
+    background: color-mix(in srgb, var(--canvas) 90%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  :where(.ds) .topbar .brand {
+    font-size: 17px;
+  }
+  :where(.ds) .main {
+    padding: var(--s-5) var(--gutter) 96px;
+  }
+  :where(.ds) .tabbar {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  :where(.ds) .tabbar a,
+  :where(.ds) .tabbar button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 6px 2px;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font: 500 11px / 1 var(--font-body);
+    border-radius: var(--r-sm);
+  }
+  :where(.ds) .tabbar .is-active {
+    color: var(--brand-ink);
+  }
+  :where(.ds) .tabbar .is-active .icon {
+    stroke-width: 2.2;
+  }
+  :where(.ds) .tabbar .icon {
+    width: 22px;
+    height: 22px;
+  }
+  :where(.ds) .how {
+    grid-template-columns: 1fr;
+  }
+  :where(.ds) .gen {
+    grid-template-columns: 1fr;
+    gap: var(--s-3);
+  }
+  :where(.ds) .gen-label {
+    position: static;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  :where(.ds) .gen-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  :where(.ds) .section {
+    padding: var(--s-10) 0;
+  }
+}
+@media (max-width: 639px) {
+  :root {
+    --text-3xl: 28px;
+    --num-lg: 30px;
+    --num-xl: 36px;
+  }
+  :where(.ds) .site-head .container {
+    height: 56px;
+    gap: var(--s-3);
+  }
+  :where(.ds) .site-nav {
+    gap: var(--s-3);
+    font-size: var(--text-sm);
+  }
+  :where(.ds) .site-nav .hide-sm {
+    display: none;
+  }
+  :where(.ds) .page-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  :where(.ds) .section-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  :where(.ds) .stat-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  :where(.ds) .stat {
+    padding: var(--s-4);
+    min-height: 108px;
+  }
+  :where(.ds) .card-pad-lg {
+    padding: var(--s-5);
+  }
+  :where(.ds) .steps {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    gap: 10px;
+  }
+  :where(.ds) .steps li {
+    padding: 0 0 0 26px;
+  }
+  :where(.ds) .steps li::before {
+    width: 14px;
+    height: 14px;
+    left: 0;
+    top: 3px;
+    right: auto;
+    border-radius: 50%;
+  }
+  :where(.ds) .steps li.is-now::before {
+    background: var(--surface);
+    border: 3px solid var(--st-ok);
+  }
+  :where(.ds) .steps li.is-now::after {
+    display: none;
+  }
+  :where(.ds) .table-stack thead {
+    display: none;
+  }
+  :where(.ds) .table-stack tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 12px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  :where(.ds) .table-stack td {
+    padding: 0;
+    border: 0;
+  }
+  :where(.ds) .table-stack td[data-full] {
+    grid-column: 1 / -1;
+  }
+  :where(.ds) .gen-row {
+    grid-template-columns: 1fr;
+  }
+  :where(.ds) .feed li {
+    grid-template-columns: 44px 14px 1fr;
+  }
+  :where(.ds) .btn-lg {
+    min-height: 48px;
+    font-size: var(--text-md);
+  }
+  :where(.ds) .card-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  :where(.ds) .card-foot .btn {
+    flex: 1 1 auto;
+  }
+  :where(.ds) .toolbar .chips {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 0 calc(-1 * var(--gutter));
+    padding: 2px var(--gutter);
+    scrollbar-width: none;
+  }
+  :where(.ds) .toolbar .chips::-webkit-scrollbar {
+    display: none;
+  }
+  :where(.ds) .toolbar .select {
+    margin-left: 0;
+    width: 100%;
+  }
+  :where(.ds) .table-stack td[data-l]::before {
+    content: attr(data-l);
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--muted);
+  }
+}

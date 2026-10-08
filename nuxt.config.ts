@@ -1,7 +1,15 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-01',
   devtools: { enabled: false },
-  css: ['~/assets/main.css', '~/assets/live.css', '~/assets/workspace.css'],
+  // Design tokens are global. New components are scoped to `.ds` and load last, so old office
+  // styles keep working until their pages are rewritten.
+  css: [
+    '~/assets/tokens.css',
+    '~/assets/main.css',
+    '~/assets/live.css',
+    '~/assets/workspace.css',
+    '~/assets/components.css',
+  ],
   app: {
     head: {
       htmlAttrs: { lang: 'ru' },

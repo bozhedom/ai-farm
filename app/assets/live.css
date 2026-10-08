@@ -50,21 +50,21 @@
   flex-wrap: wrap;
   gap: 10px 24px;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .lab-config > span:first-child {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--ink);
+  color: var(--legacy-ink);
 }
 .lab-config small {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 11px;
 }
 .lab-config strong {
   font-weight: 500;
-  color: var(--ink);
+  color: var(--legacy-ink);
   margin-left: 5px;
 }
 .lab-config > span:last-child {
@@ -76,7 +76,7 @@
   height: 116px;
   display: grid;
   place-items: center;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .live-instrument svg {
   width: 100%;
@@ -115,7 +115,7 @@
   display: block;
   font: 10px var(--mono);
   letter-spacing: 1.2px;
-  color: var(--muted);
+  color: var(--legacy-muted);
   margin-bottom: 10px;
 }
 @keyframes working-turn {
@@ -196,11 +196,11 @@
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 10px;
 }
 .pipeline-heading strong {
-  color: var(--ink);
+  color: var(--legacy-ink);
   margin-left: 6px;
   font-weight: 500;
 }
@@ -232,7 +232,7 @@
   position: absolute;
   width: 16px;
   height: 1px;
-  background: var(--line);
+  background: var(--legacy-line);
   left: 100%;
   top: 43px;
 }
@@ -336,12 +336,12 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 22px 28px 0;
   padding: 17px 0;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--legacy-line);
+  border-bottom: 1px solid var(--legacy-line);
 }
 .run-measurements > div {
   padding: 0 20px;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--legacy-line);
 }
 .run-measurements > div:first-child {
   padding-left: 0;
@@ -351,29 +351,29 @@
 .run-measurements small {
   display: block;
   font-size: 10px;
-  color: var(--muted);
+  color: var(--legacy-muted);
 }
 .run-measurements strong {
   display: block;
   font: 22px var(--mono);
   margin: 7px 0 5px;
-  color: var(--ink);
+  color: var(--legacy-ink);
 }
 .live-sources {
   margin: 0 28px 22px;
   padding: 14px 16px;
   background: #f5f8fb;
-  border: 1px solid var(--line);
+  border: 1px solid var(--legacy-line);
   border-radius: 10px;
   font-size: 12px;
 }
 .live-sources summary {
   cursor: pointer;
-  color: var(--ink);
+  color: var(--legacy-ink);
 }
 .live-sources summary span {
   font-size: 10px;
-  color: var(--muted);
+  color: var(--legacy-muted);
   margin-left: 8px;
 }
 .live-sources ul {
@@ -384,7 +384,7 @@
   overflow-wrap: anywhere;
 }
 .live-sources p {
-  color: var(--muted);
+  color: var(--legacy-muted);
   font-size: 11px;
   margin-bottom: 0;
 }
@@ -578,14 +578,14 @@
   margin-top: 18px;
   padding: 18px;
   background: var(--paper);
-  border: 1px solid var(--line);
+  border: 1px solid var(--legacy-line);
   border-left: 3px solid var(--blue);
   border-radius: 8px;
 }
 .forming-idea h4 {
   margin: 12px 0 0;
   font: 600 14px var(--heading);
-  color: var(--ink);
+  color: var(--legacy-ink);
 }
 .forming-idea summary {
   font-size: 11px;
@@ -594,8 +594,8 @@
 }
 .forming-idea .idea-verdict {
   padding-top: 12px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
+  border-top: 1px solid var(--legacy-line);
+  color: var(--legacy-muted);
 }
 .next-run {
   margin-top: 23px;
