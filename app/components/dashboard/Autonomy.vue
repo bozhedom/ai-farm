@@ -61,7 +61,10 @@ function changeScope(event: Event) {
           >{{ dateTime(d.autonomy.lastScheduledRun.created_at) }} ·
           {{ labels[d.autonomy.lastScheduledRun.status]
           }}<span v-if="d.autonomy.lastScheduledRun.error_code">
-            · {{ d.autonomy.lastScheduledRun.error_code }}</span
+            ·
+            {{
+              errorText({ data: { statusMessage: d.autonomy.lastScheduledRun.error_code } })
+            }}</span
           >
         </p>
         <p v-else>Автоматических запусков в этой базе ещё не было.</p>
