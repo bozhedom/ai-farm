@@ -1,6 +1,8 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
+    // Agent worktrees under .claude/ hold copies of the repository and its tests.
+    exclude: [...configDefaults.exclude, '.claude/**'],
     testTimeout: 15000,
     hookTimeout: 15000,
     fileParallelism: false,
