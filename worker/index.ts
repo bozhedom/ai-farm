@@ -1,17 +1,11 @@
 import { config } from '../core/config'
 import { audit, pool, query } from '../core/db'
-import {
-  claimJob,
-  finishJob,
-  heartbeatJob,
-  recoverJobs,
-  expireResearchSlots,
-  type Job,
-} from '../core/queue'
-import { runJob } from '../core/jobs/run'
+import { recoverJobs, expireResearchSlots, type Job } from '../core/queue'
+import { claimWorkerJob, executeWorkerJob } from '../core/worker-runtime'
 import { reconcilePayments } from '../core/payments'
 import { localProviderReadiness } from '../core/providers/readiness'
 import { scheduleWork } from '../core/autonomy'
+import { setTimeout as pause } from 'node:timers/promises'
 
 let stopping = false
 let researchBusy = false
@@ -19,33 +13,29 @@ let ordersBusy = false
 let paymentsBusy = false
 let unavailableProviders = ''
 const running = new Set<Promise<void>>()
+const shutdown = new AbortController()
 const signal = () => {
   stopping = true
+  shutdown.abort()
 }
 process.on('SIGTERM', signal)
 process.on('SIGINT', signal)
 
-async function execute(job: Job) {
-  const timer = setInterval(() => {
-    void heartbeatJob(job).catch(() => {
-      stopping = true
-    })
-  }, 10000)
-  try {
-    await runJob(job)
-    await finishJob(job)
-  } catch (error) {
-    await finishJob(job, error)
-  } finally {
-    clearInterval(timer)
-  }
-}
+const isStopping = () => stopping
 function launch(job: Job, lane: 'orders' | 'research') {
   if (lane === 'orders') ordersBusy = true
   else researchBusy = true
-  const promise = execute(job)
+  const promise = executeWorkerJob(job, {
+    isStopping,
+    onHeartbeatError: () => {
+      signal()
+      process.exitCode = 1
+      console.error('WORKER_HEARTBEAT_FAILED')
+    },
+  })
     .catch(async () => {
-      stopping = true
+      signal()
+      process.exitCode = 1
       console.error('WORKER_JOB_PERSISTENCE_FAILURE')
     })
     .finally(() => {
@@ -65,7 +55,9 @@ await audit(
 while (!stopping) {
   try {
     await recoverJobs()
+    if (stopping) break
     await expireResearchSlots(new Date().toISOString().slice(0, 10))
+    if (stopping) break
     if (!paymentsBusy) {
       paymentsBusy = true
       const paymentTask = reconcilePayments()
@@ -79,7 +71,9 @@ while (!stopping) {
       running.add(paymentTask)
     }
     await scheduleWork()
+    if (stopping) break
     const ready = await localProviderReadiness()
+    if (stopping) break
     const unavailable = [!ready.model && 'модель', !ready.search && 'поиск']
       .filter(Boolean)
       .join(', ')
@@ -93,16 +87,17 @@ while (!stopping) {
       unavailableProviders = unavailable
     }
     if (!ordersBusy && ready.model) {
-      const job = await claimJob(['fulfill'])
+      const job = await claimWorkerJob(['fulfill'], isStopping)
       if (job) launch(job, 'orders')
     }
     if (!researchBusy) {
       // Financial HOLD/window expiry needs neither a model nor a working search provider.
       const job =
-        (await claimJob(['evaluate'])) ||
-        (ready.model && ready.search ? await claimJob(['research']) : undefined)
+        (await claimWorkerJob(['evaluate'], isStopping)) ||
+        (ready.model && ready.search ? await claimWorkerJob(['research'], isStopping) : undefined)
       if (job) launch(job, 'research')
     }
+    if (stopping) break
     await query(
       'UPDATE system_state SET worker_heartbeat=now(),provider_readiness=$1 WHERE id=true',
       [{ ...ready, checkedAt: new Date().toISOString() }],
@@ -111,7 +106,7 @@ while (!stopping) {
     // Never log provider URLs, request bodies or secrets.
     console.error('WORKER_TICK_FAILED')
   }
-  await new Promise((resolve) => setTimeout(resolve, config().POLL_INTERVAL_MS))
+  await pause(config().POLL_INTERVAL_MS, undefined, { signal: shutdown.signal }).catch(() => {})
 }
 await Promise.all(running)
 await pool.end()

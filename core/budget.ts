@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
-import { activityContext, type CallActivity } from './activity'
+import { activityContext, checkWorkerDrain, type CallActivity } from './activity'
 
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
@@ -101,6 +101,7 @@ export async function meteredCall<T>(args: {
       return { cached: true as const, value: old.output as T }
     }
     if (old) throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    checkWorkerDrain()
     const [state] = await query(
       'SELECT mode,research_enabled FROM system_state WHERE id=true',
       [],
@@ -136,6 +137,7 @@ export async function meteredCall<T>(args: {
       totals.monthSpent + args.maximum > config().MONTHLY_BUDGET_KOPECKS
     )
       throw new Error('BUDGET_BLOCKED')
+    checkWorkerDrain()
     const id = randomUUID()
     await query(
       `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo,
@@ -162,6 +164,8 @@ export async function meteredCall<T>(args: {
       [args.reservationId, args.maximum],
       db,
     )
+    // Roll back an unsent call if shutdown arrived while the accounting claim was prepared.
+    checkWorkerDrain()
     return { cached: false as const, id }
   })
   if (claim.cached) return claim.value

@@ -49,6 +49,8 @@ services:
     build: .
     profiles: ['app']
     restart: unless-stopped
+    # One bounded Ollama call plus its sole free format repair (2 × 600 s), then persistence.
+    stop_grace_period: 21m
     env_file: .env
     environment:
       DATABASE_URL: postgres://farm:${POSTGRES_PASSWORD}@db:5432/farm

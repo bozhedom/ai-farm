@@ -30,7 +30,8 @@ import type { Invoice } from '../../core/payments'
 import { sandboxPayment, submitTransaction, reconcilePayments } from '../../core/payments'
 import { simulateEvolution, evaluateWeek } from '../../core/evolution'
 import { attemptLogin, validSession, digest } from '../../core/auth'
-import { reportUsage } from '../../core/activity'
+import { activityContext, reportUsage, WorkerDraining } from '../../core/activity'
+import { claimWorkerJob, executeWorkerJob } from '../../core/worker-runtime'
 import { productHistory } from '../../core/products'
 import { recipes } from '../../core/templates'
 import { sourceSocialDelivery } from '../../core/source-posts'
@@ -912,6 +913,294 @@ describe('durable autonomous pipeline', () => {
         await query('SELECT status FROM budget_reservations WHERE dedupe_key=$1', [`order:${o.id}`])
       )[0]!.status,
     ).toBe('closed')
+  })
+})
+
+describe('resumable worker shutdown', () => {
+  it.each(['campaign', 'manual'] as const)(
+    'resumes %s research after midnight with the same plan and call keys without spending an attempt',
+    async (kind) => {
+      const requested =
+        kind === 'campaign' ? await requestResearchCampaign() : await requestResearch('description')
+      const job = (await claimJob(['research']))!
+      let stopping = false,
+        stopOnce = true
+      const original = budget.meteredCall
+      const invoked = vi.fn()
+      vi.spyOn(budget, 'meteredCall').mockImplementation(async (args: any) =>
+        original({
+          ...args,
+          invoke: async () => {
+            invoked(args.key)
+            const result = await args.invoke()
+            if (stopOnce) {
+              stopping = true
+              stopOnce = false
+            }
+            return result
+          },
+        }),
+      )
+      const lifecycle = { isStopping: () => stopping, onHeartbeatError: vi.fn() }
+      await executeWorkerJob(job, lifecycle)
+      const [paused] = await query('SELECT * FROM jobs WHERE id=$1', [job.id])
+      expect(paused).toMatchObject({
+        status: 'queued',
+        attempts: 0,
+        max_attempts: 3,
+        error_code: 'WORKER_DRAINING',
+        lease_token: null,
+        locked_until: null,
+      })
+      expect(job.id).toBe(requested.id)
+      if ('campaignId' in requested) expect(paused!.payload.campaignId).toBe(requested.campaignId)
+      const [reservation] = await query('SELECT * FROM budget_reservations WHERE dedupe_key=$1', [
+        `research:${job.id}`,
+      ])
+      expect(reservation!.status).toBe('open')
+      expect(await query('SELECT id,status FROM tool_calls WHERE job_id=$1', [job.id])).toEqual([
+        { id: expect.any(String), status: 'done' },
+      ])
+      expect(invoked).toHaveBeenCalledOnce()
+      expect(await query('SELECT id FROM products')).toHaveLength(0)
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+      await expireResearchSlots(tomorrow)
+      expect((await query('SELECT status,error_code FROM jobs WHERE id=$1', [job.id]))[0]).toEqual({
+        status: 'queued',
+        error_code: 'WORKER_DRAINING',
+      })
+      expect(
+        (await query('SELECT status FROM budget_reservations WHERE id=$1', [reservation!.id]))[0]!
+          .status,
+      ).toBe('open')
+      stopping = false
+      const resumed = (await claimJob(['research']))!
+      expect(resumed.id).toBe(job.id)
+      expect(resumed.attempts).toBe(1)
+      expect((await query('SELECT error_code,payload FROM jobs WHERE id=$1', [job.id]))[0]).toEqual(
+        {
+          error_code: null,
+          payload: paused!.payload,
+        },
+      )
+      await executeWorkerJob(resumed, lifecycle)
+      expect((await query('SELECT status FROM jobs WHERE id=$1', [job.id]))[0]!.status).toBe('done')
+      expect(await query('SELECT id FROM products')).toHaveLength(1)
+      expect(await query('SELECT id FROM tool_calls WHERE job_id=$1', [job.id])).toHaveLength(7)
+      expect(
+        invoked.mock.calls.filter(([key]) => key === `${job.id}:description:search`),
+      ).toHaveLength(1)
+      expect(
+        (
+          await query('SELECT id,status FROM budget_reservations WHERE dedupe_key=$1', [
+            `research:${job.id}`,
+          ])
+        )[0],
+      ).toEqual({ id: reservation!.id, status: 'closed' })
+    },
+  )
+
+  it.each(['manual', 'rotate'] as const)(
+    'preserves started %s research through graceful shutdown, midnight and another lost lease',
+    async (kind) => {
+      vi.spyOn(settings, 'config').mockReturnValue({
+        ...settings.config(),
+        MODEL_PROVIDER: 'yandex',
+        SEARCH_PROVIDER: 'searxng',
+        AUTONOMY_ENABLED: true,
+      })
+      const today = new Date().toISOString().slice(0, 10)
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+      const key = kind === 'manual' ? `manual-research:${randomUUID()}` : `research:${today}`
+      const payload = {
+        templates: JSON.stringify(['description']),
+        plan: JSON.stringify([
+          { template: 'description', strategy: { id: randomUUID(), approach: 'Сохранённый план' } },
+        ]),
+      }
+      await enqueue('research', key, payload)
+      await setSchedule(true)
+      const job = (await claimJob(['research']))!
+      const reservationId = await reserveBudget(`research:${job.id}`, 'research')
+      let stopping = false
+      const first = vi.fn(async () => {
+        stopping = true
+        return { value: 'Сохранённый ответ', cost: 125 }
+      })
+      const second = vi.fn(async () => ({ value: 'Следующий ответ', cost: 200 }))
+      const stages = () =>
+        activityContext.run({ jobId: job.id, isStopping: () => stopping }, async () => {
+          await meteredCall({
+            key: `${job.id}:first`,
+            reservationId,
+            role: 'Исследователь',
+            maximum: 500,
+            demo: false,
+            invoke: first,
+          })
+          await meteredCall({
+            key: `${job.id}:second`,
+            reservationId,
+            role: 'Критик',
+            maximum: 500,
+            demo: false,
+            invoke: second,
+          })
+        })
+      await expect(stages()).rejects.toBeInstanceOf(WorkerDraining)
+      await finishJob(job, new WorkerDraining())
+      expect(first).toHaveBeenCalledOnce()
+      expect(second).not.toHaveBeenCalled()
+      expect((await query('SELECT status,charged_kopecks FROM tool_calls'))[0]).toEqual({
+        status: 'done',
+        charged_kopecks: 125,
+      })
+      expect(await query('SELECT id FROM tool_calls')).toHaveLength(1)
+      expect(
+        (
+          await query('SELECT status,spent_kopecks FROM budget_reservations WHERE id=$1', [
+            reservationId,
+          ])
+        )[0],
+      ).toEqual({ status: 'open', spent_kopecks: 125 })
+      await expireResearchSlots(tomorrow)
+      stopping = false
+      const resumed = (await claimJob(['research']))!
+      expect(resumed.attempts).toBe(1)
+      expect(
+        (await query('SELECT error_code FROM jobs WHERE id=$1', [job.id]))[0]!.error_code,
+      ).toBeNull()
+      // Simulate SIGKILL after the next claim, before any new accounting call.
+      await query("UPDATE jobs SET locked_until=now()-interval '1 second' WHERE id=$1", [
+        resumed.id,
+      ])
+      await recoverJobs()
+      const staleManual = await enqueue('research', `manual-research:${randomUUID()}`)
+      const staleRotate = await enqueue('research', 'research:2020-01-01')
+      await expireResearchSlots(tomorrow)
+      const [recovered] = await query('SELECT * FROM jobs WHERE id=$1', [job.id])
+      expect(recovered).toMatchObject({
+        status: 'queued',
+        error_code: 'LEASE_EXPIRED',
+        attempts: 1,
+        max_attempts: 3,
+        dedupe_key: key,
+        payload,
+        lease_token: null,
+        locked_until: null,
+      })
+      expect(recovered!.started_at).not.toBeNull()
+      expect(await query('SELECT call_key,status,output,charged_kopecks FROM tool_calls')).toEqual([
+        {
+          call_key: `${job.id}:first`,
+          status: 'done',
+          output: 'Сохранённый ответ',
+          charged_kopecks: 125,
+        },
+      ])
+      expect(
+        (
+          await query('SELECT status,spent_kopecks FROM budget_reservations WHERE id=$1', [
+            reservationId,
+          ])
+        )[0],
+      ).toEqual({ status: 'open', spent_kopecks: 125 })
+      const unused = await query(
+        'SELECT status,error_code,attempts,started_at FROM jobs WHERE id=ANY($1)',
+        [[staleManual.id, staleRotate.id]],
+      )
+      expect(unused).toHaveLength(2)
+      for (const skipped of unused)
+        expect(skipped).toEqual({
+          status: 'failed',
+          error_code: 'RESEARCH_SLOT_EXPIRED',
+          attempts: 0,
+          started_at: null,
+        })
+      const restarted = (await claimJob(['research']))!
+      expect(restarted).toMatchObject({ id: job.id, attempts: 2, max_attempts: 3, payload })
+      expect(restarted.lease_token).not.toBe(resumed.lease_token)
+      await stages()
+      expect(first).toHaveBeenCalledOnce()
+      expect(second).toHaveBeenCalledOnce()
+      expect((await budgetSummary()).daySpent).toBe(325)
+      expect(await query('SELECT call_key FROM tool_calls ORDER BY call_key')).toEqual([
+        { call_key: `${job.id}:first` },
+        { call_key: `${job.id}:second` },
+      ])
+      expect(
+        (
+          await query('SELECT spent_kopecks FROM budget_reservations WHERE id=$1', [reservationId])
+        )[0]!.spent_kopecks,
+      ).toBe(325)
+      await finishJob(restarted)
+    },
+  )
+
+  it('does not turn an uncertain call into a safe retry or refund its attempt on shutdown', async () => {
+    const created = await order()
+    await sandboxPayment(created.id)
+    const job = (await claimJob(['fulfill']))!
+    const [saved] = await query('SELECT reservation_id FROM orders WHERE id=$1', [created.id])
+    const invoke = vi.fn(async () => {
+      throw new Error('NETWORK_TIMEOUT')
+    })
+    const call = {
+      key: `${job.id}:generate`,
+      reservationId: saved!.reservation_id,
+      role: 'Исполнитель',
+      maximum: 0,
+      demo: true,
+      invoke,
+    }
+    await expect(meteredCall(call)).rejects.toThrow('NETWORK_TIMEOUT')
+    await expect(
+      activityContext.run({ jobId: job.id, isStopping: () => true }, () => meteredCall(call)),
+    ).rejects.toThrow('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    await finishJob(job, new WorkerDraining())
+    expect(
+      (await query('SELECT status,attempts,error_code FROM jobs WHERE id=$1', [job.id]))[0],
+    ).toEqual({ status: 'failed', attempts: 1, error_code: 'UNCERTAIN_CALL_REQUIRES_REVIEW' })
+    expect((await orderDetails(created.id)).status).toBe('manual_review')
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(
+      (await query('SELECT status FROM tool_calls WHERE call_key=$1', [call.key]))[0]!.status,
+    ).toBe('uncertain')
+  })
+
+  it('returns only a raced claim and preserves its envelope, history and maximum attempts', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'yandex',
+      SEARCH_PROVIDER: 'searxng',
+    })
+    const campaign = await requestResearchCampaign()
+    let checks = 0
+    expect(await claimWorkerJob(['research'], () => ++checks > 1)).toBeUndefined()
+    const [saved] = await query('SELECT * FROM jobs WHERE id=$1', [campaign.id])
+    expect(saved).toMatchObject({
+      status: 'queued',
+      attempts: 0,
+      max_attempts: 3,
+      lease_token: null,
+      error_code: 'WORKER_DRAINING',
+    })
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(0)
+    expect(
+      (await query('SELECT status,limit_kopecks,spent_kopecks FROM budget_reservations'))[0],
+    ).toEqual({ status: 'open', limit_kopecks: 10000, spent_kopecks: 0 })
+    const resumed = (await claimJob(['research']))!
+    expect(resumed.id).toBe(campaign.id)
+    expect(resumed.attempts).toBe(1)
+    await finishJob({ ...resumed, lease_token: randomUUID() }, new WorkerDraining())
+    expect(
+      (await query('SELECT status,attempts,lease_token FROM jobs WHERE id=$1', [resumed.id]))[0],
+    ).toEqual({ status: 'running', attempts: 1, lease_token: resumed.lease_token })
+    await finishJob(resumed, new Error('WORKER_DRAINING'))
+    expect((await query('SELECT status,attempts FROM jobs WHERE id=$1', [resumed.id]))[0]).toEqual({
+      status: 'queued',
+      attempts: 1,
+    })
   })
 })
 

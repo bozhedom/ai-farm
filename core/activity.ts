@@ -1,7 +1,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { audit, query } from './db'
 
-export const activityContext = new AsyncLocalStorage<{ jobId: string }>()
+export const activityContext = new AsyncLocalStorage<{
+  jobId: string
+  isStopping?: () => boolean
+}>()
+
+/** Only a server lifecycle boundary can request a resumable shutdown. */
+export class WorkerDraining extends Error {
+  constructor() {
+    super('WORKER_DRAINING')
+  }
+}
+
+export function checkWorkerDrain() {
+  if (activityContext.getStore()?.isStopping?.()) throw new WorkerDraining()
+}
 export type CallActivity = {
   template?: string
   taskLabel: string

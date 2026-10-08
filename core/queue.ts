@@ -3,6 +3,7 @@ import { audit, pool, query, transaction, type Connection } from './db'
 import { templateSchema, type Template } from './policy'
 import { config } from './config'
 import { budgetSummary, reserveBudget } from './budget'
+import { WorkerDraining } from './activity'
 
 export type Job = {
   id: string
@@ -46,7 +47,7 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
       return
     const [claimed] = await query<Job>(
       `UPDATE jobs SET status='running', attempts=attempts+1,started_at=COALESCE(started_at,now()),
-      error_code=CASE WHEN error_code='RESEARCH_DAILY_BUDGET_WAIT' THEN null ELSE error_code END,
+      error_code=CASE WHEN error_code IN ('RESEARCH_DAILY_BUDGET_WAIT','WORKER_DRAINING') THEN null ELSE error_code END,
       locked_until=now()+interval '2 minutes', lease_token=$2 WHERE id=$1 RETURNING *`,
       [row.id, randomUUID()],
       db,
@@ -147,7 +148,7 @@ export async function heartbeatJob(job: Job) {
   if (!result.length) throw new Error('LEASE_LOST')
 }
 export async function finishJob(job: Job, error?: unknown) {
-  const code =
+  let code =
     error instanceof Error && /^[A-Z][A-Z0-9_]{2,80}$/.test(error.message)
       ? error.message
       : error
@@ -160,6 +161,36 @@ export async function finishJob(job: Job, error?: unknown) {
       db,
     )
     if (!current || current.status !== 'running') return
+    if (error instanceof WorkerDraining) {
+      const unresolved = await query(
+        `SELECT id FROM tool_calls WHERE status IN ('pending','uncertain') AND (
+          job_id=$1 OR reservation_id IN (
+            SELECT id FROM budget_reservations WHERE dedupe_key=$2
+            UNION SELECT reservation_id FROM orders WHERE id::text=$3
+          )
+        ) LIMIT 1`,
+        [job.id, `research:${job.id}`, job.payload.orderId || ''],
+        db,
+      )
+      if (!unresolved.length) {
+        await query(
+          `UPDATE jobs SET status='queued',attempts=GREATEST(attempts-1,0),
+           error_code='WORKER_DRAINING',locked_until=null,lease_token=null,
+           run_after=now(),finished_at=null WHERE id=$1`,
+          [job.id],
+          db,
+        )
+        await audit(
+          'job_yielded',
+          'Обработчик штатно остановлен между этапами. Ответы, расходы и резерв сохранены; попытка возвращена.',
+          { jobId: job.id, kind: job.kind },
+          db,
+        )
+        return
+      }
+      // A lifecycle signal cannot turn an ambiguous earlier charge into a safe retry.
+      code = 'UNCERTAIN_CALL_REQUIRES_REVIEW'
+    }
     const terminal =
       !!code &&
       (job.attempts >= job.max_attempts ||
@@ -231,9 +262,12 @@ export async function recoverJobs() {
 
 export async function expireResearchSlots(day: string) {
   await transaction(async (db) => {
+    // An attempted job owns durable responses and its reservation, even after another
+    // restart replaces WORKER_DRAINING with LEASE_EXPIRED. Only expire unused slots.
     const stale = await query(
       `UPDATE jobs SET status='failed',error_code='RESEARCH_SLOT_EXPIRED',finished_at=now()
-      WHERE kind='research' AND status='queued' AND NOT (payload ? 'campaignId') AND (
+      WHERE kind='research' AND status='queued' AND NOT (payload ? 'campaignId')
+      AND started_at IS NULL AND (
         (dedupe_key ~ '^research:[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND right(dedupe_key,10)<$1)
         OR (dedupe_key LIKE 'manual-research:%' AND created_at < ($1::date::timestamp AT TIME ZONE 'UTC'))
       ) RETURNING id`,
