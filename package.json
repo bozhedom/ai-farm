@@ -16,6 +16,7 @@
     "typecheck": "nuxt typecheck && tsc --project tsconfig.core.json --noEmit",
     "test": "vitest run tests/unit",
     "test:integration": "node --env-file=.env node_modules/vitest/vitest.mjs run tests/integration --maxWorkers=1",
+    "test:autonomy": "node --env-file=.env --import tsx scripts/check-autonomy.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "postinstall": "nuxt prepare",
