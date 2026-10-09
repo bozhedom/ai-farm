@@ -2,6 +2,7 @@
 import type { OfficeLead } from '../../../core/contracts/office'
 import { copyText, officeApi, useOfficeAction, useOfficeToast } from '~/composables/office/actions'
 import { useOfficeLeads } from '~/composables/office/data'
+import { reasonText } from '~/composables/office/errors'
 import { ago, domain, withCount } from '~/composables/office/format'
 import { leadBadge, templateLabel } from '~/composables/office/labels'
 
@@ -12,7 +13,13 @@ const { show } = useOfficeToast()
 
 type Filter = 'new' | 'contacted' | 'dismissed' | 'all'
 const filter = ref<Filter>('new')
-const product = ref('')
+// `?product=<id>` comes from the idea and product pages.
+const route = useRoute()
+const product = ref(typeof route.query.product === 'string' ? route.query.product : '')
+const hasDemo = computed(() => all.value.some((lead) => lead.isDemo))
+function searchMore() {
+  void run('search', () => officeApi.searchLeads(), 'Ищем новые запросы. Они появятся здесь.')
+}
 const all = computed(() => data.value?.items || [])
 const isNew = (lead: OfficeLead) => lead.stage === 'new' || lead.stage === 'saved'
 const counts = computed(() => ({
@@ -56,7 +63,12 @@ function redraft(lead: OfficeLead) {
 const subtitle = computed(() => {
   if (!data.value) return 'Люди, которым уже сейчас нужна такая услуга.'
   if (!data.value.total) return 'Запросов пока нет.'
-  return `${withCount(data.value.total, ['запрос', 'запроса', 'запросов'])}. ${counts.value.new ? `${withCount(counts.value.new, ['ждёт', 'ждут', 'ждут'])} отклика.` : 'Новых нет.'}`
+  const fresh = all.value.filter(isNew)
+  const ready = fresh.filter((lead) => lead.replyDraft).length
+  const waiting = fresh.length - ready
+  if (!fresh.length)
+    return `${withCount(data.value.total, ['запрос', 'запроса', 'запросов'])}. Новых нет.`
+  return `${withCount(data.value.total, ['запрос', 'запроса', 'запросов'])}. Отклик готов у ${ready}${waiting ? `, без отклика ${waiting}` : ''}.`
 })
 </script>
 <template>
@@ -64,8 +76,14 @@ const subtitle = computed(() => {
     <div class="page-head">
       <div>
         <h1>Клиенты</h1>
-        <p>{{ subtitle }}</p>
+        <p>
+          {{ subtitle }}
+          <span v-if="hasDemo" class="badge badge-plain demo-note">Данные демо-провайдера</span>
+        </p>
       </div>
+      <button type="button" class="btn" :disabled="!!busy" @click="searchMore">
+        <OfficeIcon name="search" size="sm" />{{ busy === 'search' ? 'Ищем' : 'Поискать ещё' }}
+      </button>
     </div>
     <p class="note rule">
       <OfficeIcon name="clients" size="sm" />Отправляете вы. Ферма никому не пишет.
@@ -106,7 +124,12 @@ const subtitle = computed(() => {
           Все <span class="n">{{ all.length }}</span>
         </button>
       </div>
-      <select v-if="products.length > 1" v-model="product" class="select" aria-label="Продукт">
+      <select
+        v-if="products.length > 1 || product"
+        v-model="product"
+        class="select"
+        aria-label="Продукт"
+      >
         <option value="">Все продукты</option>
         <option v-for="[pid, name] in products" :key="pid" :value="pid">{{ name }}</option>
       </select>
@@ -137,7 +160,6 @@ const subtitle = computed(() => {
             <OfficeBadge :badge="leadBadge(lead.stage)" />
             <span class="where">{{ domain(lead.url) }}</span>
             <span>{{ ago(lead.lastSeenAt || lead.firstSeenAt) }}</span>
-            <span v-if="lead.isDemo" class="badge badge-plain">Демо</span>
           </div>
           <h3>{{ lead.title }}</h3>
           <p class="quote">{{ lead.snippet }}</p>
@@ -153,9 +175,22 @@ const subtitle = computed(() => {
             <span class="eyebrow">Отклик</span>
           </div>
           <div v-if="lead.replyDraft" class="reply">{{ lead.replyDraft }}</div>
-          <p v-else-if="lead.replyError" class="reply reply-err">{{ lead.replyError }}</p>
-          <p v-else class="reply muted">Отклик ещё готовится.</p>
+          <p v-else-if="lead.replyError" class="reply reply-err">
+            Отклик не получился: {{ reasonText(lead.replyError) }}
+          </p>
+          <p v-else class="reply muted">
+            Отклика пока нет: за день ферма готовит несколько откликов, остальные по кнопке.
+          </p>
           <div class="actions">
+            <button
+              v-if="!lead.replyDraft && isNew(lead)"
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="!!busy"
+              @click="redraft(lead)"
+            >
+              {{ busy === `draft:${lead.id}` ? 'Готовим' : 'Подготовить отклик' }}
+            </button>
             <button
               v-if="lead.replyDraft"
               type="button"
@@ -203,7 +238,7 @@ const subtitle = computed(() => {
               Вернуть в новые
             </button>
             <button
-              v-if="isNew(lead)"
+              v-if="isNew(lead) && lead.replyDraft"
               type="button"
               class="btn btn-ghost btn-sm"
               :disabled="!!busy"
@@ -223,6 +258,10 @@ const subtitle = computed(() => {
   </div>
 </template>
 <style scoped>
+.demo-note {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
 .rule {
   margin-bottom: var(--s-5);
   width: fit-content;

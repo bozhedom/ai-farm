@@ -35,7 +35,7 @@ const usd = (micro: number) =>
         <h1>Деньги</h1>
         <p>Расходы на модели и поиск. Тестовые платежи в выручку не попадают.</p>
       </div>
-      <NuxtLink class="btn btn-ghost" to="/office/settings#limits">Изменить лимиты</NuxtLink>
+      <NuxtLink class="btn btn-ghost" to="/office/settings#limits">Где меняются лимиты</NuxtLink>
     </div>
 
     <OfficeState v-if="!m" :status="status" :pending="pending" @retry="refresh" />
@@ -91,23 +91,16 @@ const usd = (micro: number) =>
           </ul>
         </section>
         <section class="card rise" aria-labelledby="rules">
-          <h2 id="rules">Как считаем</h2>
-          <dl class="lines">
+          <h2 id="rules">Отложено под задачи: {{ rub(m.outstandingKopecks) }}</h2>
+          <dl v-if="m.openai" class="lines">
             <div>
-              <dt>Отложено под задачи</dt>
-              <dd class="num">{{ rub(m.outstandingKopecks) }}</dd>
-            </div>
-            <div v-if="m.openai">
               <dt>Платная модель</dt>
               <dd class="num">
                 {{ usd(m.openai.spentMicrousd) }} из {{ usd(m.openai.limitMicrousd) }}
               </dd>
             </div>
           </dl>
-          <p class="small muted">
-            Когда задача начинается, сумма откладывается и списывается по факту. Лимит дня и месяца
-            общий для всех агентов. Заказы покупателей идут первыми.
-          </p>
+          <p class="small muted">Деньги откладываются при старте задачи и списываются по факту.</p>
         </section>
       </div>
     </template>

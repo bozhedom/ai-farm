@@ -44,7 +44,7 @@ export function invoiceUnique(sequence: bigint, random = randomInt(1000)) {
   return sequence * 1000n + BigInt(random)
 }
 
-/** Short reference a buyer can read out loud. Not a secret and not a sequence number. */
+/** Old short reference from the id. People now see orders.number («Заказ №1042»). */
 export function orderNumber(id: string) {
   return id.replace(/-/g, '').slice(0, 6).toUpperCase()
 }
@@ -110,6 +110,7 @@ export async function publicOrderView(token: string, now = new Date()): Promise<
   const amountWei = String(order.amount_wei)
   return {
     id: order.id,
+    number: Number(order.number),
     status: progress.status,
     service: {
       slug: order.slug,
@@ -186,7 +187,7 @@ export async function payPublicOrder(token: string, request: PublicPayRequest, c
 export async function publicResultText(token: string) {
   const order = await findByToken(token)
   if (order.status !== 'delivered' || !order.result) throw new Error('RESULT_NOT_FOUND')
-  return { filename: `order-${orderNumber(order.id)}.txt`, text: order.result as string }
+  return { filename: `order-${order.number}.txt`, text: order.result as string }
 }
 
 /** Owner action: the old link stops working at once; the new token is shown once. */

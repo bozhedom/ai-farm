@@ -9,6 +9,11 @@ const { data, error } = await useFetch<PublicServicePage>(
   () => `/api/public/services/${slug.value}`,
 )
 const service = computed(() => data.value?.service)
+// A missing service is a real 404 for browsers and search engines, with the same friendly page.
+if (import.meta.server && (error.value || !data.value)) {
+  const event = useRequestEvent()
+  if (event) setResponseStatus(event, error.value?.statusCode === 404 || !error.value ? 404 : 502)
+}
 useHead({
   title: () => (service.value ? `${service.value.name}. AI Farm` : 'Услуга не найдена. AI Farm'),
 })

@@ -504,7 +504,7 @@ describe('durable autonomous pipeline', () => {
     await runJob(job)
     const [saved] = await query('SELECT * FROM orders WHERE id=$1', [created.id])
     expect(saved!.status).toBe('delivered')
-    expect(saved!.result).toContain('ДЕМОНСТРАЦИЯ')
+    expect(saved!.result).toMatch(/^Демонстрация: /)
     expect(await query("SELECT id FROM audit_events WHERE kind='order_delivered'")).toHaveLength(1)
     expect((await budgetSummary()).outstanding).toBe(0)
     await evaluateWeek('week-1')
@@ -792,7 +792,7 @@ describe('durable autonomous pipeline', () => {
     const detail = await orderDetails(o.id)
     expect(detail.steps.every((step) => !!step.at)).toBe(true)
     expect(detail.paymentAttempts).toHaveLength(1)
-    expect(detail.progress.title).toBe('Результат выдан')
+    expect(detail.progress.title).toBe('Готово')
     // Old delivered orders may predate the call timestamps and job association.
     await query('UPDATE tool_calls SET job_id=null,finished_at=null WHERE job_id=$1', [job.id])
     const historic = await orderDetails(o.id)
@@ -1635,7 +1635,7 @@ describe('owner resolution of test obligations', () => {
     expect(await budgetSummary()).toEqual(amounts)
     expect(await query("SELECT id FROM audit_events WHERE kind='order_resolved'")).toHaveLength(1)
     expect((await orderDetails(created.id)).progress).toMatchObject({
-      title: 'Тестовый заказ закрыт',
+      title: 'Закрыт без выдачи',
       canSubmit: false,
       canResolve: false,
       errorCode: 'OUTPUT_REVIEW_REQUIRED',

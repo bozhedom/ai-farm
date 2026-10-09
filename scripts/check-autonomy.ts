@@ -304,7 +304,7 @@ try {
     const result = await delivered(id)
     assert.equal(result.reservation_status, 'closed')
     assert.equal(result.attempts, 1)
-    assert.match(result.result, /ДЕМОНСТРАЦИЯ/)
+    assert.match(result.result, /^Демонстрация: /)
     await assertSingleDelivery(id)
   }
   await stop(pausedWorker)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { PublicCatalog } from '../../core/contracts/public'
-import { savedOrders, tokenFromLink, type SavedOrder } from '~/utils/public-site'
+import { publicWhen, savedOrders, tokenFromLink, type SavedOrder } from '~/utils/public-site'
 
 useHead({ title: 'AI Farm: тексты для малого бизнеса за 5 минут' })
 const { data, error, refresh, pending } = await useFetch<PublicCatalog>('/api/public/catalog')
@@ -13,7 +13,10 @@ const shelfColors: Record<string, string> = {
   'Для найма': 'var(--clay)',
   'Тексты и документы': 'var(--sun)',
 }
-const shelves = computed(() => [...new Set(services.value.map((s) => s.category))])
+// Shelf chips help only on a fuller storefront.
+const shelves = computed(() =>
+  services.value.length >= 4 ? [...new Set(services.value.map((s) => s.category))] : [],
+)
 const shelf = ref('all')
 const shown = computed(() =>
   shelf.value === 'all' ? services.value : services.value.filter((s) => s.category === shelf.value),
@@ -25,6 +28,19 @@ const plural = (n: number, one: string, few: string, many: string) =>
       ? few
       : many
 
+const savedStatus: Record<string, string> = {
+  awaiting_payment: 'ждёт оплаты',
+  checking_payment: 'проверяем оплату',
+  in_progress: 'пишем текст',
+  delivered: 'готов',
+  needs_attention: 'смотрит продавец',
+  expired: 'срок истёк',
+  closed: 'закрыт',
+}
+const savedLine = (order: SavedOrder) =>
+  [publicWhen(order.at).replace(/, \d\d:\d\d$/, ''), order.status && savedStatus[order.status]]
+    .filter(Boolean)
+    .join(', ')
 const saved = ref<SavedOrder[]>([])
 onMounted(() => (saved.value = savedOrders()))
 const link = ref('')
@@ -70,7 +86,7 @@ function openOrder() {
           </div>
           <div class="fact rise is-sun">
             <span class="num">2</span>
-            <p>Шага у каждого текста: автор пишет, проверка сверяет с вашими фактами.</p>
+            <p>Агента на каждый текст: один пишет, второй сверяет с вашими фактами.</p>
           </div>
         </div>
       </section>
@@ -156,11 +172,15 @@ function openOrder() {
           <div>
             <h2>Уже заказывали?</h2>
             <p class="muted">Откройте заказ по ссылке, которую вы сохранили.</p>
-            <ul v-if="saved.length" class="saved">
-              <li v-for="order in saved" :key="order.token">
-                <NuxtLink :to="`/order/${order.token}`">{{ order.name }}</NuxtLink>
-              </li>
-            </ul>
+            <template v-if="saved.length">
+              <p class="saved-title small">Ваши заказы на этом устройстве:</p>
+              <ul class="saved">
+                <li v-for="order in saved" :key="order.token">
+                  <NuxtLink :to="`/order/${order.token}`">{{ order.name }}</NuxtLink
+                  ><span class="muted small">, {{ savedLine(order) }}</span>
+                </li>
+              </ul>
+            </template>
           </div>
           <form class="lookup-form" @submit.prevent="openOrder">
             <label class="sr-only" for="order-link">Ссылка на заказ</label>
@@ -265,6 +285,12 @@ function openOrder() {
 }
 .lookup .muted {
   margin-top: 4px;
+}
+.saved-title + .saved {
+  margin-top: 4px;
+}
+.saved-title {
+  margin-top: var(--s-3);
 }
 .saved {
   margin-top: var(--s-3);

@@ -8,7 +8,9 @@ import { orderBadge } from '~/composables/office/labels'
 const route = useRoute()
 const id = computed(() => String(route.params.id))
 const { data: order, status, pending, refresh } = useOwnerOrder(id)
-useHead({ title: computed(() => `Заказ №${orderNumber(id.value)}`) })
+useHead({
+  title: computed(() => (order.value ? `Заказ №${orderNumber(order.value)}` : 'Заказ')),
+})
 const { busy, run } = useOfficeAction()
 const { show } = useOfficeToast()
 
@@ -17,7 +19,31 @@ const hash = ref('')
 watch(id, () => {
   reason.value = ''
   hash.value = ''
+  relinkAsk.value = false
+  buyerLink.value = ''
 })
+
+// The buyer's link is stored only as a hash, so it cannot be shown again. The owner can issue a
+// new one; the old link stops working at once, so the buyer has to get the new one.
+const relinkAsk = ref(false)
+const buyerLink = ref('')
+async function relink() {
+  const done = await run(
+    'relink',
+    () => officeApi.relinkOrder(id.value),
+    'Новая ссылка готова. Старая больше не открывается.',
+  )
+  if (done) {
+    buyerLink.value = new URL(done.url, window.location.origin).toString()
+    relinkAsk.value = false
+  }
+}
+async function copyLink() {
+  show(
+    (await copyText(buyerLink.value)) ? 'Ссылка скопирована.' : 'Не получилось скопировать.',
+    'ok',
+  )
+}
 
 const price = computed(() => (order.value?.price_kopecks ? rub(order.value.price_kopecks) : ''))
 const ethAmount = computed(() => {
@@ -66,7 +92,7 @@ function download() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `zakaz-${orderNumber(order.value.id)}.txt`
+  a.download = `zakaz-${orderNumber(order.value)}.txt`
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
@@ -84,9 +110,10 @@ function download() {
     <template v-else>
       <div class="page-head">
         <div>
-          <h1>Заказ №{{ orderNumber(order.id) }}</h1>
+          <h1>Заказ №{{ orderNumber(order) }}</h1>
           <p>
-            {{ order.product_snapshot.name }}<template v-if="price">, {{ price }}</template
+            {{ order.productName || order.product_snapshot.name
+            }}<template v-if="price">, {{ price }}</template
             >. {{ order.source === 'public' ? 'С сайта' : 'Из кабинета' }},
             {{ when(order.created_at) }}.
           </p>
@@ -192,13 +219,13 @@ function download() {
 
       <div class="cols">
         <section class="card rise">
-          <div class="card-head">
-            <h2>Что прислал покупатель</h2>
-            <span class="badge badge-plain">Версия {{ order.product_snapshot.version }}</span>
-          </div>
+          <h2 class="card-title">Что прислал покупатель</h2>
           <p class="pre">{{ order.input }}</p>
-          <p v-if="order.strategy_snapshot?.name" class="small muted agent-line">
-            Агент: {{ order.strategy_snapshot.name }}
+          <p v-if="order.agent" class="small muted agent-line">
+            Исполнитель:
+            <NuxtLink :to="`/office/agents#agent-${order.agent.id}`">{{
+              order.agent.name
+            }}</NuxtLink>
           </p>
         </section>
 
@@ -297,6 +324,52 @@ function download() {
         </ul>
       </section>
 
+      <section
+        v-if="order.source === 'public'"
+        class="card rise buyer"
+        aria-labelledby="buyer-title"
+      >
+        <h2 id="buyer-title">Как видит покупатель</h2>
+        <template v-if="buyerLink">
+          <p class="small">
+            Новая ссылка заказа. Старая больше не открывается: отправьте эту покупателю.
+          </p>
+          <code class="wallet">{{ buyerLink }}</code>
+          <div class="row buyer-actions">
+            <a class="btn btn-primary btn-sm" :href="buyerLink" target="_blank" rel="noopener"
+              ><OfficeIcon name="external" size="sm" />Открыть как покупатель</a
+            >
+            <button type="button" class="btn btn-sm" @click="copyLink">
+              <OfficeIcon name="copy" size="sm" />Скопировать
+            </button>
+          </div>
+        </template>
+        <template v-else-if="relinkAsk">
+          <p class="note note-wait">
+            Ссылку покупателя мы храним зашифрованной и показать её не можем. Можно выдать новую, но
+            старая сразу перестанет открываться. Покупателю нужно будет отправить новую ссылку.
+          </p>
+          <div class="row buyer-actions">
+            <button type="button" class="btn btn-primary btn-sm" :disabled="!!busy" @click="relink">
+              {{ busy === 'relink' ? 'Выдаём' : 'Выдать новую ссылку' }}
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" @click="relinkAsk = false">
+              Отмена
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <p class="small muted">
+            Страница заказа открывается по секретной ссылке, которая есть только у покупателя.
+          </p>
+          <div class="row buyer-actions">
+            <button type="button" class="btn btn-sm" @click="relinkAsk = true">
+              Открыть как покупатель
+            </button>
+          </div>
+        </template>
+      </section>
+
       <p v-if="['delivered', 'expired', 'closed'].includes(order.status)" class="again">
         <NuxtLink class="btn btn-ghost btn-sm" to="/office/products">Сделать новый заказ</NuxtLink>
       </p>
@@ -350,6 +423,21 @@ function download() {
 .review-line,
 .agent-line {
   margin-top: var(--s-3);
+}
+.card-title {
+  margin-bottom: var(--s-3);
+}
+.buyer {
+  display: grid;
+  gap: var(--s-3);
+  justify-items: start;
+  margin-top: var(--s-5);
+}
+.buyer .wallet {
+  width: 100%;
+}
+.buyer-actions {
+  flex-wrap: wrap;
 }
 .cols {
   display: grid;

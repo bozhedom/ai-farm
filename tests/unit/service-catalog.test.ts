@@ -10,7 +10,7 @@ import {
   type Template,
 } from '../../core/policy'
 import { serviceByTemplate, serviceCatalog, serviceTemplates } from '../../core/service-catalog'
-import { demoResult, demoSpecs } from '../../core/providers/demo'
+import { demoMarker, demoResult, demoSpecs } from '../../core/providers/demo'
 import { recipes } from '../../core/templates'
 import { generationContext, reviewContext } from '../../core/jobs/text-context'
 import { renderSourcePosts, sourcePostLayouts, sourceSocialDelivery } from '../../core/source-posts'
@@ -60,8 +60,9 @@ describe('bounded service catalog', () => {
     expect(product.promise).toBe(service.delivery)
     expect(recipes[id].fixture).toBe(service.example)
     const output = demoResult(id, service.example)
-    expect(output).toContain('ДЕМОНСТРАЦИЯ')
+    expect(output.startsWith(demoMarker)).toBe(true)
     expect(output).toContain('без вызова модели')
+    expect(output).not.toMatch(/[·—→]/)
     expect(() => validateOutput(id, output)).not.toThrow()
   })
 

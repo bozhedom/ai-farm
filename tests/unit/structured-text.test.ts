@@ -89,7 +89,7 @@ describe('server-rendered structured texts', () => {
       for (const value of Object.values(candidate))
         for (const content of Array.isArray(value) ? value : [value])
           expect(text).toContain(content)
-      expect(text).not.toContain('ДЕМОНСТРАЦИЯ')
+      expect(text).not.toContain('Демонстрация')
     },
   )
 

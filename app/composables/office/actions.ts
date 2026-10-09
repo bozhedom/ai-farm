@@ -57,14 +57,19 @@ export const officeApi = {
   evolve: () => post('/api/office/agents/evolve', {}),
   setVisibility: (id: string, visibility: 'public' | 'private') =>
     post(`/api/office/products/${encodeURIComponent(id)}/visibility`, { visibility }),
-  saveIdea: (id: string, patch: { ownerNote?: string; status?: IdeaStatus }) =>
-    post(`/api/office/ideas/${encodeURIComponent(id)}`, patch),
+  saveIdea: (
+    id: string,
+    patch: { ownerNote?: string; status?: IdeaStatus; ownerStatus?: 'taken' | null },
+  ) => post(`/api/office/ideas/${encodeURIComponent(id)}`, patch),
   updateLead: (id: string, stage: string, note = '') =>
     post(`/api/opportunities/${encodeURIComponent(id)}`, { stage, note }),
+  searchLeads: () => post<{ jobs: unknown[]; reused: boolean }>('/api/office/leads/search', {}),
   redraftLead: (id: string) => post(`/api/office/leads/${encodeURIComponent(id)}/draft`, {}),
   saveSettings: (update: OfficeSettingsUpdate) => post('/api/office/settings', update),
   resolveOrder: (id: string, reason: string) =>
     post(`/api/orders/${encodeURIComponent(id)}/resolve`, { reason }),
+  relinkOrder: (id: string) =>
+    post<{ token: string; url: string }>(`/api/orders/${encodeURIComponent(id)}/relink`, {}),
   payOrder: (id: string, body: { mode: 'sandbox' } | { mode: 'sepolia'; hash: string }) =>
     post(`/api/orders/${encodeURIComponent(id)}/pay`, body),
   createOrder: (productId: string, input: string, requestKey: string) =>

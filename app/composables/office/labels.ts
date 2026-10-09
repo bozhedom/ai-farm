@@ -9,6 +9,7 @@ import type {
   ScoreComponent,
 } from '../../../core/contracts/office'
 import { categoryById } from '../../../core/taxonomy'
+import { serviceNames } from '../../../core/service-names'
 
 /** Badge tones from the design system: `.badge-<tone>`, `.dot.<tone>`, `.bar.is-<tone>`. */
 export type Tone = 'ok' | 'wait' | 'err' | 'off' | 'copy' | 'test' | 'human' | 'sun' | 'plain'
@@ -54,24 +55,14 @@ export const launchBadge = (idea: Pick<OfficeIdea, 'farmExecutable'>): Badge =>
     ? { label: 'Ферма сделает сама', tone: 'sun' }
     : { label: 'Нужен человек', tone: 'human' }
 
-export const templateLabels: Record<string, string> = {
-  description: 'Описание товара',
-  faq: 'Ответы на частые вопросы',
-  social: 'Посты из вашего текста',
-  proofreading: 'Вычитка текста',
-  translation: 'Перевод',
-  summary: 'Краткое содержание',
-  email: 'Ответ клиенту',
-  landing: 'Текст для страницы услуги',
-  proposal: 'Коммерческое предложение',
-  instruction: 'Пошаговая инструкция',
-  lesson: 'Мини-урок',
-  job_post: 'Вакансия',
-}
+/** Service names, the same as on the site (core/service-names.ts). */
+export const templateLabels: Record<string, string> = serviceNames
 export const templateLabel = (template: string | null | undefined) =>
   (template && templateLabels[template]) || 'Другое'
 
 export const revenueModels: Record<string, string> = {
+  service_fee: 'Оплата за текст',
+  one_time_sale: 'Разовая продажа',
   one_time: 'Разовая продажа',
   per_order: 'Оплата за заказ',
   subscription: 'Подписка',
@@ -80,7 +71,10 @@ export const revenueModels: Record<string, string> = {
   ads: 'Реклама',
   digital: 'Цифровой товар',
 }
-export const revenueModelLabel = (value: string) => revenueModels[value] || value
+/** Known revenue models in words; an unknown model code is never shown to people. */
+export const revenueModelLabel = (value: string) => revenueModels[value] || ''
+
+export const takenBadge: Badge = { label: 'В работе у вас', tone: 'sun' }
 
 export const orderStatus: Record<string, Badge> = {
   awaiting_payment: { label: 'Ждёт оплаты', tone: 'wait' },
@@ -178,6 +172,9 @@ export const scoreTone = (value: number) => (value >= 80 ? 'is-sun' : value < 50
 /** Colour of a feed event. Kinds come from the server; unknown kinds stay neutral. */
 export function feedTone(kind: string, text = ''): Tone {
   const k = `${kind} ${text}`.toLowerCase()
+  // A critic verdict is coloured by the verdict, not by the word «review» in the kind.
+  if (kind === 'idea_reviewed')
+    return /^критик принял/i.test(text) ? 'ok' : /отклонил/i.test(text) ? 'err' : 'wait'
   if (/error|fail|reject|blocked|limit|review|отклон|не прош|не ответ|исчерпан/.test(k))
     return 'err'
   if (/retire|archiv|уволен/.test(k)) return 'off'

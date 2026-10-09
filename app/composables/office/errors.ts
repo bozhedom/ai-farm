@@ -27,11 +27,44 @@ const messages: Record<string, string> = {
   PRODUCT_NOT_FOUND: 'Такого продукта нет.',
   OPPORTUNITY_NOT_FOUND: 'Такого запроса нет.',
   EVOLUTION_NOT_READY: 'Для отбора пока мало идей.',
+  IDEA_TAKE_FORBIDDEN: 'Взять в работу можно только идею, где нужен человек.',
+  IDEA_ALREADY_TAKEN: 'У вас уже есть идея в работе. Сначала верните её в рейтинг.',
+  IDEA_STATUS_CHANGE_FORBIDDEN: 'Так поменять статус идеи нельзя.',
+  LEAD_SEARCH_LIMIT: 'На сегодня поиски клиентов закончились. Лимит в настройках.',
+  PRODUCT_NOT_PUBLIC: 'Сначала покажите продукт на сайте.',
   INVALID_INPUT: 'Проверьте введённые данные.',
   RATE_LIMITED: 'Слишком часто. Подождите минуту.',
 }
 
 export type OfficeError = { status: number; code: string; text: string }
+
+const reasonCodes: Record<string, string> = {
+  POLICY_CONTENT_BLOCKED: 'Тема под запретом правил фермы.',
+  UNTRUSTED_INSTRUCTION_BLOCKED: 'В материале были команды для модели.',
+  OUTPUT_FORMAT_INVALID: 'Пример не совпал с форматом услуги.',
+  OUTPUT_FORMAT_REQUIRED: 'В примере не хватило обязательных частей.',
+  OUTPUT_REVIEW_REQUIRED: 'Проверка отклонила пример.',
+  MODEL_SCHEMA_INVALID: 'Модель ответила не по формату.',
+  MODEL_OUTPUT_INCOMPLETE: 'Модель не дописала ответ.',
+  OPENROUTER_RESPONSE_ERROR: 'OpenRouter ответил ошибкой. Попробуйте позже.',
+  BUDGET_BLOCKED: 'Не хватило дневного бюджета.',
+  PRODUCT_NOT_PUBLIC: 'Продукт не на сайте, ссылку в отклик не поставить.',
+}
+/**
+ * A reason from the server may be a bare code (POLICY_CONTENT_BLOCKED). People see words; the
+ * code stays in the technical log.
+ */
+export function reasonText(text: string | null | undefined) {
+  const value = String(text ?? '').trim()
+  if (!/^[A-Z][A-Z0-9_]{2,80}$/.test(value)) return value
+  return (
+    reasonCodes[value] ||
+    messages[value] ||
+    (/_HTTP_\d+$/.test(value)
+      ? 'Модель была недоступна.'
+      : 'Служебная причина, подробности в техжурнале.')
+  )
+}
 
 export function describeError(error: unknown): OfficeError {
   const e = error as {

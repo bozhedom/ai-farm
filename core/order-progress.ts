@@ -77,13 +77,16 @@ export function orderProgress(
     tone: 'good' | 'warn' = 'warn'
   const canSubmit = order.status === 'awaiting_payment' && new Date(order.expires_at) > now
   if (order.status === 'delivered') {
-    title = 'Результат выдан'
-    detail = 'Тестовая оплата подтверждена, текст прошёл проверку качества и сохранён.'
+    title = 'Готово'
+    detail =
+      order.source === 'public'
+        ? 'Текст прошёл проверку, покупатель его видит.'
+        : 'Текст прошёл проверку и сохранён.'
     tone = 'good'
   } else if (order.status === 'closed') {
-    title = 'Тестовый заказ закрыт'
+    title = 'Закрыт без выдачи'
     detail =
-      'Владелец завершил проверку и закрыл тестовое обязательство без выдачи. Причина, платёж и история расходов сохранены; возврат не выполнялся.'
+      'Вы закрыли заказ без выдачи текста. Причина, оплата и расходы остались в истории, деньги не возвращались.'
   } else if (order.status === 'manual_review') {
     title = 'Нужна проверка владельцем'
     detail = order.paid_at
@@ -259,7 +262,7 @@ export function publicProgress(
         return say(
           'in_progress',
           'Оплачено',
-          'Передаём заказ автору, это несколько секунд.',
+          'Пишем текст. Обычно 2-5 минут, страницу можно закрыть.',
           'good',
         )
       if (!fresh || state.mode === 'emergency_stop')

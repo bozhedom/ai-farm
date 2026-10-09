@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import type { IdeaStatus, OfficeIdea } from '../../../../core/contracts/office'
-import { useOfficeIdeas, useOfficeOverview, type IdeaFilters } from '~/composables/office/data'
-import { count, dayWord, withCount } from '~/composables/office/format'
 import {
-  ideaStatus,
-  ideaStatusFilter,
-  ideaStatusOrder,
-  launchBadge,
-} from '~/composables/office/labels'
+  useOfficeIdeas,
+  useOfficeOverview,
+  type IdeaFilters,
+  type IdeaView,
+} from '~/composables/office/data'
+import { count, dayWord, withCount } from '~/composables/office/format'
+import { ideaStatus, launchBadge, takenBadge } from '~/composables/office/labels'
 
 useHead({ title: 'Идеи' })
 const route = useRoute()
@@ -17,38 +17,58 @@ const setTab = (next: 'rating' | 'reports') =>
   router.replace({ query: { ...route.query, tab: next === 'reports' ? 'reports' : undefined } })
 
 const { data: overview } = useOfficeOverview()
-const filters = ref<IdeaFilters>({ status: '', category: '' })
-const launch = ref<'' | 'farm' | 'human'>('')
+// Old links (`?status=needs_human` from «Ждут вас») open the matching view.
+const views: IdeaView[] = ['farm', 'human', 'rejected', 'taken']
+const startView = (): IdeaView => {
+  const q = String(route.query.view || '')
+  if ((views as string[]).includes(q)) return q as IdeaView
+  return route.query.status === 'needs_human' ? 'human' : ''
+}
+const filters = ref<IdeaFilters>({ status: '', category: '', view: startView() })
 const { data, status, pending, refresh, more } = useOfficeIdeas(filters)
 
-// Industries seen so far stay as chips even while one of them is selected.
-const knownCategories = ref<string[]>([])
-watch(
-  () => data.value?.items,
-  (items) => {
-    if (!items || filters.value.category) return
-    const next = new Set(knownCategories.value)
-    for (const idea of items) if (idea.category) next.add(idea.category)
-    knownCategories.value = [...next].sort((a, b) => a.localeCompare(b, 'ru'))
-  },
-  { immediate: true },
-)
-
-const items = computed(() =>
-  (data.value?.items || []).filter(
-    (idea) =>
-      !launch.value || (launch.value === 'farm' ? idea.farmExecutable : !idea.farmExecutable),
+// Counts come from the server for all ideas; they stay while a filter loads.
+const counts = computed(() => data.value?.counts)
+const viewChips = computed(() => {
+  const c = counts.value
+  const chips: { value: IdeaView; label: string; n?: number }[] = [
+    { value: '', label: 'Все', n: c?.all },
+    { value: 'farm', label: 'Ферма сделает сама', n: c?.farm },
+    { value: 'human', label: 'Нужен человек', n: c?.human },
+    { value: 'rejected', label: 'Отклонил критик', n: c?.rejected },
+  ]
+  if (c?.taken || filters.value.view === 'taken')
+    chips.push({ value: 'taken', label: 'В работе у меня', n: c?.taken })
+  return chips
+})
+// Industries with at least two ideas get a chip; the rest hide behind «Ещё».
+const showAllIndustries = ref(false)
+const industries = computed(() => {
+  const byCategory = counts.value?.byCategory || {}
+  return (data.value?.categories || [])
+    .map((c) => ({ ...c, n: byCategory[c.id] || 0 }))
+    .filter((c) => c.n > 0)
+    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label, 'ru'))
+})
+const mainIndustries = computed(() =>
+  industries.value.filter(
+    (c) => c.n >= 2 || showAllIndustries.value || c.id === filters.value.category,
   ),
 )
-const loaded = computed(() => data.value?.items || [])
+const hiddenIndustries = computed(() => industries.value.length - mainIndustries.value.length)
+
+const items = computed(() => data.value?.items || [])
+const loaded = items
+const hasDemo = computed(() => items.value.some((idea) => idea.isDemo))
 const summary = computed(() => {
   const list = loaded.value
   const scores = list.map((idea) => idea.rankScore)
+  const c = counts.value
   return {
-    farm: list.filter((i) => i.farmExecutable && i.status !== 'rejected').length,
+    farm: c?.farm ?? list.filter((i) => i.farmExecutable && i.status !== 'rejected').length,
     selling: list.filter((i) => i.status === 'productized').length,
-    human: list.filter((i) => !i.farmExecutable && i.status !== 'rejected').length,
-    rejected: list.filter((i) => i.status === 'rejected').length,
+    human: c?.human ?? list.filter((i) => !i.farmExecutable && i.status !== 'rejected').length,
+    rejected: c?.rejected ?? list.filter((i) => i.status === 'rejected').length,
     average: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
     partial: !!data.value?.hasMore,
   }
@@ -59,12 +79,8 @@ const subtitle = computed(() => {
   const total = data.value?.total ?? overview.value?.totals.ideas
   if (total === undefined) return 'Критик проверяет каждую идею, руководитель ставит балл.'
   if (!total) return 'Идей пока нет. Разведчики принесут первые после поиска.'
-  return `${withCount(total, ['идея', 'идеи', 'идей'])} по ${withCount(knownCategories.value.length, ['отрасли', 'отраслям', 'отраслям'])}. Критик проверил каждую, руководитель поставил балл.`
+  return `${withCount(total, ['идея', 'идеи', 'идей'])} по ${withCount(industries.value.length, ['отрасли', 'отраслям', 'отраслям'])}. Критик проверил каждую, руководитель поставил балл.`
 })
-const statusOptions: { value: IdeaStatus | ''; label: string }[] = [
-  { value: '', label: 'Все статусы' },
-  ...ideaStatusOrder.map((value) => ({ value, label: ideaStatusFilter[value] })),
-]
 const rankOf = (idea: OfficeIdea) => loaded.value.indexOf(idea) + 1
 const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trimEnd() + '…' : text)
 </script>
@@ -73,7 +89,10 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
     <div class="page-head">
       <div>
         <h1>Идеи</h1>
-        <p>{{ subtitle }}</p>
+        <p>
+          {{ subtitle }}
+          <span v-if="hasDemo" class="badge badge-plain demo-note">Данные демо-провайдера</span>
+        </p>
       </div>
       <div class="row">
         <OfficeFindIdeas :mode="overview?.mode" />
@@ -130,58 +149,54 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
       </section>
 
       <div class="toolbar">
-        <div class="chips industry" aria-label="Отрасль">
+        <div class="chips views" aria-label="Показать">
           <button
+            v-for="chip in viewChips"
+            :key="chip.value"
             type="button"
             class="chip"
-            :class="{ 'is-active': !filters.category }"
-            @click="filters.category = ''"
+            :class="{ 'is-active': (filters.view || '') === chip.value }"
+            :aria-pressed="(filters.view || '') === chip.value"
+            @click="filters.view = chip.value"
           >
-            Все <span v-if="overview" class="n">{{ count(overview.totals.ideas) }}</span>
-          </button>
-          <button
-            v-for="category in knownCategories"
-            :key="category"
-            type="button"
-            class="chip"
-            :class="{ 'is-active': filters.category === category }"
-            @click="filters.category = filters.category === category ? '' : category"
-          >
-            {{ category }}
+            {{ chip.label }}
+            <span v-if="chip.n !== undefined" class="n">{{ count(chip.n) }}</span>
           </button>
         </div>
       </div>
-      <div class="toolbar second">
-        <div class="chips" aria-label="Кто запускает">
+      <div v-if="industries.length > 1" class="toolbar second">
+        <div class="chips industry" aria-label="Отрасль">
           <button
+            v-for="category in mainIndustries"
+            :key="category.id"
             type="button"
-            class="chip"
-            :class="{ 'is-active': launch === 'farm' }"
-            :aria-pressed="launch === 'farm'"
-            @click="launch = launch === 'farm' ? '' : 'farm'"
+            class="chip chip-sm"
+            :class="{ 'is-active': filters.category === category.id }"
+            :aria-pressed="filters.category === category.id"
+            @click="filters.category = filters.category === category.id ? '' : category.id"
           >
-            Ферма сделает сама
+            {{ category.label }} <span class="n">{{ category.n }}</span>
           </button>
           <button
+            v-if="hiddenIndustries > 0 || showAllIndustries"
             type="button"
-            class="chip"
-            :class="{ 'is-active': launch === 'human' }"
-            :aria-pressed="launch === 'human'"
-            @click="launch = launch === 'human' ? '' : 'human'"
+            class="chip chip-sm chip-more"
+            @click="showAllIndustries = !showAllIndustries"
           >
-            Нужен человек
+            {{
+              showAllIndustries
+                ? 'Свернуть'
+                : mainIndustries.length
+                  ? `Ещё ${hiddenIndustries}`
+                  : `Отрасли ${hiddenIndustries}`
+            }}
           </button>
         </div>
-        <select v-model="filters.status" class="select" aria-label="Статус">
-          <option v-for="option in statusOptions" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
       </div>
 
       <OfficeState v-if="!data" :status="status" :pending="pending" @retry="refresh" />
       <OfficeEmpty
-        v-else-if="!data.total && !filters.status && !filters.category"
+        v-else-if="!data.total && !filters.status && !filters.category && !filters.view"
         icon="idea"
         title="Идей пока нет"
         text="Нажмите «Найти идеи сейчас», и разведчики начнут поиск."
@@ -195,7 +210,7 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
         <button
           type="button"
           class="btn btn-sm"
-          @click="((filters.status = ''), (filters.category = ''), (launch = ''))"
+          @click="((filters.status = ''), (filters.category = ''), (filters.view = ''))"
         >
           Показать все
         </button>
@@ -218,15 +233,16 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
             :aria-controls="`idea-${idea.id}`"
             @click="toggle(idea.id)"
           >
-            <span class="rank" :class="{ 'is-top': rankOf(idea) <= 3 && !filters.status }">{{
-              rankOf(idea)
-            }}</span>
+            <span
+              class="rank"
+              :class="{ 'is-top': rankOf(idea) <= 3 && !filters.view && !filters.category }"
+              >{{ rankOf(idea) }}</span
+            >
             <span class="t">
               <span class="title">{{ idea.title }}</span>
               <span class="ind"
                 >{{ idea.category }}. Нашёл {{ idea.agent.name }}, {{ dayWord(idea.createdAt) }}
                 <span v-if="idea.duplicateOf" class="badge badge-off badge-plain">Повтор</span>
-                <span v-if="idea.isDemo" class="badge badge-plain">Демо</span>
               </span>
             </span>
             <span class="meta">
@@ -235,6 +251,9 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
               <span v-if="idea.status === 'rejected'" class="why">{{
                 shortReason(idea.critique.reason)
               }}</span>
+              <span v-else-if="idea.ownerStatus === 'taken'"
+                ><OfficeBadge :badge="takenBadge"
+              /></span>
               <span v-else
                 ><OfficeBadge :badge="launchBadge(idea)" :dot="!idea.farmExecutable"
               /></span>
@@ -260,10 +279,10 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
                 >Открыть карточку</NuxtLink
               >
               <NuxtLink
-                v-if="idea.checks.some((c) => c.productId)"
+                v-if="idea.product"
                 class="btn btn-ghost btn-sm"
-                to="/office/products"
-                >Продукт</NuxtLink
+                :to="`/office/products#product-${idea.product.id}`"
+                >Открыть продукт</NuxtLink
               >
             </div>
           </div>
@@ -301,10 +320,19 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
 .toolbar.second {
   margin-bottom: var(--s-4);
 }
-.toolbar .select {
-  width: auto;
-  min-width: 200px;
-  margin-left: auto;
+.demo-note {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.views {
+  flex-wrap: wrap;
+}
+.chip-sm {
+  min-height: 30px;
+  padding: 0 12px;
+}
+.chip-more {
+  color: var(--brand);
 }
 .ideas {
   overflow: visible;
@@ -453,13 +481,9 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
   .detail {
     padding: 0 var(--s-4) var(--s-4);
   }
-  .toolbar .select {
-    margin-left: 0;
-    width: 100%;
-  }
 }
 .industry {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   overflow-x: auto;
   min-width: 0;
   max-width: 100%;
@@ -468,6 +492,7 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
 }
 @media (max-width: 639px) {
   .industry {
+    flex-wrap: nowrap;
     margin: 0 calc(-1 * var(--gutter));
     padding: 2px var(--gutter);
     max-width: none;

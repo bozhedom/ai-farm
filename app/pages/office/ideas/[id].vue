@@ -2,8 +2,15 @@
 import type { IdeaStatus } from '../../../../core/contracts/office'
 import { officeApi, useOfficeAction } from '~/composables/office/actions'
 import { useOfficeIdea } from '~/composables/office/data'
+import { reasonText } from '~/composables/office/errors'
 import { when } from '~/composables/office/format'
-import { ideaStatus, launchBadge, templateLabel, verdict } from '~/composables/office/labels'
+import {
+  ideaStatus,
+  launchBadge,
+  takenBadge,
+  templateLabel,
+  verdict,
+} from '~/composables/office/labels'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id))
@@ -30,6 +37,22 @@ async function saveNote() {
 }
 function setStatus(next: IdeaStatus, text: string) {
   void run('status', () => officeApi.saveIdea(id.value, { status: next }), text)
+}
+function setTaken(taken: boolean) {
+  void run(
+    'take',
+    () => officeApi.saveIdea(id.value, { ownerStatus: taken ? 'taken' : null }),
+    taken ? 'Идея в работе у вас. Она в фильтре «В работе у меня».' : 'Идея вернулась в рейтинг.',
+  )
+}
+function hideProduct() {
+  const product = idea.value?.product
+  if (!product) return
+  void run(
+    'hide',
+    () => officeApi.setVisibility(product.id, 'private'),
+    'Продукт снят с продажи. Вернуть можно в разделе «Продукты».',
+  )
 }
 const verdictCard = computed(() => (idea.value ? verdict[idea.value.critique.verdict] : null))
 const checkStatus: Record<string, string> = {
@@ -62,8 +85,9 @@ const checkStatus: Record<string, string> = {
           <div class="row badges">
             <OfficeBadge :badge="ideaStatus[idea.status]" />
             <OfficeBadge :badge="launchBadge(idea)" :dot="!idea.farmExecutable" />
+            <OfficeBadge v-if="idea.ownerStatus === 'taken'" :badge="takenBadge" />
             <span v-if="idea.duplicateOf" class="badge badge-off">Повтор старой идеи</span>
-            <span v-if="idea.isDemo" class="badge">Демо</span>
+            <span v-if="idea.isDemo" class="badge badge-plain">Данные демо-провайдера</span>
           </div>
         </div>
         <div class="big-score" :aria-label="`Балл ${idea.rankScore} из 100`">
@@ -90,7 +114,34 @@ const checkStatus: Record<string, string> = {
           <p v-if="idea.suggestedTemplate" class="muted small">
             Тип услуги: {{ templateLabel(idea.suggestedTemplate) }}
           </p>
-          <h3 class="sub">Проверки исполнения</h3>
+          <div v-if="idea.product" class="row product-actions">
+            <a
+              v-if="idea.product.visibility === 'public' && idea.product.status === 'sandbox'"
+              class="btn btn-primary btn-sm"
+              :href="idea.product.publicUrl"
+              target="_blank"
+              rel="noopener"
+              ><OfficeIcon name="external" size="sm" />Открыть на сайте</a
+            >
+            <NuxtLink class="btn btn-sm" :to="`/office/leads?product=${idea.product.id}`"
+              >Запросы клиентов</NuxtLink
+            >
+            <NuxtLink
+              class="btn btn-ghost btn-sm"
+              :to="`/office/products#product-${idea.product.id}`"
+              >Открыть продукт</NuxtLink
+            >
+            <button
+              v-if="idea.product.visibility === 'public'"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              :disabled="!!busy"
+              @click="hideProduct"
+            >
+              Снять с продажи
+            </button>
+          </div>
+          <h3 class="sub">Проверка примера</h3>
           <ul v-if="idea.checks.length" class="checks">
             <li v-for="check in idea.checks" :key="check.hypothesisId">
               <span
@@ -105,9 +156,12 @@ const checkStatus: Record<string, string> = {
                 >{{ checkStatus[check.status] || check.status }}</span
               >
               <div>
-                <p>{{ check.critique }}</p>
-                <NuxtLink v-if="check.productId" to="/office/products" class="small"
-                  >Продукт, версия {{ check.version }}</NuxtLink
+                <p>{{ reasonText(check.critique) }}</p>
+                <NuxtLink
+                  v-if="check.productId"
+                  :to="`/office/products#product-${check.productId}`"
+                  class="small"
+                  >Открыть продукт</NuxtLink
                 >
               </div>
             </li>
@@ -116,16 +170,37 @@ const checkStatus: Record<string, string> = {
         </section>
         <section v-else class="card card-tint-clay rise">
           <h2>План запуска</h2>
-          <p class="small">Ферма это не сделает: нужны люди. Вот с чего начать самому.</p>
+          <p v-if="idea.ownerStatus === 'taken'" class="small">
+            Идея в работе у вас. Ферма не запускает её сама, план ниже.
+          </p>
+          <p v-else class="small">Ферма это не сделает: нужны люди. Вот с чего начать самому.</p>
           <ol v-if="idea.research.launchPlanForHuman.length" class="plan">
             <li v-for="(step, i) in idea.research.launchPlanForHuman" :key="i">{{ step }}</li>
           </ol>
           <p v-else class="muted">План ещё не готов.</p>
           <div class="row actions">
             <button
-              v-if="idea.status === 'needs_human'"
+              v-if="idea.status === 'needs_human' && idea.ownerStatus !== 'taken'"
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="!!busy"
+              @click="setTaken(true)"
+            >
+              {{ busy === 'take' ? 'Берём' : 'Взять в работу' }}
+            </button>
+            <button
+              v-if="idea.ownerStatus === 'taken'"
               type="button"
               class="btn btn-sm"
+              :disabled="!!busy"
+              @click="setTaken(false)"
+            >
+              Вернуть в рейтинг
+            </button>
+            <button
+              v-if="idea.status === 'needs_human'"
+              type="button"
+              class="btn btn-ghost btn-sm"
               :disabled="!!busy"
               @click="setStatus('rejected', 'Идея убрана из рейтинга.')"
             >
@@ -153,11 +228,11 @@ const checkStatus: Record<string, string> = {
               class="textarea"
               rows="5"
               maxlength="2000"
-              placeholder="Позвонить Сергею, у него есть инвентарь"
+              placeholder="Например: проверить цену у конкурентов"
               @input="noteDirty = true"
             />
             <div class="row">
-              <button class="btn btn-primary btn-sm" :disabled="!!busy || !noteDirty">
+              <button class="btn btn-sm" :disabled="!!busy || !noteDirty">
                 {{ busy === 'note' ? 'Сохраняем' : 'Сохранить заметку' }}
               </button>
             </div>
@@ -235,6 +310,10 @@ const checkStatus: Record<string, string> = {
   grid-template-columns: auto 1fr;
   gap: var(--s-3);
   align-items: start;
+}
+.product-actions {
+  flex-wrap: wrap;
+  margin-top: var(--s-4);
 }
 .plan {
   margin: var(--s-3) 0 0;

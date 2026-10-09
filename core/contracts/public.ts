@@ -42,6 +42,8 @@ export type PublicOrderCreate = {
 export type PublicOrderCreated = { orderId: string; token: string; url: string }
 export type PublicOrderView = {
   id: string
+  /** Added by the UX pass: short order number, «Заказ №1042». */
+  number?: number
   status: PublicOrderStatus
   service: { slug: string; name: string; promise: string }
   price: { kopecks: number; currency: 'RUB' | 'TEST_ETH'; test: boolean }

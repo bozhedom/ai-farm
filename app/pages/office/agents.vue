@@ -36,8 +36,9 @@ const stats = computed(() => {
     archived: list.filter((a) => a.status === 'archived').length,
     copies: copies.length,
     copiesActive: copies.filter((a) => a.status === 'active').length,
-    ideas: list.reduce((sum, a) => sum + a.metrics.ideas, 0),
-    passed: list.reduce((sum, a) => sum + a.metrics.passed, 0),
+    // All generations: the agent metrics only cover the generation each agent was scored in.
+    ideas: data.value?.totals?.ideas ?? list.reduce((sum, a) => sum + a.metrics.ideas, 0),
+    passed: data.value?.totals?.passed ?? list.reduce((sum, a) => sum + a.metrics.passed, 0),
   }
 })
 const evolution = computed(() => data.value?.evolution)
@@ -100,11 +101,50 @@ const roundSummary = computed(() => {
   }))
   return { round, fired, copied }
 })
-const missingText = computed(() =>
-  (evolution.value?.missing || []).map(
+const missingText = computed(() => {
+  const missing = evolution.value?.missing || []
+  if (!missing.length) return []
+  const need = missing[0]!.need
+  // One line when everyone is short by the same number.
+  if (missing.length > 1 && missing.every((m) => m.need === need))
+    return [`Каждому не хватает ${withCount(need, ['идеи', 'идей', 'идей'])} до отбора.`]
+  return missing.map(
     (m) => `${nameOf(m.agentId)}: не хватает ${withCount(m.need, ['идеи', 'идей', 'идей'])}`,
-  ),
-)
+  )
+})
+const roundsLine = computed(() => {
+  const e = evolution.value
+  if (!e || !e.roundsToday) return ''
+  return e.roundsToday >= e.roundsPerDay
+    ? 'Сегодня отбор уже был. Следующий возможен завтра.'
+    : `Сегодня отборов: ${e.roundsToday} из ${e.roundsPerDay}.`
+})
+const hasDemo = computed(() => !!data.value?.rounds.some((r) => r.isDemo))
+const lowData = (agent: OfficeAgent) => agent.status === 'active' && !!agent.score?.lowData
+/** What an agent had at the selection round that closed this generation, from the stored round. */
+const atRound = (agent: OfficeAgent, generation: number) => {
+  if (generation >= (data.value?.generation ?? 1)) return null
+  const round = data.value?.rounds.find(
+    (r) => r.generation === generation && r.decision === 'ROTATED',
+  )
+  return round?.scores.find((s) => s.agentId === agent.id) ?? null
+}
+const treeScore = (agent: OfficeAgent, generation: number) => {
+  const past = atRound(agent, generation)
+  if (past) return score100(past.score)
+  return agent.score && !lowData(agent) ? score100(agent.score.total) : null
+}
+const treeLine = (agent: OfficeAgent, generation: number) => {
+  const past = atRound(agent, generation)
+  const ideasAt = past?.samples
+  if (agent.retired)
+    return `Уволен ${day(agent.retired.at)}: ${agent.metrics.passed} из ${agent.metrics.ideas} идей`
+  if (past)
+    return ideasAt !== undefined
+      ? `На отборе: ${withCount(ideasAt, ['идея', 'идеи', 'идей'])}, остался`
+      : 'Прошёл отбор'
+  return `${agent.metrics.passed} из ${agent.metrics.ideas} идей приняты`
+}
 function evolve() {
   void run('evolve', () => officeApi.evolve(), 'Отбор запущен. Результат появится здесь.')
 }
@@ -117,6 +157,7 @@ function evolve() {
         <p>
           Поколение {{ data?.generation ?? 1 }}. Лучшие разведчики получают копию, худшие уходят в
           архив.
+          <span v-if="hasDemo" class="badge badge-plain demo-note">Данные демо-провайдера</span>
         </p>
       </div>
       <button
@@ -130,6 +171,10 @@ function evolve() {
         <OfficeIcon name="refresh" />{{ busy ? 'Запускаем' : 'Провести отбор сейчас' }}
       </button>
     </div>
+    <p v-if="evolution && !evolution.ready" class="small muted evolve-why">
+      Отбор пока недоступен:
+      {{ evolution.reason.charAt(0).toLowerCase() + evolution.reason.slice(1) }}
+    </p>
 
     <OfficeState v-if="!data" :status="status" :pending="pending" :rows="4" @retry="refresh" />
     <template v-else>
@@ -186,9 +231,10 @@ function evolve() {
           </div>
         </div>
         <div class="rules">
-          <div>
+          <div id="score">
             <b>Балл разведчика</b>Доля принятых идей, качество источников, повторы и цена идеи.
-            Когда пойдут продажи, добавятся заказы.
+            Когда пойдут продажи, добавятся заказы. Балл считается заново в каждом поколении: после
+            отбора счёт у всех начинается с нуля.
           </div>
           <div>
             <b>Увольнение</b>Худшая половина уходит в архив, когда у каждого набралось
@@ -206,7 +252,6 @@ function evolve() {
           <template v-if="roundSummary">
             <p class="muted small round-when">
               Поколение {{ roundSummary.round.generation }}, {{ day(roundSummary.round.at) }}
-              <span v-if="roundSummary.round.isDemo" class="badge">Демо</span>
             </p>
             <template v-if="roundSummary.round.decision === 'ROTATED'">
               <p v-if="roundSummary.fired.length">
@@ -236,9 +281,7 @@ function evolve() {
             <ul v-if="missingText.length" class="missing">
               <li v-for="line in missingText" :key="line">{{ line }}</li>
             </ul>
-            <p class="small muted">
-              Сегодня отборов: {{ evolution.roundsToday }} из {{ evolution.roundsPerDay }}.
-            </p>
+            <p v-if="roundsLine" class="small muted">{{ roundsLine }}</p>
           </template>
           <p class="money-line">
             <strong>Отбор по выручке:</strong>
@@ -273,7 +316,7 @@ function evolve() {
             </thead>
             <tbody>
               <template v-for="agent in scouts" :key="agent.id">
-                <tr :class="{ 'is-off': agent.status === 'archived' }">
+                <tr :id="`agent-${agent.id}`" :class="{ 'is-off': agent.status === 'archived' }">
                   <td data-full>
                     <div class="agent agent-cell">
                       <span class="avatar" :class="agentAvatar(agent, indexOf(agent))">{{
@@ -297,6 +340,7 @@ function evolve() {
                       <OfficeScore
                         :value="score100(agent.score?.total)"
                         :muted="agent.status === 'archived'"
+                        :low-data="lowData(agent)"
                       />
                       <OfficeIcon name="chevron" size="sm" class="chev" />
                     </button>
@@ -339,7 +383,7 @@ function evolve() {
       <section class="card rise gens" aria-labelledby="generations">
         <div class="card-head">
           <h2 id="generations">Поколения</h2>
-          <span class="muted small">Кто от кого, кто ушёл</span>
+          <span class="muted small">Балл на момент отбора своего поколения</span>
         </div>
         <div v-for="g in generations" :key="g.generation" class="gen">
           <div class="gen-label">
@@ -362,21 +406,17 @@ function evolve() {
                 }}</span
                 ><b>{{ agentShort(agent.name) }}</b
                 ><span
-                  v-if="agent.score"
+                  v-if="treeScore(agent, g.generation) !== null"
                   class="num"
                   :class="{ muted: agent.status === 'archived' }"
-                  >{{ score100(agent.score.total) }}</span
-                ><span v-else class="fresh">новый</span>
+                  >{{ treeScore(agent, g.generation) }}</span
+                ><span v-else class="fresh">{{ lowData(agent) ? 'мало данных' : 'новый' }}</span>
               </div>
               <span v-if="agent.parentId" class="parent"
                 >Копия <b>{{ agentShort(nameOf(agent.parentId)) }}</b
                 >, {{ mutationText(agent.mutation) }}</span
               >
-              <span class="why">{{
-                agent.retired
-                  ? `Уволен ${day(agent.retired.at)}: ${agent.metrics.passed} из ${agent.metrics.ideas} идей`
-                  : `${agent.metrics.passed} из ${agent.metrics.ideas} идей приняты`
-              }}</span>
+              <span class="why">{{ treeLine(agent, g.generation) }}</span>
             </div>
           </div>
         </div>
@@ -385,6 +425,17 @@ function evolve() {
   </div>
 </template>
 <style scoped>
+.evolve-why {
+  margin: calc(-1 * var(--s-3)) 0 var(--s-5);
+}
+.demo-note {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+#score,
+tr[id^='agent-'] {
+  scroll-margin-top: 80px;
+}
 .stats {
   margin-bottom: var(--s-5);
 }

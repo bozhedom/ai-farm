@@ -48,7 +48,10 @@ const cost = computed(() => {
     <div>
       <span class="eyebrow">Как зарабатывать</span>
       <p>
-        <strong>{{ revenueModelLabel(r.revenueModel) }}.</strong> {{ r.revenueNote }}
+        <strong v-if="revenueModelLabel(r.revenueModel)"
+          >{{ revenueModelLabel(r.revenueModel) }}.</strong
+        >
+        {{ r.revenueNote }}
       </p>
     </div>
     <div>

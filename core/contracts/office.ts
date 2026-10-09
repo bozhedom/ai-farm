@@ -33,6 +33,10 @@ export type OfficeOverview = {
     ordersDelivered?: number
     /** Added by slice B: sum of confirmed test payments in kopecks. Never revenue. */
     testPaymentsKopecks?: number
+    /** Added by the UX pass: working scouts, for the menu counter. */
+    activeAgents?: number
+    /** Added by the UX pass: client requests not yet handled, for the menu counter. */
+    newLeads?: number
   }
   worker: { alive: boolean; reason: string; nextAt: string | null }
   feed: { at: string; kind: string; text: string; link: string | null }[]
@@ -82,6 +86,17 @@ export type OfficeIdea = {
     critique: string
   }[]
   ownerNote: string
+  /** Added by the UX pass: the owner took this "needs a person" idea into work. */
+  ownerStatus?: 'taken' | null
+  ownerTakenAt?: string | null
+  /** Added by the UX pass: the newest product built from this idea. */
+  product?: {
+    id: string
+    name: string
+    publicUrl: string
+    visibility: 'private' | 'public'
+    status: string
+  } | null
 }
 export type OfficeIdeaList = {
   items: OfficeIdea[]
@@ -91,6 +106,16 @@ export type OfficeIdeaList = {
   hasMore: boolean
   /** Added by slice B: industries for the filter, from the server taxonomy. */
   categories?: { id: string; label: string }[]
+  /** Added by the UX pass: counts for the filter chips (`?view=`), within the chosen industry. */
+  counts?: {
+    all: number
+    farm: number
+    human: number
+    rejected: number
+    taken: number
+    /** Ideas per industry id, all industries. */
+    byCategory: Record<string, number>
+  }
 }
 export type OfficeAgent = {
   id: string
@@ -120,7 +145,15 @@ export type OfficeAgent = {
     review: number
     costKopecks: number
   }
-  score: { total: number; components: Record<ScoreComponent, number | null> } | null
+  score: {
+    total: number
+    components: Record<ScoreComponent, number | null>
+    /**
+     * Added by the UX pass: fewer ideas than the selection threshold. The score still counts in
+     * selection (formula unchanged), but people see «Мало данных» instead of the number.
+     */
+    lowData?: boolean
+  } | null
   retired: { at: string; reason: string; roundId: string } | null
 }
 export type EvolutionStatus = {
@@ -141,13 +174,16 @@ export type EvolutionRound = {
   trigger: string
   isDemo: boolean
   at: string
-  scores: { agentId: string; name: string; score: number }[]
+  /** `samples` (added by the UX pass): ideas the agent had at this round. */
+  scores: { agentId: string; name: string; score: number; samples?: number }[]
   archived: string[]
   children: { id: string; parentId: string; mutation: AgentMutation }[]
 }
 export type OfficeAgents = {
   generation: number
   agents: OfficeAgent[]
+  /** Added by the UX pass: all ideas and critic-accepted ideas over all generations. */
+  totals?: { ideas: number; passed: number }
   evolution: EvolutionStatus
   rounds: EvolutionRound[]
 }
@@ -161,6 +197,8 @@ export type OfficeProduct = {
   publishedAt: string | null
   priceKopecks: number
   ideaId: string | null
+  /** Added by the UX pass: title of the idea the product grew from. */
+  ideaTitle?: string | null
   isDemo: boolean
   needsRefresh: boolean
   publicUrl: string
@@ -170,6 +208,8 @@ export type OfficeProduct = {
 }
 export type OfficeOrderSummary = {
   id: string
+  /** Added by the UX pass: short order number, «Заказ №1042». */
+  number?: number
   status: string
   source: 'owner' | 'public'
   paymentMode: string
@@ -270,6 +310,10 @@ export type OfficeSettings = {
   limits: { dailyKopecks: number; monthlyKopecks: number }
   /** Added by slice B: the 28-day season is open. A new one: POST /api/control {action:'restart_research'}. */
   researchEnabled?: boolean
+  /** Added by the UX pass: UTC hour (0-20) when the daily run may start. */
+  scheduleHourUtc?: number
+  /** Added by the UX pass: technical model id for support; `providers.model` is the human name. */
+  modelId?: string | null
 }
 export type OfficeSettingsUpdate = Partial<
   Pick<
@@ -279,6 +323,7 @@ export type OfficeSettingsUpdate = Partial<
     | 'evolutionRoundsPerDay'
     | 'scoutsPerStrategyPerDay'
     | 'leadsPerDay'
+    | 'scheduleHourUtc'
   >
 >
 
@@ -286,5 +331,12 @@ export type OfficeSettingsUpdate = Partial<
 export type OfficeQueued = { id: string; status: string; reused: boolean }
 export type OfficeScoutRequest = { topicId?: string }
 export type OfficeScoutQueued = { jobs: { id: string; status: string }[]; reused: boolean }
-export type OfficeIdeaUpdate = { ownerNote?: string; status?: 'needs_human' | 'rejected' }
+/** Added by the UX pass: `POST /api/office/leads/search` answers like the scout button. */
+export type OfficeLeadSearchQueued = OfficeScoutQueued
+export type OfficeIdeaUpdate = {
+  ownerNote?: string
+  status?: 'needs_human' | 'rejected'
+  /** Added by the UX pass: take one "needs a person" idea into work, or null to let it go. */
+  ownerStatus?: 'taken' | null
+}
 export type OfficeVisibilityUpdate = { visibility: 'private' | 'public' }

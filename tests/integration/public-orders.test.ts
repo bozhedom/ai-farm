@@ -90,6 +90,10 @@ describe('public buyer path (sandbox)', () => {
       result: null,
     })
     expect(waiting.inputPreview).toContain('Блокнот')
+    // A short sequential number people can read out loud, the same in the office.
+    expect(Number.isSafeInteger(waiting.number) && waiting.number > 1000).toBe(true)
+    const [numbered] = await query('SELECT number FROM orders WHERE id=$1', [orderId])
+    expect(Number(numbered!.number)).toBe(waiting.number)
     const hidden = JSON.stringify(waiting)
     for (const word of [
       'strategy',
@@ -119,7 +123,7 @@ describe('public buyer path (sandbox)', () => {
     expect(file.status).toBe(200)
     expect(file.headers.get('content-type')).toContain('text/plain')
     expect(file.headers.get('content-disposition')).toMatch(
-      /^attachment; filename="order-[0-9A-F]{6}\.txt"$/,
+      `attachment; filename="order-${waiting.number}.txt"`,
     )
     expect(await file.text()).toBe(done.result.text)
 

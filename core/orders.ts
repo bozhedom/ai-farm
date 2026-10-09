@@ -7,6 +7,8 @@ import { publicDayCounts } from './public-catalog'
 import { productSchema, validateInput, validateTemplateInput, type ProductSpec } from './policy'
 import { orderProgress, paymentErrorText } from './order-progress'
 import { sourceSocialDelivery, validateSourcePostInput } from './source-posts'
+import { agentLabels, agentName, type StrategyRow } from './agents'
+import { serviceName } from './service-names'
 
 export type OrderStatus =
   'awaiting_payment' | 'paid' | 'running' | 'delivered' | 'expired' | 'manual_review' | 'closed'
@@ -222,9 +224,12 @@ export async function createPublicOrder(o: {
 }
 
 export async function orderDetails(id: string) {
-  const [order] = await query<OrderRecord>('SELECT * FROM orders WHERE id=$1', [id])
+  const [order] = await query<OrderRecord>(
+    'SELECT o.*,p.template FROM orders o JOIN products p ON p.id=o.product_id WHERE o.id=$1',
+    [id],
+  )
   if (!order) throw new Error('ORDER_NOT_FOUND')
-  const [jobs, states, attempts] = await Promise.all([
+  const [jobs, states, attempts, strategies] = await Promise.all([
     query(
       'SELECT id,status,attempts,max_attempts,run_after,error_code,started_at,finished_at FROM jobs WHERE dedupe_key=$1',
       [`fulfill:${id}`],
@@ -236,7 +241,9 @@ export async function orderDetails(id: string) {
       'SELECT tx_hash,submitted_at,checked_at,confirmations,error_code,confirmed_at FROM payment_attempts WHERE order_id=$1 ORDER BY submitted_at DESC LIMIT 20',
       [id],
     ),
+    query<StrategyRow>('SELECT id,name,parent_id,generation,created_at FROM strategies'),
   ])
+  const label = agentLabels(strategies).get(order.strategy_id)
   const job = jobs[0] || null
   const calls = job
     ? await query(
@@ -248,21 +255,24 @@ export async function orderDetails(id: string) {
   const delivered = order.status === 'delivered'
   return {
     ...order,
+    number: Number(order.number),
+    productName: serviceName(order.template, order.product_snapshot?.name),
+    agent: label ? { id: order.strategy_id as string, name: agentName(label), label } : null,
     progress: orderProgress(order, job, states[0] || {}),
     job,
     steps: [
-      { label: 'Заказ создан', at: order.created_at, done: true },
+      { label: 'Оформлен', at: order.created_at, done: true },
       {
-        label: 'Тестовая оплата подтверждена',
+        label: order.is_test_payment === false ? 'Оплачен' : 'Оплачен (тест)',
         at: order.paid_at,
         done: !!order.paid_at || delivered,
       },
       {
-        label: 'Текст подготовлен',
+        label: 'Текст написан',
         at: generated?.finished_at || null,
         done: !!generated || delivered,
       },
-      { label: 'Проверка пройдена и результат выдан', at: order.delivered_at, done: delivered },
+      { label: 'Проверен и выдан', at: order.delivered_at, done: delivered },
     ],
     paymentAttempts: attempts.map((a) => ({
       ...a,

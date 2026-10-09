@@ -32,6 +32,15 @@ const items = computed(() =>
         ? all.value.filter((o) => o.status === 'delivered')
         : all.value,
 )
+const emptyText = computed(
+  () =>
+    ({
+      attention: { title: 'Проверять нечего', text: 'Все заказы идут сами.' },
+      active: { title: 'В работе ничего нет', text: 'Все заказы выполнены.' },
+      done: { title: 'Готовых пока нет', text: 'Готовые заказы появятся здесь.' },
+      all: { title: 'Заказов пока нет', text: undefined },
+    })[filter.value],
+)
 const subtitle = computed(() => {
   if (!data.value) return 'Заказы с сайта и тестовые заказы из кабинета.'
   if (!data.value.total) return 'Заказов пока нет.'
@@ -96,8 +105,8 @@ const subtitle = computed(() => {
     <OfficeEmpty
       v-else-if="!items.length"
       icon="check"
-      :title="filter === 'attention' ? 'Проверять нечего' : 'Здесь пусто'"
-      :text="filter === 'attention' ? 'Все заказы идут сами.' : undefined"
+      :title="emptyText.title"
+      :text="emptyText.text"
     />
     <div v-else class="table-wrap">
       <table class="table table-stack orders">
@@ -120,7 +129,7 @@ const subtitle = computed(() => {
           >
             <td class="mono">
               <NuxtLink :to="`/office/orders/${order.id}`" @click.stop
-                >№{{ orderNumber(order.id) }}</NuxtLink
+                >№{{ orderNumber(order) }}</NuxtLink
               >
             </td>
             <td data-full class="product">{{ order.product.name }}</td>

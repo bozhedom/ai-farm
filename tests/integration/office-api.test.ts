@@ -25,6 +25,7 @@ import settingsPost from '../../server/api/office/settings.post'
 import scout from '../../server/api/office/scout.post'
 import leads from '../../server/api/office/leads/index.get'
 import draft from '../../server/api/office/leads/[id]/draft.post'
+import leadSearch from '../../server/api/office/leads/search.post'
 import dashboard from '../../server/api/dashboard.get'
 import control from '../../server/api/control.post'
 import opportunities from '../../server/api/opportunities/index.get'
@@ -58,6 +59,7 @@ const posts: [string, EventHandler][] = [
   ['/api/office/settings', settingsPost],
   ['/api/office/scout', scout],
   ['/api/office/leads/:id/draft', draft],
+  ['/api/office/leads/search', leadSearch],
   ['/api/control', control],
 ]
 
@@ -184,6 +186,15 @@ describe('owner office API', () => {
       'Разведчик Г',
     ])
     expect(team.json.evolution).toMatchObject({ enabled: true, minIdeas: 6, ready: false })
+    // One idea each is below the threshold: the office shows «Мало данных», not a verdict.
+    // The manager's numbers cover every generation, straight from the ideas table.
+    const [all] = await query(
+      "SELECT count(*)::int AS ideas,count(*) FILTER (WHERE critique->>'verdict'='PASS')::int AS passed FROM ideas",
+    )
+    expect(team.json.totals).toEqual({ ideas: all!.ideas, passed: all!.passed })
+    const scored = team.json.agents.filter((a: any) => a.score)
+    expect(scored.length).toBeGreaterThan(0)
+    expect(scored.every((a: any) => a.score.lowData === true)).toBe(true)
     const check = await call('POST', '/api/office/agents/evolve', session, {})
     expect(check.json.reused).toBe(false)
 
@@ -260,6 +271,18 @@ describe('owner office API', () => {
       found.items.every((lead: any) => lead.product === null && lead.replyDraft === null),
     ).toBe(true)
     expect((await call('POST', `/api/office/leads/${someId}/draft`, session, {})).status).toBe(404)
+    // "Поискать ещё" queues lead searches for public products within leads_per_day (3).
+    const search = await call('POST', '/api/office/leads/search', session, {})
+    expect(search.status).toBe(200)
+    expect(search.json).toMatchObject({ reused: false, jobs: [expect.any(Object)] })
+    expect((await call('POST', '/api/office/leads/search', session, {})).json.reused).toBe(true)
+    await query("UPDATE jobs SET status='done' WHERE kind='lead'")
+    await call('POST', '/api/office/leads/search', session, {})
+    await query("UPDATE jobs SET status='done' WHERE kind='lead'")
+    await call('POST', '/api/office/leads/search', session, {})
+    await query("UPDATE jobs SET status='done' WHERE kind='lead'")
+    const limited = await call('POST', '/api/office/leads/search', session, {})
+    expect(limited).toMatchObject({ status: 409 })
 
     // The old dashboard routes keep working for the old office.
     const old = await call('GET', '/api/dashboard', session)
@@ -272,5 +295,58 @@ describe('owner office API', () => {
     expect((await call('GET', '/api/office/overview', session)).json.worker.reason).toMatch(
       /^Пауза/,
     )
+  })
+
+  it('lets the owner take one needs-a-person idea into work', async () => {
+    const session = await attemptLogin('test-owner-password-at-least-20', '127.0.0.1')
+    await call('POST', '/api/office/scout', session, {})
+    for (let i = 0; i < 4; i++) {
+      const job = (await claimJob(['scout']))!
+      await runJob(job)
+      await finishJob(job)
+    }
+    const ids = (await query('SELECT id FROM ideas ORDER BY created_at,id')).map((r) => r.id)
+    await query(
+      `UPDATE ideas SET status='needs_human',farm_executable=false,suggested_template=NULL
+       WHERE id=ANY($1::uuid[])`,
+      [ids.slice(0, 2)],
+    )
+    await query(
+      "UPDATE ideas SET status='accepted',farm_executable=true,suggested_template='faq' WHERE id=$1",
+      [ids[2]],
+    )
+    const [human, other, farm] = ids as [string, string, string]
+    const taken = await call('POST', `/api/office/ideas/${human}`, session, {
+      ownerStatus: 'taken',
+    })
+    expect(taken.status).toBe(200)
+    expect(taken.json).toMatchObject({ ownerStatus: 'taken', status: 'needs_human' })
+    expect(taken.json.ownerTakenAt).toEqual(expect.any(String))
+    // One hypothesis under the owner's control at a time; farm ideas are not taken.
+    expect(
+      (await call('POST', `/api/office/ideas/${other}`, session, { ownerStatus: 'taken' })).json
+        .statusMessage ?? 'IDEA_ALREADY_TAKEN',
+    ).toBe('IDEA_ALREADY_TAKEN')
+    expect(
+      (await call('POST', `/api/office/ideas/${other}`, session, { ownerStatus: 'taken' })).status,
+    ).toBe(409)
+    expect(
+      (await call('POST', `/api/office/ideas/${farm}`, session, { ownerStatus: 'taken' })).status,
+    ).toBe(409)
+    const mine = (await call('GET', '/api/office/ideas?view=taken', session)).json
+    expect(mine.items.map((i: any) => i.id)).toEqual([human])
+    expect(mine.counts).toMatchObject({ all: 4, taken: 1 })
+    const feed = (await call('GET', '/api/office/overview', session)).json.feed
+    expect(feed[0].text).toMatch(/^Вы взяли идею в работу: «/)
+    // Letting it go or rejecting it clears the mark; statuses stay the farm's.
+    const released = await call('POST', `/api/office/ideas/${human}`, session, {
+      ownerStatus: null,
+    })
+    expect(released.json).toMatchObject({ ownerStatus: null, status: 'needs_human' })
+    await call('POST', `/api/office/ideas/${other}`, session, { ownerStatus: 'taken' })
+    const rejected = await call('POST', `/api/office/ideas/${other}`, session, {
+      status: 'rejected',
+    })
+    expect(rejected.json).toMatchObject({ ownerStatus: null, status: 'rejected' })
   })
 })

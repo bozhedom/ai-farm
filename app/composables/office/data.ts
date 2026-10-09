@@ -30,7 +30,9 @@ export function asList<T>(raw: unknown): T[] {
 function asPage<T>(raw: unknown): Page<T> {
   const items = asList<T>(raw)
   const page = (raw || {}) as Partial<Page<T>>
+  // Extra fields of a list answer (idea counts, industries) stay with the page.
   return {
+    ...(Array.isArray(raw) ? {} : page),
     items,
     total: typeof page.total === 'number' ? page.total : items.length,
     offset: typeof page.offset === 'number' ? page.offset : 0,
@@ -58,7 +60,7 @@ async function pagedFetch<T>(url: string, filters: Record<string, string>, pages
       ),
     ),
   )
-  const last = rest.at(-1) || first
+  const last = { ...first, ...(rest.at(-1) || {}) }
   const seen = new Set<string>()
   const items = [first, ...rest]
     .flatMap((page) => page.items)
@@ -107,21 +109,27 @@ export function useOfficeReports() {
   )
 }
 
-export type IdeaFilters = { status: IdeaStatus | ''; category: string }
+export type IdeaView = '' | 'farm' | 'human' | 'rejected' | 'taken'
+export type IdeaFilters = { status: IdeaStatus | ''; category: string; view?: IdeaView }
 
 export function useOfficeIdeas(filters: Ref<IdeaFilters>) {
   const pages = ref(1)
   watch(
-    () => [filters.value.status, filters.value.category],
+    () => [filters.value.status, filters.value.category, filters.value.view],
     () => (pages.value = 1),
   )
   const key = computed(
-    () => `ideas:${filters.value.status}:${filters.value.category}:${pages.value}`,
+    () =>
+      `ideas:${filters.value.status}:${filters.value.category}:${filters.value.view || ''}:${pages.value}`,
   )
   const resource = useOfficeResource(key, () =>
     pagedFetch<OfficeIdea>(
       '/api/office/ideas',
-      { status: filters.value.status, category: filters.value.category },
+      {
+        status: filters.value.status,
+        category: filters.value.category,
+        view: filters.value.view || '',
+      },
       pages.value,
     ).then((page) => page as OfficeIdeaList),
   )
@@ -199,6 +207,11 @@ export function useOfficeLeads() {
 /** Owner view of one order from the existing `/api/orders/[id]`. */
 export type OwnerOrder = {
   id: string
+  /** Short order number, «Заказ №1042». */
+  number?: number
+  /** Service name, the same as on the site. */
+  productName?: string
+  agent?: { id: string; name: string; label: string } | null
   status: string
   source?: 'owner' | 'public'
   payment_mode: string

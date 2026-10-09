@@ -3,6 +3,7 @@ import { pool, query, type Connection } from './db'
 import type { PaymentModeInfo, ProductPage } from './contracts/common'
 import type { PublicCatalog, PublicService } from './contracts/public'
 import { serviceByTemplate, type ServiceTemplate } from './service-catalog'
+import { serviceNames } from './service-names'
 import { sourceSocialDelivery, sourceSocialInputLimit } from './source-posts'
 import { publicServiceProjection } from './storefront'
 
@@ -18,7 +19,7 @@ export const buyerCopy: Readonly<
   >
 > = Object.freeze({
   description: {
-    name: 'Описание товара для маркетплейса',
+    name: serviceNames.description,
     promise: 'Карточка без воды из ваших характеристик',
     shelf: 'Для магазина',
     youGet: [
@@ -29,7 +30,7 @@ export const buyerCopy: Readonly<
     placeholder: 'Кружка, керамика, 300 мл, белая, можно в посудомойку',
   },
   faq: {
-    name: 'Ответы на частые вопросы для сайта',
+    name: serviceNames.faq,
     promise: 'Вопросы и ответы, которые снимут лишние звонки',
     shelf: 'Для сайта',
     youGet: [
@@ -40,70 +41,70 @@ export const buyerCopy: Readonly<
     placeholder: 'Ремонт велосипедов. Диагностика 1 день, только по записи, доставки нет',
   },
   social: {
-    name: 'Три поста из вашего текста',
+    name: serviceNames.social,
     promise: 'Один текст, три готовых поста',
     shelf: 'Для соцсетей',
     youGet: ['3 варианта поста', 'Ваши факты без искажений', 'Публикуете сами, когда удобно'],
     placeholder: 'Новость, статья или описание товара, до 3 000 знаков',
   },
   proofreading: {
-    name: 'Вычитка текста',
+    name: serviceNames.proofreading,
     promise: 'Без ошибок, смысл не трогаем',
     shelf: 'Тексты и документы',
     youGet: ['Исправленный текст', 'Список правок', 'Факты и смысл на месте'],
     placeholder: 'Вставьте текст, который нужно вычитать',
   },
   translation: {
-    name: 'Перевод на английский и другие языки',
+    name: serviceNames.translation,
     promise: 'Цифры и факты на месте',
     shelf: 'Тексты и документы',
     youGet: ['Перевод всего текста', 'Числа и названия без искажений', 'Язык выбираете вы'],
     placeholder: 'Язык перевода: английский\nДалее ваш текст',
   },
   summary: {
-    name: 'Краткое содержание документа',
+    name: serviceNames.summary,
     promise: 'Главное из длинного текста',
     shelf: 'Тексты и документы',
     youGet: ['Короткий пересказ', 'Ключевые факты списком', 'Ничего сверх вашего текста'],
     placeholder: 'Вставьте статью, отчёт или протокол',
   },
   email: {
-    name: 'Ответ на вопрос или отзыв клиента',
+    name: serviceNames.email,
     promise: 'Вежливо, по делу, за минуту',
     shelf: 'Для магазина',
     youGet: ['Тема письма', 'Текст ответа', 'Только ваши условия'],
     placeholder: 'Вопрос клиента без имён и ваши условия',
   },
   landing: {
-    name: 'Текст для страницы услуги',
+    name: serviceNames.landing,
     promise: 'Заголовок и текст, который продаёт',
     shelf: 'Для сайта',
     youGet: ['Заголовок', 'Блоки страницы', 'Список того, что стоит уточнить'],
     placeholder: 'Что за услуга, что входит, сроки, цена, ограничения',
   },
   proposal: {
-    name: 'Коммерческое предложение по брифу',
+    name: serviceNames.proposal,
     promise: 'КП, которое не стыдно отправить',
     shelf: 'Тексты и документы',
     youGet: ['Объём работ', 'Известные условия', 'Вопросы клиенту'],
     placeholder: 'Запрос клиента, состав работ, сроки и условия',
   },
   instruction: {
-    name: 'Пошаговая инструкция',
+    name: serviceNames.instruction,
     promise: 'Шаги, которые легко повторить',
     shelf: 'Тексты и документы',
     youGet: ['Шаги по порядку', 'Предупреждения и ограничения', 'Чего не хватило в описании'],
     placeholder: 'Как вы делаете работу сейчас, шаг за шагом',
   },
   lesson: {
-    name: 'Мини-урок по вашему материалу',
+    name: serviceNames.lesson,
     promise: 'Короткий урок с вопросом для проверки',
     shelf: 'Тексты и документы',
     youGet: ['Объяснение простыми словами', 'Вопрос для самопроверки', 'Ответ к вопросу'],
     placeholder: 'Учебный материал, на который у вас есть права',
   },
   job_post: {
-    name: 'Вакансия, на которую откликаются',
+    name: serviceNames.job_post,
     promise: 'Понятные задачи и условия',
     shelf: 'Для найма',
     youGet: ['Текст вакансии', 'Задачи и требования', 'Условия работы'],
@@ -128,6 +129,26 @@ export function paymentModeInfo(): PaymentModeInfo {
 }
 
 type ProductRow = Record<string, any>
+
+const plain = (text: unknown) =>
+  String(text ?? '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+/**
+ * The owner's page headline replaces the default promise only when it says something new: a
+ * short line that is not the service name or the title of the idea it grew from.
+ */
+export function ownHeadline(headline: string | undefined, repeats: unknown[]) {
+  if (!headline || headline.length >= 60) return null
+  const value = plain(headline)
+  return repeats.some((item) => {
+    const other = plain(item)
+    return other && (value === other || value.startsWith(other) || other.startsWith(value))
+  })
+    ? null
+    : headline
+}
 
 /** Buyer view of one stored product: catalog projection plus buyer wording and checked sample. */
 export function buyerService(row: ProductRow): PublicService | null {
@@ -156,7 +177,7 @@ export function buyerService(row: ProductRow): PublicService | null {
   return {
     ...base,
     name: copy.name,
-    promise: base.page.headline || copy.promise,
+    promise: ownHeadline(base.page.headline, [copy.name, row.idea_title]) || copy.promise,
     category: copy.shelf,
     page,
     placeholder: copy.placeholder,
@@ -164,7 +185,8 @@ export function buyerService(row: ProductRow): PublicService | null {
   }
 }
 
-const publicColumns = 'template,slug,version,price_kopecks,page,is_demo,spec,checks'
+const publicColumns =
+  'template,slug,version,price_kopecks,page,is_demo,spec,checks,(SELECT i.title FROM ideas i WHERE i.id=products.idea_id) AS idea_title'
 /** Demo products reach buyers only on a demo stand, never on a stand with a real model. */
 const demoAllowed = () => config().MODEL_PROVIDER === 'demo'
 
