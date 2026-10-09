@@ -13,6 +13,7 @@ import type {
   OfficeReport,
   OfficeSettings,
 } from '../../../core/contracts/office'
+import { taxonomyCategories } from '../../../core/taxonomy'
 
 /**
  * Typed office data for Playwright route stubs. Realistic Russian content: four scouts after one
@@ -182,7 +183,11 @@ export function officeFixtures(now = new Date()) {
         review: 0,
         costKopecks: 1110,
       },
-      score: { total: 713, components: { P: 667, E: 890, U: 1000, B: null, C: 860, D: null } },
+      score: {
+        total: 713,
+        components: { P: 667, E: 890, U: 1000, B: null, C: 860, D: null },
+        lowData: true,
+      },
       retired: null,
     },
     {
@@ -657,6 +662,9 @@ export function officeFixtures(now = new Date()) {
         id,
         title: s.title,
         category: s.category,
+        categoryId:
+          taxonomyCategories.find((c) => c.label === s.category)?.id ??
+          `c-${s.category.length}-${s.category.slice(0, 3)}`,
         topic: s.topic,
         status: s.status,
         rankScore: s.score,
@@ -733,6 +741,18 @@ export function officeFixtures(now = new Date()) {
               ]
             : [],
         ownerNote: i === 6 ? 'Обсудить с Сергеем, у него есть стремянки и пара ребят.' : '',
+        ownerStatus: i === 6 ? 'taken' : null,
+        ownerTakenAt: i === 6 ? daysAgo(1, 15) : null,
+        product:
+          s.status === 'productized'
+            ? {
+                id: uuid(600 + (i % 7)),
+                name: s.title,
+                publicUrl: '/services/description',
+                visibility: 'public',
+                status: 'sandbox',
+              }
+            : null,
       } satisfies OfficeIdea
     })
     .sort((a, b) => b.rankScore - a.rankScore)
@@ -755,6 +775,7 @@ export function officeFixtures(now = new Date()) {
     publishedAt: visibility === 'public' ? daysAgo(6 - i) : null,
     priceKopecks: Number(price),
     ideaId: ideas.find((idea) => idea.title === seeds[Number(ideaIndex)]!.title)?.id ?? null,
+    ideaTitle: seeds[Number(ideaIndex)]!.title,
     isDemo: false,
     needsRefresh: template === 'social',
     publicUrl: `/services/${String(template).replace('_', '-')}`,
@@ -781,6 +802,7 @@ export function officeFixtures(now = new Date()) {
                 : 'delivered'
     return {
       id: `${['a7f3c021', 'b2c10755', 'c91e4410', 'd03a77be', 'e5517c09', 'f1d2e3a4', '0a9b8c7d', '1b2c3d4e', '2c3d4e5f', '3d4e5f60', '4e5f6071', '5f607182', '60718293', '718293a4'][i]}-1111-4111-8111-${String(700 + i).padStart(12, '0')}`,
+      number: 1053 - i,
       status,
       source: i % 3 === 2 ? 'owner' : 'public',
       paymentMode: i === 3 ? 'sepolia' : 'sandbox',
@@ -903,10 +925,11 @@ export function officeFixtures(now = new Date()) {
     evolutionRoundsPerDay: 1,
     scoutsPerStrategyPerDay: 2,
     leadsPerDay: 3,
+    scheduleHourUtc: 6,
     providers: {
       model: 'OpenRouter, бесплатная модель',
-      search: 'SearXNG, поиск в интернете',
-      payment: 'Тестовая оплата',
+      search: 'SearXNG',
+      payment: 'Тестовая кнопка',
     },
     limits: { dailyKopecks: 5000, monthlyKopecks: 500000 },
   }
@@ -929,6 +952,8 @@ export function officeFixtures(now = new Date()) {
       orders: orders.length,
       realRevenueKopecks: 0,
       testPayments: 11,
+      activeAgents: agents.filter((a) => a.status === 'active').length,
+      newLeads: 3,
     },
     worker: { alive: true, reason: 'Работает. Следующий поиск в 14:00.', nextAt: inMinutes(95) },
     feed: [
@@ -941,13 +966,13 @@ export function officeFixtures(now = new Date()) {
       {
         at: at(12),
         kind: 'order_test_paid',
-        text: 'Тестовый заказ A7F3C021: «Описание товара», 490 ₽. Деньги не списаны.',
+        text: 'Заказ №1053 (тест): «Описание товара для маркетплейса», 490 ₽.',
         link: '/office/orders/' + orders[0]!.id,
       },
       {
         at: at(25),
         kind: 'order_review',
-        text: 'Заказ B2C10755 не прошёл проверку. В тексте нет цены из исходника, посмотрите.',
+        text: 'Заказ №1052 не прошёл проверку. Посмотрите.',
         link: '/office/orders/' + orders[1]!.id,
       },
       {
@@ -1072,6 +1097,9 @@ export function officeFixtures(now = new Date()) {
 
   const reviewOrder = {
     id: orders[1]!.id,
+    number: orders[1]!.number,
+    productName: orders[1]!.product.name,
+    agent: { id: agentIds.a, name: 'Разведчик А', label: 'А' },
     status: 'manual_review',
     source: 'public',
     payment_mode: 'sandbox',
@@ -1111,10 +1139,10 @@ export function officeFixtures(now = new Date()) {
       error_code: 'OUTPUT_FORMAT_REQUIRED',
     },
     steps: [
-      { label: 'Заказ создан', at: at(40), done: true },
-      { label: 'Тестовая оплата подтверждена', at: at(39), done: true },
-      { label: 'Текст подготовлен', at: at(30), done: true },
-      { label: 'Проверка пройдена и результат выдан', at: null, done: false },
+      { label: 'Оформлен', at: at(40), done: true },
+      { label: 'Оплачен (тест)', at: at(39), done: true },
+      { label: 'Текст написан', at: at(30), done: true },
+      { label: 'Проверен и выдан', at: null, done: false },
     ],
     paymentAttempts: [],
   }
@@ -1122,6 +1150,8 @@ export function officeFixtures(now = new Date()) {
   const deliveredOrder = {
     ...reviewOrder,
     id: orders[2]!.id,
+    number: orders[2]!.number,
+    productName: orders[2]!.product.name,
     status: 'delivered',
     source: 'owner',
     product_snapshot: { name: orders[2]!.product.name, version: 2 },
@@ -1130,7 +1160,7 @@ export function officeFixtures(now = new Date()) {
     review: { reason: 'Все факты из исходника на месте.' },
     delivered_at: at(80),
     progress: {
-      title: 'Результат выдан',
+      title: 'Готово',
       detail: 'Текст прошёл проверку и сохранён.',
       tone: 'good',
       canSubmit: false,
@@ -1231,10 +1261,15 @@ export function officeFixtures(now = new Date()) {
     ],
   }
 
+  const categories = [...new Map(ideas.map((i) => [i.categoryId!, i.category])).entries()].map(
+    ([id, label]) => ({ id, label }),
+  )
+
   return {
     overview,
     agents: officeAgents,
     ideas,
+    categories,
     products,
     orders,
     leads,

@@ -431,6 +431,7 @@ function download() {
   display: grid;
   gap: var(--s-3);
   justify-items: start;
+  margin-top: var(--s-5);
 }
 .buyer .wallet {
   width: 100%;

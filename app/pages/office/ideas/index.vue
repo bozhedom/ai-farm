@@ -474,7 +474,7 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
   }
 }
 .industry {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   overflow-x: auto;
   min-width: 0;
   max-width: 100%;
@@ -483,6 +483,7 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
 }
 @media (max-width: 639px) {
   .industry {
+    flex-wrap: nowrap;
     margin: 0 calc(-1 * var(--gutter));
     padding: 2px var(--gutter);
     max-width: none;

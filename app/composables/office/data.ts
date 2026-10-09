@@ -30,7 +30,9 @@ export function asList<T>(raw: unknown): T[] {
 function asPage<T>(raw: unknown): Page<T> {
   const items = asList<T>(raw)
   const page = (raw || {}) as Partial<Page<T>>
+  // Extra fields of a list answer (idea counts, industries) stay with the page.
   return {
+    ...(Array.isArray(raw) ? {} : page),
     items,
     total: typeof page.total === 'number' ? page.total : items.length,
     offset: typeof page.offset === 'number' ? page.offset : 0,
@@ -58,7 +60,7 @@ async function pagedFetch<T>(url: string, filters: Record<string, string>, pages
       ),
     ),
   )
-  const last = rest.at(-1) || first
+  const last = { ...first, ...(rest.at(-1) || {}) }
   const seen = new Set<string>()
   const items = [first, ...rest]
     .flatMap((page) => page.items)

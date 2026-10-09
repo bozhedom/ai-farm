@@ -31,6 +31,8 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (request.method() === 'POST') {
       posted.push({ url: path, body: request.postDataJSON() })
       if (path === '/api/orders') return json(route, { id: fx.deliveredOrder.id })
+      if (path.endsWith('/relink'))
+        return json(route, { token: 'T'.repeat(43), url: `/order/${'T'.repeat(43)}` })
       return json(route, { ok: true })
     }
     if (options.offline && path.startsWith('/api/office/'))
@@ -46,17 +48,42 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (path === '/api/office/ideas') {
       const status = url.searchParams.get('status')
       const category = url.searchParams.get('category')
+      const view = url.searchParams.get('view')
+      const inView = (idea: (typeof fx.ideas)[number], name: string | null) =>
+        !name ||
+        (name === 'farm' && idea.farmExecutable && idea.status !== 'rejected') ||
+        (name === 'human' && !idea.farmExecutable && idea.status !== 'rejected') ||
+        (name === 'rejected' && idea.status === 'rejected') ||
+        (name === 'taken' && idea.ownerStatus === 'taken')
+      const inCategory = (idea: (typeof fx.ideas)[number]) =>
+        !category || idea.categoryId === category || idea.category === category
       const items = fx.ideas.filter(
-        (idea) => (!status || idea.status === status) && (!category || idea.category === category),
+        (idea) => (!status || idea.status === status) && inCategory(idea) && inView(idea, view),
       )
-      return json(route, page10(items, offset))
+      const scope = fx.ideas.filter(inCategory)
+      const byCategory: Record<string, number> = {}
+      for (const idea of fx.ideas)
+        byCategory[idea.categoryId!] = (byCategory[idea.categoryId!] || 0) + 1
+      return json(route, {
+        ...page10(items, offset),
+        categories: fx.categories,
+        counts: {
+          all: scope.length,
+          farm: scope.filter((i) => inView(i, 'farm')).length,
+          human: scope.filter((i) => inView(i, 'human')).length,
+          rejected: scope.filter((i) => inView(i, 'rejected')).length,
+          taken: scope.filter((i) => inView(i, 'taken')).length,
+          byCategory,
+        },
+      })
     }
     const idea = path.match(/^\/api\/office\/ideas\/([^/]+)$/)
     if (idea) {
       const found = fx.ideas.find((item) => item.id === idea[1])
       return found ? json(route, found) : json(route, { statusMessage: 'NOT_FOUND' }, 404)
     }
-    if (path === '/api/opportunities') return json(route, page10(fx.leads, offset))
+    if (path === '/api/office/leads' || path === '/api/opportunities')
+      return json(route, page10(fx.leads, offset))
     if (path === `/api/orders/${fx.reviewOrder.id}`) return json(route, fx.reviewOrder)
     if (path.startsWith('/api/orders/')) return json(route, fx.deliveredOrder)
     if (/^\/api\/products\/[^/]+\/versions$/.test(path)) return json(route, fx.versions)
@@ -154,13 +181,49 @@ test.describe('office behaviour', () => {
     await stubOffice(page, fx)
     await page.goto('/office/ideas')
     await expect(page.getByText(fx.ideas[0]!.title)).toBeVisible()
-    await page.getByRole('button', { name: 'Нужен человек', exact: true }).click()
+    await page.getByRole('button', { name: /^Нужен человек/ }).click()
     const human = fx.ideas.filter((i) => !i.farmExecutable)
     await expect(page.getByText(human[0]!.title)).toBeVisible()
     await expect(page.getByText(fx.ideas.find((i) => i.farmExecutable)!.title)).toHaveCount(0)
     await page.getByText(human[0]!.title).click()
     await page.getByRole('link', { name: 'Открыть карточку' }).first().click()
     await expect(page.getByRole('heading', { name: human[0]!.title })).toBeVisible()
+  })
+
+  test('an idea that needs a person can be taken into work', async ({ page }) => {
+    const posted = await stubOffice(page, fx)
+    const idea = fx.ideas.find((i) => i.status === 'needs_human' && !i.ownerStatus)!
+    await page.goto(`/office/ideas/${idea.id}`)
+    await page.getByRole('button', { name: 'Взять в работу' }).click()
+    await expect
+      .poll(() => posted.find((p) => p.url === `/api/office/ideas/${idea.id}`)?.body)
+      .toEqual({ ownerStatus: 'taken' })
+  })
+
+  test('order page warns before issuing a new buyer link', async ({ page }) => {
+    const posted = await stubOffice(page, fx)
+    await page.goto(`/office/orders/${fx.reviewOrder.id}`)
+    await expect(
+      page.getByRole('heading', { name: `Заказ №${fx.reviewOrder.number}` }),
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Открыть как покупатель' }).click()
+    await expect(page.getByText('старая сразу перестанет открываться')).toBeVisible()
+    expect(posted.map((p) => p.url)).not.toContain(`/api/orders/${fx.reviewOrder.id}/relink`)
+    await page.getByRole('button', { name: 'Выдать новую ссылку' }).click()
+    await expect(page.getByRole('link', { name: 'Открыть как покупатель' })).toHaveAttribute(
+      'href',
+      new RegExp(`/order/${'T'.repeat(43)}$`),
+    )
+  })
+
+  test('settings pick the daily run hour in local time', async ({ page }) => {
+    const posted = await stubOffice(page, fx)
+    await page.goto('/office/settings')
+    // Europe/Moscow is UTC+3: 12:00 local is 09:00 UTC.
+    await page.getByLabel('Час ежедневного запуска').selectOption({ label: '12:00' })
+    await expect
+      .poll(() => posted.find((p) => p.url === '/api/office/settings')?.body)
+      .toEqual({ scheduleHourUtc: 9 })
   })
 
   test('agents run a selection round on request', async ({ page }) => {
