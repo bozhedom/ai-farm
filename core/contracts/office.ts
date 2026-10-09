@@ -82,6 +82,17 @@ export type OfficeIdea = {
     critique: string
   }[]
   ownerNote: string
+  /** Added by the UX pass: the owner took this "needs a person" idea into work. */
+  ownerStatus?: 'taken' | null
+  ownerTakenAt?: string | null
+  /** Added by the UX pass: the newest product built from this idea. */
+  product?: {
+    id: string
+    name: string
+    publicUrl: string
+    visibility: 'private' | 'public'
+    status: string
+  } | null
 }
 export type OfficeIdeaList = {
   items: OfficeIdea[]
@@ -91,6 +102,16 @@ export type OfficeIdeaList = {
   hasMore: boolean
   /** Added by slice B: industries for the filter, from the server taxonomy. */
   categories?: { id: string; label: string }[]
+  /** Added by the UX pass: counts for the filter chips (`?view=`), within the chosen industry. */
+  counts?: {
+    all: number
+    farm: number
+    human: number
+    rejected: number
+    taken: number
+    /** Ideas per industry id, all industries. */
+    byCategory: Record<string, number>
+  }
 }
 export type OfficeAgent = {
   id: string
@@ -291,5 +312,12 @@ export type OfficeSettingsUpdate = Partial<
 export type OfficeQueued = { id: string; status: string; reused: boolean }
 export type OfficeScoutRequest = { topicId?: string }
 export type OfficeScoutQueued = { jobs: { id: string; status: string }[]; reused: boolean }
-export type OfficeIdeaUpdate = { ownerNote?: string; status?: 'needs_human' | 'rejected' }
+/** Added by the UX pass: `POST /api/office/leads/search` answers like the scout button. */
+export type OfficeLeadSearchQueued = OfficeScoutQueued
+export type OfficeIdeaUpdate = {
+  ownerNote?: string
+  status?: 'needs_human' | 'rejected'
+  /** Added by the UX pass: take one "needs a person" idea into work, or null to let it go. */
+  ownerStatus?: 'taken' | null
+}
 export type OfficeVisibilityUpdate = { visibility: 'private' | 'public' }

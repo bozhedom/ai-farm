@@ -194,7 +194,9 @@ function ideaView(
   row: Record<string, any>,
   label: (id: string) => string,
   checks: any[],
+  products: Record<string, any>[] = [],
 ): OfficeIdea {
+  const product = products.find((p) => p.idea_id === row.id)
   const r = row.research ?? {}
   const list = (value: unknown) => (Array.isArray(value) ? value.map(String) : [])
   return {
@@ -240,7 +242,28 @@ function ideaView(
         critique: String(c.critique?.reason ?? ''),
       })),
     ownerNote: row.owner_note,
+    ownerStatus: row.owner_status === 'taken' ? 'taken' : null,
+    ownerTakenAt: iso(row.owner_taken_at),
+    product: product
+      ? {
+          id: product.id,
+          name: serviceName(product.template, product.spec?.name ?? product.template),
+          publicUrl: publicUrl(product.slug),
+          visibility: product.visibility,
+          status: product.status,
+        }
+      : null,
   }
+}
+
+/** The newest product built from each idea. */
+async function ideaProducts(ids: string[]) {
+  if (!ids.length) return []
+  return query(
+    `SELECT DISTINCT ON (idea_id) id,idea_id,slug,template,spec,visibility,status FROM products
+     WHERE idea_id=ANY($1::uuid[]) ORDER BY idea_id,(status='sandbox') DESC,created_at DESC`,
+    [ids],
+  )
 }
 
 async function ideaChecks(ids: string[]) {
@@ -263,31 +286,60 @@ export const ideaListSchema = z
       .transform((value) => taxonomyCategories.find((c) => c.label === value)?.id ?? value)
       .refine((id) => Object.hasOwn(categoryById, id))
       .optional(),
+    /** Who launches it: the farm, a person, rejected by the critic, or taken by the owner. */
+    view: z.enum(['farm', 'human', 'rejected', 'taken']).optional(),
     offset: z.coerce.number().int().min(0).max(100000000).default(0),
   })
   .strict()
+
+const ideaViews = {
+  farm: "farm_executable AND status<>'rejected'",
+  human: "NOT farm_executable AND status<>'rejected'",
+  rejected: "status='rejected'",
+  taken: "owner_status='taken'",
+} as const
 
 export async function officeIdeas(filter: unknown = {}): Promise<OfficeIdeaList> {
   const input = ideaListSchema.parse(filter)
   const limit = 30
   const values = [input.status ?? null, input.category ?? null]
-  const where = 'WHERE ($1::text IS NULL OR status=$1) AND ($2::text IS NULL OR category=$2)'
-  const [rows, [count], label] = await Promise.all([
+  const where = `WHERE ($1::text IS NULL OR status=$1) AND ($2::text IS NULL OR category=$2)${
+    input.view ? ` AND ${ideaViews[input.view]}` : ''
+  }`
+  const [rows, [count], label, [counts], byCategory] = await Promise.all([
     query(
       `SELECT * FROM ideas ${where} ORDER BY rank_score DESC,created_at DESC,id LIMIT $3 OFFSET $4`,
       [...values, limit, input.offset],
     ),
     query(`SELECT count(*)::int AS n FROM ideas ${where}`, values),
     labelsNow(),
+    query(
+      `SELECT count(*)::int AS "all",
+        ${Object.entries(ideaViews)
+          .map(([key, sql]) => `count(*) FILTER (WHERE ${sql})::int AS ${key}`)
+          .join(',')}
+       FROM ideas WHERE ($1::text IS NULL OR category=$1)`,
+      [input.category ?? null],
+    ),
+    query('SELECT category,count(*)::int AS n FROM ideas GROUP BY category'),
   ])
-  const checks = await ideaChecks(rows.map((row) => row.id))
+  const ids = rows.map((row) => row.id)
+  const [checks, products] = await Promise.all([ideaChecks(ids), ideaProducts(ids)])
   return {
-    items: rows.map((row) => ideaView(row, label, checks)),
+    items: rows.map((row) => ideaView(row, label, checks, products)),
     total: count!.n,
     offset: input.offset,
     limit,
     hasMore: input.offset + rows.length < count!.n,
     categories: taxonomyCategories.map((c) => ({ id: c.id, label: c.label })),
+    counts: {
+      all: counts!.all,
+      farm: counts!.farm,
+      human: counts!.human,
+      rejected: counts!.rejected,
+      taken: counts!.taken,
+      byCategory: Object.fromEntries(byCategory.map((r) => [r.category, r.n])),
+    },
   }
 }
 
@@ -295,7 +347,7 @@ export async function officeIdea(id: string): Promise<OfficeIdea> {
   if (!z.uuid().safeParse(id).success) throw new Error('IDEA_NOT_FOUND')
   const [row] = await query('SELECT * FROM ideas WHERE id=$1', [id])
   if (!row) throw new Error('IDEA_NOT_FOUND')
-  return ideaView(row, await labelsNow(), await ideaChecks([id]))
+  return ideaView(row, await labelsNow(), await ideaChecks([id]), await ideaProducts([id]))
 }
 
 export const ideaUpdateSchema = z
@@ -307,10 +359,15 @@ export const ideaUpdateSchema = z
       .refine((s) => !/[<>]/.test(s), 'HTML_FORBIDDEN')
       .optional(),
     status: z.enum(['needs_human', 'rejected']).optional(),
+    /** Take a "needs a person" idea into work (one at a time), or let it go. */
+    ownerStatus: z.enum(['taken']).nullable().optional(),
   })
   .strict()
 
-/** Owner note, and moving a "needs a person" idea to rejected or back. Nothing else. */
+/**
+ * Owner note, moving a "needs a person" idea to rejected or back, and taking one such idea into
+ * the owner's work. Nothing else: farm statuses stay with the server.
+ */
 export async function updateIdea(id: string, value: unknown) {
   const input = ideaUpdateSchema.parse(value)
   if (!z.uuid().safeParse(id).success) throw new Error('IDEA_NOT_FOUND')
@@ -326,6 +383,36 @@ export async function updateIdea(id: string, value: unknown) {
           !idea.farm_executable)
       if (!allowed) throw new Error('IDEA_STATUS_CHANGE_FORBIDDEN')
       await query('UPDATE ideas SET status=$2 WHERE id=$1', [id, input.status], db)
+      // A rejected idea is no longer in the owner's work.
+      if (input.status === 'rejected' && idea.owner_status)
+        await query('UPDATE ideas SET owner_status=NULL,owner_taken_at=NULL WHERE id=$1', [id], db)
+    }
+    if (input.ownerStatus !== undefined && input.ownerStatus !== idea.owner_status) {
+      if (input.ownerStatus === 'taken') {
+        if (idea.farm_executable || (input.status ?? idea.status) !== 'needs_human')
+          throw new Error('IDEA_TAKE_FORBIDDEN')
+        // Variant 2 of the brief: one hypothesis under the owner's control at a time.
+        const [other] = await query(
+          "SELECT id FROM ideas WHERE owner_status='taken' AND id<>$1 LIMIT 1",
+          [id],
+          db,
+        )
+        if (other) throw new Error('IDEA_ALREADY_TAKEN')
+        await query(
+          "UPDATE ideas SET owner_status='taken',owner_taken_at=now() WHERE id=$1",
+          [id],
+          db,
+        )
+      } else
+        await query('UPDATE ideas SET owner_status=NULL,owner_taken_at=NULL WHERE id=$1', [id], db)
+      await audit(
+        input.ownerStatus === 'taken' ? 'idea_taken' : 'idea_released',
+        input.ownerStatus === 'taken'
+          ? 'Владелец взял идею в работу.'
+          : 'Владелец вернул идею в рейтинг.',
+        { ideaId: id, title: idea.title },
+        db,
+      )
     }
     if (input.ownerNote !== undefined)
       await query('UPDATE ideas SET owner_note=$2 WHERE id=$1', [id, input.ownerNote], db)
@@ -747,6 +834,67 @@ export async function officeLeads(filter: unknown = {}): Promise<OfficeLeadList>
     limit,
     hasMore: input.offset + rows.length < count!.n,
   }
+}
+
+/**
+ * Owner button "Поискать ещё": lead searches for public products, the ones searched longest ago
+ * first. Manual and scheduled searches share the daily `leads_per_day` limit (one UTC day);
+ * queued searches are reused instead of adding more.
+ */
+export async function requestLeadSearch(now = new Date()) {
+  return transaction(async (db) => {
+    const [state] = await query(
+      'SELECT mode,leads_per_day FROM system_state WHERE id=true FOR UPDATE',
+      [],
+      db,
+    )
+    if (state?.mode !== 'running') throw new Error('RESEARCH_PAUSED')
+    const day = now.toISOString().slice(0, 10)
+    const queued = await query(
+      "SELECT id,status FROM jobs WHERE kind='lead' AND dedupe_key LIKE $1 AND status IN ('queued','running')",
+      [`lead:${day}:%`],
+      db,
+    )
+    if (queued.length)
+      return {
+        jobs: queued.map((j) => ({ id: j.id as string, status: j.status as string })),
+        reused: true,
+      }
+    const [used] = await query(
+      'SELECT count(*)::int AS n FROM jobs WHERE dedupe_key LIKE $1',
+      [`lead:${day}:%`],
+      db,
+    )
+    const room = Math.max(0, (state.leads_per_day as number) - (used!.n as number))
+    const products = await query(
+      `SELECT p.id,
+         (SELECT count(*)::int FROM jobs j WHERE j.dedupe_key LIKE 'lead:'||$1||':'||p.id::text||'%') AS today
+       FROM products p WHERE p.status='sandbox' AND p.visibility='public'
+       ORDER BY (SELECT max(j.created_at) FROM jobs j WHERE j.kind='lead' AND j.payload->>'productId'=p.id::text) NULLS FIRST,
+         p.published_at,p.id`,
+      [day],
+      db,
+    )
+    if (!products.length) throw new Error('PRODUCT_NOT_PUBLIC')
+    if (!room) throw new Error('LEAD_SEARCH_LIMIT')
+    const jobs: { id: string; status: string }[] = []
+    for (const product of products.slice(0, room)) {
+      const job = await enqueue(
+        'lead',
+        `lead:${day}:${product.id}:owner:${(product.today as number) + 1}`,
+        { productId: product.id, manual: 'true' },
+        db,
+      )
+      jobs.push({ id: job.id as string, status: job.status as string })
+    }
+    await audit(
+      'lead_search_requested',
+      'Владелец попросил поискать клиентов.',
+      { products: jobs.length },
+      db,
+    )
+    return { jobs, reused: false }
+  })
 }
 
 /** Owner asks for a new reply draft: at most three per lead, one queued at a time. */

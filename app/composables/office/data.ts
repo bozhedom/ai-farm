@@ -107,21 +107,27 @@ export function useOfficeReports() {
   )
 }
 
-export type IdeaFilters = { status: IdeaStatus | ''; category: string }
+export type IdeaView = '' | 'farm' | 'human' | 'rejected' | 'taken'
+export type IdeaFilters = { status: IdeaStatus | ''; category: string; view?: IdeaView }
 
 export function useOfficeIdeas(filters: Ref<IdeaFilters>) {
   const pages = ref(1)
   watch(
-    () => [filters.value.status, filters.value.category],
+    () => [filters.value.status, filters.value.category, filters.value.view],
     () => (pages.value = 1),
   )
   const key = computed(
-    () => `ideas:${filters.value.status}:${filters.value.category}:${pages.value}`,
+    () =>
+      `ideas:${filters.value.status}:${filters.value.category}:${filters.value.view || ''}:${pages.value}`,
   )
   const resource = useOfficeResource(key, () =>
     pagedFetch<OfficeIdea>(
       '/api/office/ideas',
-      { status: filters.value.status, category: filters.value.category },
+      {
+        status: filters.value.status,
+        category: filters.value.category,
+        view: filters.value.view || '',
+      },
       pages.value,
     ).then((page) => page as OfficeIdeaList),
   )

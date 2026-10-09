@@ -27,6 +27,11 @@ const messages: Record<string, string> = {
   PRODUCT_NOT_FOUND: 'Такого продукта нет.',
   OPPORTUNITY_NOT_FOUND: 'Такого запроса нет.',
   EVOLUTION_NOT_READY: 'Для отбора пока мало идей.',
+  IDEA_TAKE_FORBIDDEN: 'Взять в работу можно только идею, где нужен человек.',
+  IDEA_ALREADY_TAKEN: 'У вас уже есть идея в работе. Сначала верните её в рейтинг.',
+  IDEA_STATUS_CHANGE_FORBIDDEN: 'Так поменять статус идеи нельзя.',
+  LEAD_SEARCH_LIMIT: 'На сегодня поиски клиентов закончились. Лимит в настройках.',
+  PRODUCT_NOT_PUBLIC: 'Сначала покажите продукт на сайте.',
   INVALID_INPUT: 'Проверьте введённые данные.',
   RATE_LIMITED: 'Слишком часто. Подождите минуту.',
 }

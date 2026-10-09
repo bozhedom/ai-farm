@@ -100,6 +100,13 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
         `Идея «${cleanText(d.title)}» требует человека. Оставили в рейтинге с планом запуска.`,
         `/office/ideas/${d.ideaId}`,
       )
+    case 'idea_taken':
+      return item(`Вы взяли идею в работу: «${cleanText(d.title)}».`, `/office/ideas/${d.ideaId}`)
+    case 'idea_released':
+      return item(
+        `Идея «${cleanText(d.title)}» больше не в работе у вас.`,
+        `/office/ideas/${d.ideaId}`,
+      )
     case 'product_published':
       return item(
         `Новый продукт на сайте: «${productName(d)}», ${formatRub(Number(d.priceKopecks) || 0)}. Пример прошёл проверку.`,
@@ -245,6 +252,8 @@ export const feedKinds = [
   'idea_found',
   'idea_reviewed',
   'idea_needs_human',
+  'idea_taken',
+  'idea_released',
   'product_published',
   'product_created',
   'product_updated',
