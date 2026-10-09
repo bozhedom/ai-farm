@@ -7,6 +7,9 @@ const props = defineProps<{ steps: OrderStep[]; active: boolean }>()
 const mounted = ref(false)
 onMounted(() => (mounted.value = true))
 const now = computed(() => props.steps.findIndex((s) => !s.done))
+// One time per moment: the payment and the latest finished step, not four equal stamps.
+const lastDone = computed(() => props.steps.findLastIndex((s) => s.done))
+const showTime = (i: number) => i === 0 || i === lastDone.value
 </script>
 
 <template>
@@ -18,7 +21,7 @@ const now = computed(() => props.steps.findIndex((s) => !s.done))
     >
       <strong>{{ step.label }}</strong>
       <span class="when"
-        >{{ mounted && step.done && step.at ? publicWhen(step.at) : '' }}&nbsp;</span
+        >{{ mounted && step.done && step.at && showTime(i) ? publicWhen(step.at) : '' }}&nbsp;</span
       >
     </li>
   </ol>

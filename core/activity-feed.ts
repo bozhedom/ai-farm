@@ -1,7 +1,7 @@
 import { pool, query, type Connection } from './db'
 import { agentLabels, agentName, describeMutation, type StrategyRow } from './agents'
 import { formatRub } from './storefront'
-import { serviceByTemplate, type ServiceTemplate } from './service-catalog'
+import { orderTitle, serviceName } from './service-names'
 
 /**
  * The owner's feed on the main screen: audit events rewritten as short human lines, the way
@@ -21,6 +21,8 @@ export type FeedContext = {
     string,
     {
       name: string
+      /** Short order number from orders.number. */
+      number?: number | string | null
       priceKopecks: number
       paidAt: string | null
       deliveredAt: string | null
@@ -49,11 +51,13 @@ export function cleanText(text: unknown, max = 160) {
   return value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value
 }
 
-export const orderNumber = (id: string) => `№${id.slice(0, 8)}`
+/** «Заказ №1042» for an order id the context knows; plain «Заказ» otherwise. */
+const orderOf = (ctx: FeedContext, id: unknown) => orderTitle(ctx.orders.get(String(id))?.number)
 const named = (ctx: FeedContext, id: unknown) => agentName(ctx.label(String(id)))
 const genitive = (ctx: FeedContext, id: unknown) => `Разведчика ${ctx.label(String(id))}`
-const templateLabel = (template: unknown) =>
-  serviceByTemplate[template as ServiceTemplate]?.label ?? 'текстовая услуга'
+const templateLabel = (template: unknown) => serviceName(template, 'текстовая услуга')
+/** Products are named by their service type, the same as on the site. */
+const productName = (d: Record<string, any>) => serviceName(d.template, cleanText(d.name))
 
 export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
   const d = event.data ?? {}
@@ -98,7 +102,7 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
       )
     case 'product_published':
       return item(
-        `Новый продукт на сайте: «${cleanText(d.name)}», ${formatRub(Number(d.priceKopecks) || 0)}. Пример прошёл проверку.`,
+        `Новый продукт на сайте: «${productName(d)}», ${formatRub(Number(d.priceKopecks) || 0)}. Пример прошёл проверку.`,
         '/office/products',
       )
     case 'product_created':
@@ -111,14 +115,14 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
     case 'product_updated':
       if (d.hidden)
         return item(
-          `Новая версия продукта «${cleanText(d.name)}» готова. На сайте он скрыт по вашему решению.`,
+          `Новая версия продукта «${productName(d)}» готова. На сайте он скрыт по вашему решению.`,
           '/office/products',
         )
       if (d.ideaId) return []
       return item(`Вышла новая версия продукта «${templateLabel(d.template)}».`, '/office/products')
     case 'product_visibility':
       return item(
-        `Продукт «${cleanText(d.name)}» ${d.visibility === 'public' ? 'показан на сайте' : 'скрыт с сайта'}.`,
+        `Продукт «${productName(d)}» ${d.visibility === 'public' ? 'показан на сайте' : 'скрыт с сайта'}.`,
         '/office/products',
       )
     case 'lead_draft_ready':
@@ -138,7 +142,7 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
       const order = ctx.orders.get(String(d.orderId))
       if (!order) return []
       return item(
-        `Тестовый заказ ${orderNumber(String(d.orderId))}: «${cleanText(order.name)}», ${formatRub(order.priceKopecks)}. Деньги не списаны.`,
+        `${orderOf(ctx, d.orderId)} (тест): «${cleanText(order.name)}», ${formatRub(order.priceKopecks)}.`,
         `/office/orders/${d.orderId}`,
       )
     }
@@ -154,7 +158,7 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
             )
           : null
       return item(
-        `Заказ ${orderNumber(String(d.orderId))} готов${minutes ? ` за ${minutes} ${plural(minutes, 'минуту', 'минуты', 'минут')}` : ''}.`,
+        `${orderOf(ctx, d.orderId)} готов${minutes ? ` за ${minutes} ${plural(minutes, 'минуту', 'минуты', 'минут')}` : ''}.`,
         `/office/orders/${d.orderId}`,
       )
     }
@@ -164,7 +168,7 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
         const orderId = ctx.jobOrders.get(String(d.jobId))
         return orderId
           ? item(
-              `Заказ ${orderNumber(orderId)} не прошёл проверку. Посмотрите.`,
+              `${orderOf(ctx, orderId)} не прошёл проверку. Посмотрите.`,
               `/office/orders/${orderId}`,
             )
           : []
@@ -207,7 +211,7 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
     case 'report_ready':
       return item(
         d.headline
-          ? `Руководитель написал отчёт: ${cleanText(d.headline)}`
+          ? `Руководитель написал отчёт: ${cleanText(d.headline).replace(/^Демо-отч[её]т:\s*/i, '')}`
           : 'Руководитель собрал отчёт по цифрам.',
         '/office/reports',
       )
@@ -263,14 +267,14 @@ export const feedKinds = [
   'research_restarted',
 ]
 
-/** Latest feed lines, newest first. */
-export async function activityFeed(limit = 30, db: Connection = pool): Promise<FeedItem[]> {
-  const events = await query<FeedEvent>(
-    `SELECT id,kind,message,data,created_at FROM audit_events WHERE kind=ANY($1)
-     ORDER BY id DESC LIMIT $2`,
-    [feedKinds, Math.min(500, limit * 4)],
-    db,
-  )
+/**
+ * Context for feed lines: agent labels, and the orders the events mention (directly or through
+ * a fulfilment job) with their short numbers and the shared service name.
+ */
+export async function feedContext(
+  events: FeedEvent[],
+  db: Connection = pool,
+): Promise<FeedContext> {
   const orderIds = new Set<string>()
   const jobIds = new Set<string>()
   for (const event of events) {
@@ -278,17 +282,8 @@ export async function activityFeed(limit = 30, db: Connection = pool): Promise<F
     if (event.kind === 'job_error' && event.data?.kind === 'fulfill' && event.data.jobId)
       jobIds.add(String(event.data.jobId))
   }
-  const [strategies, orders, jobs] = await Promise.all([
+  const [strategies, jobs] = await Promise.all([
     query<StrategyRow>('SELECT id,name,parent_id,generation,created_at FROM strategies', [], db),
-    orderIds.size
-      ? query(
-          `SELECT o.id,o.product_snapshot->>'name' AS name,
-             COALESCE(NULLIF(o.price_kopecks,0),p.price_kopecks) AS price_kopecks,o.paid_at,o.delivered_at
-           FROM orders o JOIN products p ON p.id=o.product_id WHERE o.id::text=ANY($1)`,
-          [[...orderIds]],
-          db,
-        )
-      : Promise.resolve([]),
     jobIds.size
       ? query(
           `SELECT id,payload->>'orderId' AS order_id FROM jobs WHERE id::text=ANY($1)`,
@@ -297,14 +292,25 @@ export async function activityFeed(limit = 30, db: Connection = pool): Promise<F
         )
       : Promise.resolve([]),
   ])
+  for (const job of jobs) if (job.order_id) orderIds.add(String(job.order_id))
+  const orders = orderIds.size
+    ? await query(
+        `SELECT o.id,o.number,p.template,o.product_snapshot->>'name' AS name,
+           COALESCE(NULLIF(o.price_kopecks,0),p.price_kopecks) AS price_kopecks,o.paid_at,o.delivered_at
+         FROM orders o JOIN products p ON p.id=o.product_id WHERE o.id::text=ANY($1)`,
+        [[...orderIds]],
+        db,
+      )
+    : []
   const labels = agentLabels(strategies)
-  const ctx: FeedContext = {
+  return {
     label: (id) => labels.get(id) ?? '?',
     orders: new Map(
       orders.map((o) => [
         o.id as string,
         {
-          name: (o.name as string) || 'Заказ',
+          name: serviceName(o.template, (o.name as string) || 'Заказ'),
+          number: o.number as string,
           priceKopecks: o.price_kopecks as number,
           paidAt: o.paid_at ? new Date(o.paid_at).toISOString() : null,
           deliveredAt: o.delivered_at ? new Date(o.delivered_at).toISOString() : null,
@@ -313,6 +319,17 @@ export async function activityFeed(limit = 30, db: Connection = pool): Promise<F
     ),
     jobOrders: new Map(jobs.map((j) => [j.id as string, j.order_id as string])),
   }
+}
+
+/** Latest feed lines, newest first. */
+export async function activityFeed(limit = 30, db: Connection = pool): Promise<FeedItem[]> {
+  const events = await query<FeedEvent>(
+    `SELECT id,kind,message,data,created_at FROM audit_events WHERE kind=ANY($1)
+     ORDER BY id DESC LIMIT $2`,
+    [feedKinds, Math.min(500, limit * 4)],
+    db,
+  )
+  const ctx = await feedContext(events, db)
   // Repeated identical lines in a row (several lead searches) are shown once.
   return events
     .flatMap((event) => feedItems(event, ctx))

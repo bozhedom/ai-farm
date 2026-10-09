@@ -22,9 +22,22 @@ const missing = ref(
 )
 const offline = ref(!first.value && !missing.value)
 const number = computed(() =>
-  order.value ? order.value.id.replace(/-/g, '').slice(0, 6).toUpperCase() : '',
+  order.value
+    ? order.value.number
+      ? `№${order.value.number}`
+      : order.value.id.replace(/-/g, '').slice(0, 6).toUpperCase()
+    : '',
 )
 useHead({ title: () => (order.value ? `Заказ ${number.value}. AI Farm` : 'Заказ. AI Farm') })
+function remember() {
+  if (order.value)
+    rememberOrder({
+      token,
+      name: order.value.service.name,
+      at: order.value.createdAt,
+      status: order.value.status,
+    })
+}
 const link = `${useRequestURL().origin}/order/${token}`
 const final = ['delivered', 'expired', 'closed']
 const tone: Record<string, string> = {
@@ -55,6 +68,7 @@ async function load() {
     order.value = await $fetch<PublicOrderView>(`/api/public/orders/${token}`)
     offline.value = false
     missing.value = false
+    remember()
   } catch (e) {
     if (publicErrorCode(e) === 'ORDER_NOT_FOUND') {
       missing.value = true
@@ -78,8 +92,7 @@ function schedule() {
   )
 }
 onMounted(() => {
-  if (order.value)
-    rememberOrder({ token, name: order.value.service.name, at: order.value.createdAt })
+  remember()
   schedule()
 })
 onBeforeUnmount(() => clearTimeout(timer))

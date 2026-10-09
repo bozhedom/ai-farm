@@ -8,6 +8,7 @@ const ctx: FeedContext = {
       'order-1042-0000',
       {
         name: 'Описание товара',
+        number: '1042',
         priceKopecks: 49000,
         paidAt: '2026-10-08T10:00:00.000Z',
         deliveredAt: '2026-10-08T10:03:00.000Z',
@@ -53,13 +54,13 @@ describe('owner feed in human words', () => {
       text('lead_draft_ready', { host: 'fl.ru', title: 'Нужно 30 описаний для Ozon' }),
     ).toEqual(['Найден возможный клиент на fl.ru: «Нужно 30 описаний для Ozon». Отклик готов.'])
     expect(text('test_payment_confirmed', { orderId: 'order-1042-0000' })).toEqual([
-      'Тестовый заказ №order-10: «Описание товара», 490 ₽. Деньги не списаны.',
+      'Заказ №1042 (тест): «Описание товара», 490 ₽.',
     ])
     expect(text('order_delivered', { orderId: 'order-1042-0000' })).toEqual([
-      'Заказ №order-10 готов за 3 минуты.',
+      'Заказ №1042 готов за 3 минуты.',
     ])
     expect(text('job_error', { kind: 'fulfill', jobId: 'job-1', terminal: true })).toEqual([
-      'Заказ №order-10 не прошёл проверку. Посмотрите.',
+      'Заказ №1042 не прошёл проверку. Посмотрите.',
     ])
     expect(
       text('evolution_rotated', {

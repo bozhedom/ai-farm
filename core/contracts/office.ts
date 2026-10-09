@@ -170,6 +170,8 @@ export type OfficeProduct = {
 }
 export type OfficeOrderSummary = {
   id: string
+  /** Added by the UX pass: short order number, «Заказ №1042». */
+  number?: number
   status: string
   source: 'owner' | 'public'
   paymentMode: string

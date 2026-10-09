@@ -199,6 +199,11 @@ export function useOfficeLeads() {
 /** Owner view of one order from the existing `/api/orders/[id]`. */
 export type OwnerOrder = {
   id: string
+  /** Short order number, «Заказ №1042». */
+  number?: number
+  /** Service name, the same as on the site. */
+  productName?: string
+  agent?: { id: string; name: string; label: string } | null
   status: string
   source?: 'owner' | 'public'
   payment_mode: string

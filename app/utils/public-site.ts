@@ -1,7 +1,7 @@
 // Helpers for the public buyer pages. Browser storage is a convenience only: every read and
 // write may fail (private window, blocked storage) and the pages work without it.
 
-export type SavedOrder = { token: string; name: string; at: string }
+export type SavedOrder = { token: string; name: string; at: string; status?: string }
 const storageKey = 'ai-farm:orders'
 /** A secret order link token: exactly 43 base64url characters. Anything else is not an order. */
 export const orderTokenPattern = /^[A-Za-z0-9_-]{43}$/

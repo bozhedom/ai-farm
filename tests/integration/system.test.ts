@@ -792,7 +792,7 @@ describe('durable autonomous pipeline', () => {
     const detail = await orderDetails(o.id)
     expect(detail.steps.every((step) => !!step.at)).toBe(true)
     expect(detail.paymentAttempts).toHaveLength(1)
-    expect(detail.progress.title).toBe('Результат выдан')
+    expect(detail.progress.title).toBe('Готово')
     // Old delivered orders may predate the call timestamps and job association.
     await query('UPDATE tool_calls SET job_id=null,finished_at=null WHERE job_id=$1', [job.id])
     const historic = await orderDetails(o.id)

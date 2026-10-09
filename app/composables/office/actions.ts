@@ -65,6 +65,8 @@ export const officeApi = {
   saveSettings: (update: OfficeSettingsUpdate) => post('/api/office/settings', update),
   resolveOrder: (id: string, reason: string) =>
     post(`/api/orders/${encodeURIComponent(id)}/resolve`, { reason }),
+  relinkOrder: (id: string) =>
+    post<{ token: string; url: string }>(`/api/orders/${encodeURIComponent(id)}/relink`, {}),
   payOrder: (id: string, body: { mode: 'sandbox' } | { mode: 'sepolia'; hash: string }) =>
     post(`/api/orders/${encodeURIComponent(id)}/pay`, body),
   createOrder: (productId: string, input: string, requestKey: string) =>

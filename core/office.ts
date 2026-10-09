@@ -4,8 +4,8 @@ import { config, usesSourcePosts } from './config'
 import { audit, query, transaction } from './db'
 import { budgetSummary } from './budget'
 import { enqueue } from './queue'
-import { activityFeed, cleanText, feedItems, orderNumber, type FeedEvent } from './activity-feed'
-import { serviceByTemplate, type ServiceTemplate } from './service-catalog'
+import { activityFeed, cleanText, feedContext, feedItems, type FeedEvent } from './activity-feed'
+import { orderTitle, serviceName } from './service-names'
 import {
   agentLabels,
   agentMetrics,
@@ -97,7 +97,8 @@ export async function officeOverview(now = new Date()): Promise<OfficeOverview> 
         "SELECT id,kind,payload FROM jobs WHERE status='running' ORDER BY started_at DESC NULLS LAST LIMIT 1",
       ),
       query(
-        "SELECT count(*)::int AS n,min(id::text) AS first FROM orders WHERE status='manual_review'",
+        `SELECT count(*) OVER ()::int AS n,id AS first,number FROM orders
+         WHERE status='manual_review' ORDER BY created_at,id LIMIT 1`,
       ),
       query(
         "SELECT count(*)::int AS n FROM opportunities WHERE reply_draft IS NOT NULL AND stage='new'",
@@ -131,14 +132,14 @@ export async function officeOverview(now = new Date()): Promise<OfficeOverview> 
       : 'Работает. Поиск начнётся в ближайшую минуту.'
   }
   const needsOwner: OfficeOverview['needsOwner'] = []
-  if (review!.n)
+  if (review?.n)
     needsOwner.push({
       kind: 'orders',
       text:
-        review!.n === 1
-          ? `Заказ ${orderNumber(review!.first)} ждёт вашей проверки.`
-          : `Заказов на проверке: ${review!.n}.`,
-      link: review!.n === 1 ? `/office/orders/${review!.first}` : '/office/orders',
+        review.n === 1
+          ? `${orderTitle(review.number)} ждёт вашей проверки.`
+          : `Заказов на проверке: ${review.n}.`,
+      link: review.n === 1 ? `/office/orders/${review.first}` : '/office/orders',
     })
   if (drafts!.n)
     needsOwner.push({
@@ -457,7 +458,7 @@ export async function officeProducts(filter: unknown = {}): Promise<OfficeProduc
   const items = rows.map((p) => ({
     id: p.id,
     slug: p.slug,
-    name: p.spec?.name ?? p.template,
+    name: serviceName(p.template, p.spec?.name ?? p.template),
     template: p.template,
     version: p.version,
     visibility: p.visibility,
@@ -518,7 +519,12 @@ export async function setProductVisibility(id: string, value: unknown) {
       input.visibility === 'public'
         ? 'Владелец показал продукт на сайте.'
         : 'Владелец скрыл продукт.',
-      { productId: id, name: product.spec?.name, visibility: input.visibility },
+      {
+        productId: id,
+        name: product.spec?.name,
+        template: product.template,
+        visibility: input.visibility,
+      },
       db,
     )
   })
@@ -538,8 +544,8 @@ export async function officeOrders(filter: unknown = {}): Promise<OfficeOrderLis
   const where = input.attention === 'true' ? "WHERE o.status='manual_review'" : ''
   const [rows, [count], label] = await Promise.all([
     query(
-      `SELECT o.id,o.status,o.source,o.payment_mode,o.is_test_payment,o.revenue_kopecks,o.created_at,
-        COALESCE(NULLIF(o.price_kopecks,0),p.price_kopecks) AS price,o.product_snapshot,p.slug,o.strategy_id
+      `SELECT o.id,o.number,o.status,o.source,o.payment_mode,o.is_test_payment,o.revenue_kopecks,o.created_at,
+        COALESCE(NULLIF(o.price_kopecks,0),p.price_kopecks) AS price,o.product_snapshot,p.slug,p.template,o.strategy_id
        FROM orders o JOIN products p ON p.id=o.product_id ${where}
        ORDER BY (o.status='manual_review') DESC,o.created_at DESC,o.id LIMIT $1 OFFSET $2`,
       [limit, input.offset],
@@ -550,6 +556,7 @@ export async function officeOrders(filter: unknown = {}): Promise<OfficeOrderLis
   return {
     items: rows.map((o) => ({
       id: o.id,
+      number: Number(o.number),
       status: o.status,
       source: o.source,
       paymentMode: o.payment_mode,
@@ -557,7 +564,7 @@ export async function officeOrders(filter: unknown = {}): Promise<OfficeOrderLis
       priceKopecks: o.price,
       revenueKopecks: o.revenue_kopecks,
       product: {
-        name: o.product_snapshot?.name,
+        name: serviceName(o.template, o.product_snapshot?.name),
         slug: o.slug,
         version: o.product_snapshot?.version,
       },
@@ -780,8 +787,7 @@ const steps: Record<string, number> = {
   evolve: 1,
   evaluate: 1,
 }
-const templateName = (template: unknown) =>
-  serviceByTemplate[template as ServiceTemplate]?.label ?? 'текстовая услуга'
+const templateName = (template: unknown) => serviceName(template, 'текстовая услуга')
 function firstTemplate(payload: Record<string, string>) {
   try {
     return (JSON.parse(payload.templates ?? '[]') as string[])[0]
@@ -815,11 +821,13 @@ async function jobTitle(job: { kind: string; payload: Record<string, string> }) 
       : { title: 'Поиск клиентов', detail: 'Ищем публичные запросы и готовим отклики.' }
   if (job.kind === 'report')
     return { title: 'Отчёт руководителя', detail: 'Руководитель пишет отчёт по цифрам.' }
-  if (job.kind === 'fulfill')
-    return {
-      title: 'Заказ',
-      detail: `Пишем и проверяем текст заказа ${orderNumber(p.orderId ?? '')}.`,
-    }
+  if (job.kind === 'fulfill') {
+    const [order] = z.uuid().safeParse(p.orderId).success
+      ? await query('SELECT number FROM orders WHERE id=$1', [p.orderId])
+      : []
+    const number = order ? ` №${order.number}` : ''
+    return { title: 'Заказ', detail: `Пишем и проверяем текст заказа${number}.` }
+  }
   if (job.kind === 'evolve')
     return { title: 'Отбор агентов', detail: 'Сравниваем разведчиков по качеству идей.' }
   return { title: 'Денежный отбор', detail: 'Проверяем продажи за неделю.' }
@@ -861,7 +869,7 @@ export function journalError(code: string | null) {
 
 /** Technical log for the settings screen: recent events and jobs in plain words. */
 export async function officeJournal(): Promise<OfficeJournal> {
-  const [events, jobs, strategies] = await Promise.all([
+  const [events, jobs] = await Promise.all([
     query<FeedEvent & { id: string }>(
       'SELECT id,kind,message,data,created_at FROM audit_events ORDER BY id DESC LIMIT 60',
     ),
@@ -869,14 +877,8 @@ export async function officeJournal(): Promise<OfficeJournal> {
       `SELECT id,kind,status,error_code,attempts,payload,created_at,started_at,finished_at
        FROM jobs ORDER BY (status='running') DESC,created_at DESC,id LIMIT 40`,
     ),
-    query<StrategyRow>('SELECT id,name,parent_id,generation,created_at FROM strategies'),
   ])
-  const labels = agentLabels(strategies)
-  const ctx = {
-    label: (id: string) => labels.get(id) ?? '?',
-    orders: new Map(),
-    jobOrders: new Map(),
-  }
+  const ctx = await feedContext(events)
   return {
     events: events.map((event) => ({
       id: String(event.id),

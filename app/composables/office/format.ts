@@ -153,8 +153,9 @@ export function domain(url: string | null | undefined) {
   }
 }
 
-/** Short order number for people: first 8 characters of the id in upper case. */
-export const orderNumber = (id: string) => id.slice(0, 8).toUpperCase()
+/** Short order number for people: «1042» from orders.number, the id start for old answers. */
+export const orderNumber = (order: { id: string; number?: number | null }) =>
+  order.number ? String(order.number) : order.id.slice(0, 6).toUpperCase()
 
 /** Splits «Первое предложение. Пояснение.» into a main line and a quiet second line. */
 export function splitSentence(text: string) {
