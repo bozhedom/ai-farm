@@ -272,6 +272,8 @@ export type OfficeSettings = {
   limits: { dailyKopecks: number; monthlyKopecks: number }
   /** Added by slice B: the 28-day season is open. A new one: POST /api/control {action:'restart_research'}. */
   researchEnabled?: boolean
+  /** Added by the UX pass: UTC hour (0-20) when the daily run may start. */
+  scheduleHourUtc?: number
 }
 export type OfficeSettingsUpdate = Partial<
   Pick<
@@ -281,6 +283,7 @@ export type OfficeSettingsUpdate = Partial<
     | 'evolutionRoundsPerDay'
     | 'scoutsPerStrategyPerDay'
     | 'leadsPerDay'
+    | 'scheduleHourUtc'
   >
 >
 

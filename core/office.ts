@@ -19,6 +19,7 @@ import { currentScores, evolutionStatus, type ScoredAgent } from './evolution'
 import { categoryById, taxonomyCategories, topicById } from './taxonomy'
 import { sourceSocialDelivery } from './source-posts'
 import { publicSlug } from './storefront'
+import { beforeDailyHour, nextDailyRun } from './autonomy'
 import type {
   BudgetCategory,
   EvolutionRound,
@@ -114,9 +115,6 @@ export async function officeOverview(now = new Date()): Promise<OfficeOverview> 
     'SELECT count(*)::int AS n FROM jobs WHERE dedupe_key LIKE $1',
     [`scout:${now.toISOString().slice(0, 10)}:%`],
   )
-  const tomorrow = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
-  ).toISOString()
   let reason: string
   let nextAt: string | null = null
   if (state.mode === 'emergency_stop') reason = 'Остановлено. Новые задачи не начинаются.'
@@ -126,10 +124,13 @@ export async function officeOverview(now = new Date()): Promise<OfficeOverview> 
   else if (running[0]) reason = `Работает: ${farmActivity[running[0].kind] ?? 'выполняет задачу'}.`
   else if (!scheduled) reason = 'Работает. Расписание выключено, поиск запускаете вы.'
   else {
-    nextAt = scoutsToday!.n ? tomorrow : now.toISOString()
+    const hour = state.schedule_hour_utc ?? 0
+    nextAt = nextDailyRun(now, hour, scoutsToday!.n > 0)
     reason = scoutsToday!.n
       ? 'Работает. Следующий поиск завтра.'
-      : 'Работает. Поиск начнётся в ближайшую минуту.'
+      : beforeDailyHour(now, hour)
+        ? 'Работает. Поиск начнётся в назначенный час.'
+        : 'Работает. Поиск начнётся в ближайшую минуту.'
   }
   const needsOwner: OfficeOverview['needsOwner'] = []
   if (review?.n)
@@ -659,6 +660,12 @@ export async function officeReports(filter: unknown = {}): Promise<OfficeReportL
   }
 }
 
+const searchLabels: Record<string, string> = {
+  demo: 'Демо (поиск не подключён)',
+  searxng: 'SearXNG',
+  yandex: 'Яндекс Поиск',
+}
+
 export async function officeSettings(): Promise<OfficeSettings> {
   const c = config()
   const [state] = await query('SELECT * FROM system_state WHERE id=true')
@@ -671,6 +678,7 @@ export async function officeSettings(): Promise<OfficeSettings> {
     evolutionRoundsPerDay: state!.evolution_rounds_per_day,
     scoutsPerStrategyPerDay: state!.scouts_per_strategy_per_day,
     leadsPerDay: state!.leads_per_day,
+    scheduleHourUtc: state!.schedule_hour_utc ?? 0,
     providers: {
       model:
         c.MODEL_PROVIDER === 'ollama'
@@ -681,9 +689,14 @@ export async function officeSettings(): Promise<OfficeSettings> {
               ? c.OPENROUTER_MODEL
               : c.MODEL_PROVIDER === 'yandex'
                 ? c.YANDEX_MODEL
-                : 'Демо без модели',
-      search: c.SEARCH_PROVIDER,
-      payment: c.PAYMENT_MODE,
+                : 'Демо (модель не подключена)',
+      search: searchLabels[c.SEARCH_PROVIDER] ?? c.SEARCH_PROVIDER,
+      payment:
+        c.PAYMENT_MODE === 'sepolia'
+          ? c.SEPOLIA_LOCAL_NODE
+            ? 'Тестовый ETH (локальная сеть)'
+            : 'Тестовый ETH (Sepolia)'
+          : 'Тестовая кнопка',
     },
     limits: { dailyKopecks: c.DAILY_BUDGET_KOPECKS, monthlyKopecks: c.MONTHLY_BUDGET_KOPECKS },
     researchEnabled: state!.research_enabled,

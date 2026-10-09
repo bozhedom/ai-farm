@@ -22,7 +22,7 @@ const mode = computed<OfficeMode | undefined>(
   () => overview.value?.mode || (s.value?.mode as OfficeMode | undefined),
 )
 
-type Form = Required<OfficeSettingsUpdate>
+type Form = Required<Omit<OfficeSettingsUpdate, 'scheduleHourUtc'>>
 const form = reactive<Form>({
   evolutionEnabled: true,
   evolutionMinIdeas: 6,
@@ -57,7 +57,13 @@ const fields: {
     min: 2,
     max: 50,
   },
-  { key: 'evolutionRoundsPerDay', label: 'Отборов в день', hint: 'не чаще', min: 1, max: 10 },
+  {
+    key: 'evolutionRoundsPerDay',
+    label: 'Отборов в день',
+    hint: 'сколько раз в день можно проводить отбор',
+    min: 1,
+    max: 10,
+  },
   {
     key: 'scoutsPerStrategyPerDay',
     label: 'Разведок на агента в день',
@@ -95,6 +101,34 @@ function toggleSchedule() {
     'schedule',
     () => officeApi.setSchedule(next),
     next ? 'Расписание включено.' : 'Расписание выключено. Запускайте поиск вручную.',
+  )
+}
+// The hour is stored in UTC; the owner picks it in the browser's local time.
+const hourOptions = computed(() => {
+  const base = new Date()
+  return Array.from({ length: 21 }, (_, utc) => {
+    const at = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), utc))
+    return {
+      utc,
+      local: at.getHours(),
+      label: `${String(at.getHours()).padStart(2, '0')}:00`,
+    }
+  }).sort((a, b) => a.local - b.local)
+})
+const zoneName = computed(() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+  } catch {
+    return ''
+  }
+})
+function setHour(event: Event) {
+  const value = Number((event.target as HTMLSelectElement).value)
+  if (!Number.isInteger(value)) return
+  void run(
+    'hour',
+    () => officeApi.saveSettings({ scheduleHourUtc: value }),
+    'Час запуска сохранён.',
   )
 }
 function setScope(event: Event) {
@@ -144,7 +178,6 @@ onMounted(() => {
         <h1>Настройки</h1>
         <p>Режим, расписание, отбор и лимиты.</p>
       </div>
-      <OfficeModeControls :mode="mode" stop-label="Остановить всё" />
     </div>
 
     <OfficeState v-if="!s" :status="status" :pending="pending" @retry="refresh" />
@@ -154,11 +187,14 @@ onMounted(() => {
           <h2 id="mode-title">Режим</h2>
           <OfficeBadge v-if="mode" :badge="modeBadge[mode]" />
         </div>
-        <ul class="plain-list">
-          <li><strong>Пауза.</strong> Новые поиски ждут, начатые заказы доделываем.</li>
-          <li><strong>Остановить всё.</strong> Новые обращения к модели не уходят.</li>
-          <li><strong>Продолжить.</strong> Ферма снова работает по расписанию.</li>
-        </ul>
+        <OfficeModeControls :mode="mode" stop-label="Остановить всё" />
+        <p class="small muted mode-hint">
+          {{
+            mode === 'running'
+              ? 'Пауза: новые поиски ждут, начатые заказы доделываем. Остановить всё: к модели больше не обращаемся.'
+              : 'Продолжить: ферма снова работает по расписанию.'
+          }}
+        </p>
       </section>
 
       <section class="card rise" aria-labelledby="schedule-title">
@@ -185,6 +221,19 @@ onMounted(() => {
             :disabled="!!busy"
             @click="toggleSchedule"
           />
+        </div>
+        <div class="field">
+          <label for="hour">Час ежедневного запуска</label>
+          <select
+            id="hour"
+            class="select"
+            :value="s.scheduleHourUtc ?? 0"
+            :disabled="!!busy"
+            @change="setHour"
+          >
+            <option v-for="h in hourOptions" :key="h.utc" :value="h.utc">{{ h.label }}</option>
+          </select>
+          <span class="hint">По вашему времени{{ zoneName ? ` (${zoneName})` : '' }}</span>
         </div>
         <div class="field">
           <label for="scope">Сборка продуктов</label>
@@ -263,7 +312,9 @@ onMounted(() => {
             <dd class="num">{{ rub(s.limits.monthlyKopecks) }}</dd>
           </div>
         </dl>
-        <p class="small muted">Меняются в настройках сервера. Модель их поменять не может.</p>
+        <p class="small muted">
+          Лимиты задаются в файле .env на сервере, чтобы модель не могла их поменять.
+        </p>
       </section>
 
       <section class="card rise" aria-labelledby="providers-title">
@@ -378,6 +429,12 @@ onMounted(() => {
   margin: 0;
   padding-left: 18px;
   line-height: 1.7;
+}
+.mode-hint {
+  margin-top: var(--s-3);
+}
+.field + .field {
+  margin-top: var(--s-3);
 }
 .switch-row {
   display: flex;

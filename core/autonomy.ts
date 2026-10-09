@@ -34,6 +34,22 @@ export async function setResearchScope(scope: 'rotate' | 'all') {
   })
 }
 
+/**
+ * When the next daily run may start: right away, later today at the owner's hour, or tomorrow at
+ * that hour once today's run exists. The hour is UTC; the office shows it in local time.
+ */
+export function nextDailyRun(now: Date, hourUtc: number, ranToday: boolean) {
+  const at = (dayOffset: number) =>
+    new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + dayOffset, hourUtc),
+    ).toISOString()
+  if (ranToday) return at(1)
+  return now.getUTCHours() < hourUtc ? at(0) : now.toISOString()
+}
+
+/** The daily run waits for the owner's hour; the day key and limits stay per UTC day. */
+export const beforeDailyHour = (now: Date, hourUtc: number) => now.getUTCHours() < (hourUtc || 0)
+
 export async function setSchedule(enabled: boolean) {
   if (enabled && !config().AUTONOMY_ENABLED) throw new Error('SCHEDULE_DISABLED_ON_SERVER')
   return transaction(async (db) => {
@@ -53,6 +69,7 @@ export async function setSchedule(enabled: boolean) {
 type FarmState = Awaited<ReturnType<typeof lockResearchWindow>> & {
   scouts_per_strategy_per_day: number
   leads_per_day: number
+  schedule_hour_utc: number
 }
 
 /**
@@ -73,7 +90,8 @@ export async function scheduleWork(now = new Date()) {
       !config().AUTONOMY_ENABLED ||
       !state?.schedule_enabled ||
       state.mode !== 'running' ||
-      !state.research_enabled
+      !state.research_enabled ||
+      beforeDailyHour(now, state.schedule_hour_utc)
     )
       return
     await scheduleResearch(db, state, now)
@@ -379,6 +397,7 @@ export const farmSettingsSchema = z
     evolutionRoundsPerDay: z.number().int().min(0).max(24).optional(),
     scoutsPerStrategyPerDay: z.number().int().min(0).max(6).optional(),
     leadsPerDay: z.number().int().min(0).max(12).optional(),
+    scheduleHourUtc: z.number().int().min(0).max(20).optional(),
   })
   .strict()
 
@@ -391,6 +410,7 @@ export async function updateFarmSettings(value: unknown) {
     ['evolutionRoundsPerDay', 'evolution_rounds_per_day'],
     ['scoutsPerStrategyPerDay', 'scouts_per_strategy_per_day'],
     ['leadsPerDay', 'leads_per_day'],
+    ['scheduleHourUtc', 'schedule_hour_utc'],
   ]
   const changes = columns.filter(([key]) => input[key] !== undefined)
   if (!changes.length) return input
@@ -417,6 +437,7 @@ export type AutonomyState = {
   mode: string
   research_enabled: boolean
   schedule_enabled: boolean
+  schedule_hour_utc?: number
   research_scope: 'rotate' | 'all'
   worker_heartbeat: Date | null
   provider_readiness: { model: boolean; search: boolean; checkedAt: string } | null
@@ -503,14 +524,12 @@ export async function autonomyStatus(
     reason =
       'Доступного бюджета недостаточно для нового исследования. Резервы и прежние расходы сохранены.'
   else {
-    nextAt = today.length
-      ? new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
-        ).toISOString()
-      : now.toISOString()
+    nextAt = nextDailyRun(now, state.schedule_hour_utc ?? 0, today.length > 0)
     reason = today.length
       ? 'Сегодня автоматическое исследование уже запускалось. Ожидаем следующего дня.'
-      : 'Исследование будет поставлено в ближайшем цикле обработчика.'
+      : beforeDailyHour(now, state.schedule_hour_utc ?? 0)
+        ? 'Исследование начнётся в назначенный час запуска.'
+        : 'Исследование будет поставлено в ближайшем цикле обработчика.'
   }
   return {
     operations,

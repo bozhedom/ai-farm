@@ -3,7 +3,8 @@ import { pool, query } from '../../core/db'
 import * as settings from '../../core/config'
 import { claimJob, enqueue, expireResearchSlots, finishJob, type Job } from '../../core/queue'
 import { runJob } from '../../core/jobs/run'
-import { scheduleWork, requestScout } from '../../core/autonomy'
+import { nextDailyRun, requestScout, scheduleWork, updateFarmSettings } from '../../core/autonomy'
+import { officeOverview, officeSettings } from '../../core/office'
 import { publicCatalog } from '../../core/public-catalog'
 import { priceList } from '../../core/storefront'
 import { taxonomyTopics } from '../../core/taxonomy'
@@ -128,6 +129,27 @@ describe('farm day in demo mode', () => {
     const jobs = (await query('SELECT count(*)::int AS n FROM jobs'))[0]!.n
     await scheduleWork(now)
     expect((await query('SELECT count(*)::int AS n FROM jobs'))[0]!.n).toBe(jobs)
+  })
+
+  it('starts the daily run at the owner hour (UTC) and not before', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
+    const today = new Date()
+    const at = (hour: number) =>
+      new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), hour))
+    await updateFarmSettings({ scheduleHourUtc: 9 })
+    expect((await officeSettings()).scheduleHourUtc).toBe(9)
+    await expect(updateFarmSettings({ scheduleHourUtc: 23 })).rejects.toThrow()
+    await scheduleWork(at(8))
+    expect(
+      await query("SELECT id FROM jobs WHERE kind IN ('scout','research','lead')"),
+    ).toHaveLength(0)
+    expect(nextDailyRun(at(8), 9, false)).toBe(at(9).toISOString())
+    await scheduleWork(at(9))
+    expect(await query("SELECT id FROM jobs WHERE kind='scout'")).toHaveLength(4)
+    expect(nextDailyRun(at(10), 9, true)).toBe(new Date(at(9).getTime() + 86400000).toISOString())
+    expect(nextDailyRun(at(10), 9, false)).toBe(at(10).toISOString())
+    const overview = await officeOverview(at(10))
+    expect(overview.worker.nextAt === null || typeof overview.worker.nextAt === 'string').toBe(true)
   })
 
   it('keeps scheduled farm work idle while paused, stopped or with the schedule off', async () => {
