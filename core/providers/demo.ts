@@ -11,6 +11,13 @@ import { serviceByTemplate, serviceCatalog } from '../service-catalog'
 import { defaultPriceKopecks, formatRub, priceIdFor, type PriceId } from '../storefront'
 import { taxonomyTopics, type TaxonomyTopic } from '../taxonomy'
 
+const ideasWord = (n: number) =>
+  n % 10 === 1 && n % 100 !== 11
+    ? 'идея'
+    : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)
+      ? 'идеи'
+      : 'идей'
+
 const originalNames: Partial<Record<Template, string>> = {
   description: 'Карточка без лишних слов',
   faq: 'Ответы до первого вопроса',
@@ -29,13 +36,16 @@ export const demoSpecs: Record<Template, ProductSpec> = Object.fromEntries(
   ]),
 ) as Record<Template, ProductSpec>
 
+/** First line of every demo order text: the text was put together without a model. */
+export const demoMarker = 'Демонстрация: текст собран по шаблону, без вызова модели.'
+
 export function demoResult(template: Template, input: string) {
   const raw = input.trim().slice(0, 3500)
-  const marker = 'ДЕМОНСТРАЦИЯ · шаблонная сборка без вызова модели'
+  const marker = demoMarker
   if (template === 'description')
-    return `ДЕМОНСТРАЦИЯ · шаблонная сборка без вызова модели\n\nОписание товара\n- ${raw}\n\nПеред публикацией уточните отсутствующие характеристики. Новые свойства и гарантии не добавлены.`
+    return `${marker}\n\nОписание товара\n- ${raw}\n\nПеред публикацией уточните отсутствующие характеристики. Новые свойства и гарантии не добавлены.`
   if (template === 'faq')
-    return `ДЕМОНСТРАЦИЯ · шаблонная сборка без вызова модели\n\nЧто известно об услуге?\n${raw}\n\nЧто уточнить перед заказом?\nСроки, итоговый состав услуги и ограничения, если их нет в исходном материале.`
+    return `${marker}\n\nЧто известно об услуге?\n${raw}\n\nЧто уточнить перед заказом?\nСроки, итоговый состав услуги и ограничения, если их нет в исходном материале.`
   if (template === 'social')
     return `${marker}\n\nЧерновик 1. Знакомство\n${raw}\n\nЧерновик 2. Основные сведения\n${raw}\n\nЧерновик 3. Перед обращением\nУточните необходимые детали по исходному материалу. Неуказанные свойства не добавлены.`
   if (template === 'proofreading')
@@ -124,7 +134,7 @@ export function demoIdea(args: {
     audience: topic.audience,
     problem: angle.problem,
     demandSignals: signals.map((item) => ({
-      claim: `Демо-пример: ${item.title.replace(/^Демо-источник: /, '')}`.slice(0, 300),
+      claim: `Пример из демо-данных: ${item.title.replace(/^Демо-источник: /, '')}`.slice(0, 300),
       url: item.url,
     })),
     competitors: ['Исполнители на биржах фриланса', 'Бесплатные шаблоны из поиска'],
@@ -148,7 +158,7 @@ export function demoIdea(args: {
           'Разместить объявление в районе и собрать первые заявки.',
           'Через неделю сравнить заявки и расходы.',
         ],
-    uncertainties: ['Демо-данные: спрос, цены и конкуренты не проверены.'],
+    uncertainties: ['Демо-данные. Спрос, цены и конкуренты не проверены.'],
   }
 }
 
@@ -189,10 +199,7 @@ export function demoProductOffer(
       headline: idea?.title ?? service.label,
       forWhom: [idea?.audience ?? service.audience],
       youGet: [service.delivery, 'Готовый текст за несколько минут.', 'Файл .txt для скачивания.'],
-      limits: [
-        'Пишем только по фактам из вашего текста.',
-        'Не берём темы, где нужен врач или юрист.',
-      ],
+      limits: ['Пишем только по вашим фактам, без выдумок.'],
     },
   }
 }
@@ -202,9 +209,10 @@ export function demoReport(
   ranking: { ideaId: string; title: string; status: string }[],
 ): ReportNarrative {
   const top = ranking.slice(0, 3)
+  const ideas = metrics.ideas ?? 0
   return {
-    headline: `Демо-отчёт: ${metrics.ideas ?? 0} идей, ${metrics.accepted ?? 0} в работу`,
-    summary: `Демо-отчёт без вызова модели. Разведчики принесли ${metrics.ideas ?? 0} идей, критик принял ${metrics.passed ?? 0}. Ферма может сделать сама ${metrics.accepted ?? 0}, ещё ${metrics.needsHuman ?? 0} требуют человека.`,
+    headline: `${ideas} ${ideasWord(ideas)}, ${metrics.accepted ?? 0} в работу`,
+    summary: `Демо-отчёт собран по цифрам, без вызова модели. Разведчики принесли ${metrics.ideas ?? 0} идей, критик принял ${metrics.passed ?? 0}. Ферма может сделать сама ${metrics.accepted ?? 0}, ещё ${metrics.needsHuman ?? 0} требуют человека.`,
     ideaComments: top.map((item) => ({
       ideaId: item.ideaId,
       comment:

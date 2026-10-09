@@ -52,7 +52,8 @@ describe('manager report', () => {
   it('builds an explicit demo report that passes the same schema', () => {
     const value = demoReport({ ideas: 4, passed: 2, accepted: 1, needsHuman: 1 }, ranking)
     expect(reportSchemaFor(ranking.map((r) => r.ideaId)).parse(value)).toEqual(value)
-    expect(value.summary).toMatch(/^Демо-отчёт без вызова модели/)
+    expect(value.summary).toMatch(/^Демо-отчёт собран по цифрам, без вызова модели/)
+    expect(value.headline).toBe('4 идеи, 1 в работу')
     expect(JSON.stringify(value)).not.toMatch(/[—→]/)
   })
 

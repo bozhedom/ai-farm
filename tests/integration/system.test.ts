@@ -504,7 +504,7 @@ describe('durable autonomous pipeline', () => {
     await runJob(job)
     const [saved] = await query('SELECT * FROM orders WHERE id=$1', [created.id])
     expect(saved!.status).toBe('delivered')
-    expect(saved!.result).toContain('ДЕМОНСТРАЦИЯ')
+    expect(saved!.result).toMatch(/^Демонстрация: /)
     expect(await query("SELECT id FROM audit_events WHERE kind='order_delivered'")).toHaveLength(1)
     expect((await budgetSummary()).outstanding).toBe(0)
     await evaluateWeek('week-1')

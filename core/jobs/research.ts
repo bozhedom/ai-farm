@@ -207,7 +207,7 @@ export async function research(job: Job) {
       demoValue: {
         verdict: 'PASS',
         reason:
-          'Допустим тестовый эксперимент. Есть бесплатные альтернативы; спрос остаётся непроверенным.',
+          'Можно проверить на сайте: спрос пока не подтверждён, есть бесплатные альтернативы.',
       },
     })
     if (idea.estimatedCostRub > config().ORDER_RESERVE_KOPECKS / 100)
