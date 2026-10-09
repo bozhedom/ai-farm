@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { config } from './config'
+import { isDemoStand } from './stand'
 import { audit, query, transaction, type Connection } from './db'
 import { enqueue } from './queue'
 import {
@@ -273,10 +274,11 @@ async function scheduleFarm(db: Connection, state: FarmState, now: Date, weekNum
   if (room) {
     const products = await query(
       `SELECT p.id FROM products p WHERE p.status='sandbox' AND p.visibility='public'
+       AND (NOT p.is_demo OR $3)
        AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.dedupe_key='lead:'||$1||':'||p.id::text)
        ORDER BY (SELECT max(j.created_at) FROM jobs j WHERE j.kind='lead' AND j.payload->>'productId'=p.id::text) NULLS FIRST,
          p.published_at,p.id LIMIT $2`,
-      [day, room],
+      [day, room, isDemoStand()],
       db,
     )
     for (const product of products)

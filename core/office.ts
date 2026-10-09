@@ -83,7 +83,8 @@ export async function officeOverview(now = new Date()): Promise<OfficeOverview> 
         `SELECT
           (SELECT count(*)::int FROM ideas) AS ideas,
           (SELECT count(*)::int FROM products WHERE status='sandbox') AS products,
-          (SELECT count(*)::int FROM products WHERE status='sandbox' AND visibility='public') AS public_products,
+          (SELECT count(*)::int FROM products WHERE status='sandbox' AND visibility='public'
+             AND (NOT is_demo OR ${config().MODEL_PROVIDER === 'demo'})) AS public_products,
           (SELECT count(*)::int FROM orders) AS orders,
           (SELECT COALESCE(sum(revenue_kopecks),0)::int FROM orders) AS revenue,
           (SELECT count(*)::int FROM orders WHERE paid_at IS NOT NULL AND is_test_payment) AS test_payments,
@@ -892,9 +893,10 @@ export async function requestLeadSearch(now = new Date()) {
       `SELECT p.id,
          (SELECT count(*)::int FROM jobs j WHERE j.dedupe_key LIKE 'lead:'||$1||':'||p.id::text||'%') AS today
        FROM products p WHERE p.status='sandbox' AND p.visibility='public'
+       AND (NOT p.is_demo OR $2)
        ORDER BY (SELECT max(j.created_at) FROM jobs j WHERE j.kind='lead' AND j.payload->>'productId'=p.id::text) NULLS FIRST,
          p.published_at,p.id`,
-      [day],
+      [day, config().MODEL_PROVIDER === 'demo'],
       db,
     )
     if (!products.length) throw new Error('PRODUCT_NOT_PUBLIC')
