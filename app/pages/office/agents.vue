@@ -172,7 +172,8 @@ function evolve() {
       </button>
     </div>
     <p v-if="evolution && !evolution.ready" class="small muted evolve-why">
-      Отбор пока недоступен: {{ evolution.reason }}
+      Отбор пока недоступен:
+      {{ evolution.reason.charAt(0).toLowerCase() + evolution.reason.slice(1) }}
     </p>
 
     <OfficeState v-if="!data" :status="status" :pending="pending" :rows="4" @retry="refresh" />
