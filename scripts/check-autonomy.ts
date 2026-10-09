@@ -375,23 +375,29 @@ try {
   const healthy = await fixtureOrder('after-crash')
   await delivered(healthy.id)
   console.log('Waiting for the real two-minute lease to expire after SIGKILL…')
+  // A free local model costs nothing, so the call lost with the killed worker is retried once
+  // after its lease expires. Paid providers keep UNCERTAIN_CALL_REQUIRES_REVIEW (integration tests).
   const recovery = await waitFor(
     'CRASH_RECOVERY',
     async () => {
       const state = await orderState(crashed.id)
-      return state.status === 'manual_review' && state.job_status === 'failed' ? state : null
+      return state.status === 'delivered' && state.job_status === 'done' ? state : null
     },
-    145000,
+    200000,
   )
-  assert.equal(recovery.error_code, 'UNCERTAIN_CALL_REQUIRES_REVIEW')
-  assert.equal(recovery.result, null)
+  assert.equal(recovery.attempts, 2)
   assert.equal(recovery.reservation_status, 'closed')
-  assert.equal(requests.filter((r) => r.input === crashed.input).length, 1)
+  assert.equal(requests.filter((r) => r.input === crashed.input && r.role === 'generate').length, 2)
+  const [retried] = await query(
+    "SELECT count(*)::int AS n FROM audit_events WHERE kind='tool_call_retried'",
+  )
+  assert.ok(retried!.n >= 1)
   await stop(recovered)
+  await assertSingleDelivery(crashed.id)
   await assertSingleDelivery(healthy.id)
-  passed('sigkill_preserves_uncertainty_and_other_orders_continue', {
-    repeatedUnknownCalls: 0,
-    manualReviewOrders: 1,
+  passed('sigkill_retries_free_call_once_and_other_orders_continue', {
+    retriedFreeCalls: retried!.n,
+    crashedOrderDeliveries: 1,
     independentOrderDelivered: true,
   })
 
@@ -402,8 +408,8 @@ try {
        (SELECT count(*)::int FROM budget_reservations WHERE status='open') AS open_reservations,
        (SELECT count(*)::int FROM jobs WHERE status IN ('queued','running')) AS unfinished_jobs`,
   )
-  assert.equal(totals!.delivered, 15)
-  assert.equal(totals!.review, 1)
+  assert.equal(totals!.delivered, 16)
+  assert.equal(totals!.review, 0)
   assert.equal(totals!.charged, 0)
   assert.equal(totals!.open_reservations, 0)
   assert.equal(totals!.unfinished_jobs, 0)
