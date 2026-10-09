@@ -18,6 +18,13 @@ useHead({
   title: () => (service.value ? `${service.value.name}. AI Farm` : 'Услуга не найдена. AI Farm'),
 })
 
+// A long control example is folded; the buyer opens it with one button.
+const sampleOpen = ref(false)
+const sampleLong = computed(() => {
+  const output = service.value?.sample?.output || ''
+  return output.length > 900 || output.split('\n').length > 16
+})
+
 const text = ref('')
 const rights = ref(false)
 const tried = ref(false)
@@ -137,7 +144,22 @@ function useExample() {
                 </div>
                 <div>
                   <p class="eyebrow">Мы сделали</p>
-                  <div class="result-box small">{{ service.sample.output }}</div>
+                  <div
+                    id="sample-output"
+                    class="result-box small sample-output"
+                    :class="{ 'is-folded': sampleLong && !sampleOpen }"
+                    v-text="service.sample.output"
+                  />
+                  <button
+                    v-if="sampleLong"
+                    type="button"
+                    class="link-btn sample-toggle"
+                    aria-controls="sample-output"
+                    :aria-expanded="sampleOpen"
+                    @click="sampleOpen = !sampleOpen"
+                  >
+                    {{ sampleOpen ? 'Свернуть' : 'Показать полностью' }}
+                  </button>
                 </div>
               </div>
             </template>
@@ -276,6 +298,19 @@ function useExample() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--s-4);
+}
+.sample-output {
+  max-height: none;
+  overflow: visible;
+}
+.sample-output.is-folded {
+  max-height: 320px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.sample-toggle {
+  margin-top: 8px;
 }
 .order-card {
   position: sticky;

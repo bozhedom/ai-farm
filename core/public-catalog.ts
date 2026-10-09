@@ -150,6 +150,28 @@ export function ownHeadline(headline: string | undefined, repeats: unknown[]) {
     : headline
 }
 
+/**
+ * A long text cut for a page: at the last paragraph end, else the last sentence end, else the
+ * last space before `max`, with «…». Never in the middle of a word or a line.
+ */
+export function clipText(text: string, max: number) {
+  const value = text.trim()
+  if (value.length <= max) return value
+  const head = value.slice(0, max)
+  const paragraph = head.lastIndexOf('\n\n')
+  if (paragraph >= max * 0.5) return `${head.slice(0, paragraph).trimEnd()}\n\n…`
+  const line = head.lastIndexOf('\n')
+  const sentence = Math.max(-1, ...[...head.matchAll(/[.!?…](?=\s)/gu)].map((m) => m.index! + 1))
+  if (line >= max * 0.5 && line >= sentence) return `${head.slice(0, line).trimEnd()}\n…`
+  if (sentence >= max * 0.5) return `${head.slice(0, sentence)} …`
+  const space = head.lastIndexOf(' ')
+  return `${head.slice(0, space > 0 ? space : max).trimEnd()}…`
+}
+
+/** Room for a whole control example; the page folds a long one. */
+export const sampleInputMax = 2000
+export const sampleOutputMax = 6000
+
 /** Buyer view of one stored product: catalog projection plus buyer wording and checked sample. */
 export function buyerService(row: ProductRow): PublicService | null {
   const template = row.template as ServiceTemplate
@@ -172,7 +194,10 @@ export function buyerService(row: ProductRow): PublicService | null {
     typeof checks.input === 'string' &&
     typeof checks.sample === 'string' &&
     !/[<>]/.test(checks.input + checks.sample)
-      ? { input: checks.input.slice(0, 1200), output: checks.sample.slice(0, 2400) }
+      ? {
+          input: clipText(checks.input, sampleInputMax),
+          output: clipText(checks.sample, sampleOutputMax),
+        }
       : undefined
   return {
     ...base,

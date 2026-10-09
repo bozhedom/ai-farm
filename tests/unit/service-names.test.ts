@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { serviceByTemplate, serviceTemplates } from '../../core/service-catalog'
-import { buyerCopy, ownHeadline } from '../../core/public-catalog'
+import { buyerCopy, clipText, ownHeadline } from '../../core/public-catalog'
 import { orderTitle, serviceName, serviceNames } from '../../core/service-names'
 
 describe('one name per service', () => {
@@ -39,5 +39,22 @@ describe('storefront promise', () => {
     )
     expect(ownHeadline('x'.repeat(60), [])).toBeNull()
     expect(ownHeadline(undefined, [])).toBeNull()
+  })
+})
+
+describe('control example on the service page', () => {
+  it('cuts a long text at a paragraph or sentence end, never mid-line', () => {
+    expect(clipText('Коротко.', 100)).toBe('Коротко.')
+    const paragraphs = `${'Первый абзац. '.repeat(5).trim()}\n\n${'Второй абзац. '.repeat(5).trim()}`
+    expect(clipText(paragraphs, paragraphs.length - 5)).toBe(
+      `${'Первый абзац. '.repeat(5).trim()}\n\n…`,
+    )
+    const lines = Array.from({ length: 10 }, (_, i) => `- пункт номер ${i + 1}`).join('\n')
+    const clipped = clipText(lines, 100)
+    expect(clipped.endsWith('\n…')).toBe(true)
+    expect(lines.startsWith(clipped.slice(0, -2))).toBe(true)
+    const sentences = 'Раз два три. '.repeat(20).trim()
+    expect(clipText(sentences, 50)).toMatch(/три\. …$/)
+    expect(clipText('слово '.repeat(40).trim(), 50)).toMatch(/слово…$/)
   })
 })
