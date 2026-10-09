@@ -83,6 +83,41 @@ export async function closeReservation(id: string, db: Connection = pool) {
   await query("UPDATE budget_reservations SET status='closed' WHERE id=$1", [id], db)
 }
 
+/** Providers that never charge: the zero price is enforced per call (OpenRouter) or local. */
+export const freeProviders: readonly string[] = ['openrouter', 'ollama']
+/** Failures that need a person even at a zero price: billing, policy and refusals. */
+const reviewOnly = /COST|POLICY|BYOK|FREE_MODEL|REFUSED|CONTENT|BUDGET/
+/** A pending call without a heartbeat this long belongs to a worker that is gone (job lease). */
+export const abandonedCallMs = 2 * 60 * 1000
+
+/**
+ * An interrupted call of a free provider may be sent again: nothing was or can be charged, so
+ * repeating it only spends time. Paid providers keep UNCERTAIN_CALL_REQUIRES_REVIEW: a second
+ * request could charge twice.
+ */
+export function freeRetryAllowed(
+  old: Record<string, any>,
+  provider: string | undefined,
+  maximum: number,
+  maximumUsd: number,
+  now = Date.now(),
+) {
+  if (!provider || !freeProviders.includes(provider) || old.provider !== provider) return false
+  if (maximum !== 0 || maximumUsd !== 0) return false
+  if (
+    Number(old.charged_kopecks ?? 0) !== 0 ||
+    Number(old.charged_microusd ?? 0) !== 0 ||
+    Number(old.actual_microusd ?? 0) !== 0
+  )
+    return false
+  if (old.error_code && reviewOnly.test(old.error_code)) return false
+  if (old.status === 'uncertain') return 'retry'
+  if (old.status !== 'pending') return false
+  return now - new Date(old.heartbeat_at ?? old.created_at).getTime() > abandonedCallMs
+    ? 'retry'
+    : 'wait'
+}
+
 /** A call is charged pessimistically before sending. Ambiguous failures retain that charge. */
 export async function meteredCall<T>(args: {
   key: string
@@ -117,7 +152,24 @@ export async function meteredCall<T>(args: {
         throw new Error('PROVIDER_CHANGED_DURING_JOB')
       return { cached: true as const, value: old.output as T }
     }
-    if (old) throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    if (old) {
+      const retry = freeRetryAllowed(old, args.activity?.provider, args.maximum, maximumUsd)
+      if (!retry) throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
+      // A free call that may still be answering: the job comes back after a short pause.
+      if (retry === 'wait') throw new Error('FREE_CALL_STILL_RUNNING')
+      // The record of the interrupted call stays, under a retired key; the retry takes the key.
+      await query(
+        `UPDATE tool_calls SET call_key=call_key||':retired:'||id::text WHERE id=$1`,
+        [old.id],
+        db,
+      )
+      await audit(
+        'tool_call_retried',
+        'Вызов бесплатной модели прервался без ответа. Повторяем его: деньги не тратятся.',
+        { role: args.role, callId: old.id, provider: old.provider, errorCode: old.error_code },
+        db,
+      )
+    }
     checkWorkerDrain()
     const state = await lockResearchWindow(db)
     const [reservation] = await query(

@@ -2536,7 +2536,7 @@ describe('free OpenRouter accounting', () => {
     expect(results.some((result) => result.status === 'fulfilled')).toBe(true)
     for (const result of results)
       if (result.status === 'rejected')
-        expect(result.reason.message).toBe('UNCERTAIN_CALL_REQUIRES_REVIEW')
+        expect(result.reason.message).toBe('FREE_CALL_STILL_RUNNING')
     expect(await providers.model(call)).toEqual({ text: 'checked' })
     expect(fetch).toHaveBeenCalledOnce()
     expect(

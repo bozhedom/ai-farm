@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { templateSchema, type Template } from './policy'
 import { config } from './config'
-import { budgetSummary, reserveBudget, reserveFor, type BudgetCategory } from './budget'
+import {
+  budgetSummary,
+  freeProviders,
+  reserveBudget,
+  reserveFor,
+  type BudgetCategory,
+} from './budget'
 import { WorkerDraining } from './activity'
 import { lockResearchWindow } from './research-window'
 
@@ -197,8 +203,12 @@ export async function finishJob(job: Job, error?: unknown) {
             SELECT id FROM budget_reservations WHERE dedupe_key=$2
             UNION SELECT reservation_id FROM orders WHERE id::text=$3
           )
-        ) LIMIT 1`,
-        [job.id, `${job.kind}:${job.id}`, job.payload.orderId || ''],
+        ) AND NOT (COALESCE(provider,'')=ANY($4) AND charged_kopecks=0 AND COALESCE(charged_microusd,0)=0
+          AND COALESCE(actual_microusd,0)=0
+          AND COALESCE(error_code,'') !~ 'COST|POLICY|BYOK|FREE_MODEL|REFUSED|CONTENT|BUDGET')
+        LIMIT 1`,
+        // Free providers charge nothing: their interrupted calls are repeated, not reviewed.
+        [job.id, `${job.kind}:${job.id}`, job.payload.orderId || '', freeProviders],
         db,
       )
       if (!unresolved.length) {
@@ -316,14 +326,18 @@ export async function expireResearchSlots(day: string) {
         db,
       )
     }
-    // Scheduled scouting and lead slots of past days do not pile up after a pause either.
+    // Scouting and lead slots of past days do not pile up after a pause either: scheduled ones
+    // by the day in their key, the owner's "find ideas now" scouts by the day they were asked
+    // for (like manual research above). The owner can press the button again today.
     const farm = await query(
       `UPDATE jobs SET status='failed',error_code='FARM_SLOT_EXPIRED',finished_at=now()
       WHERE kind IN ('scout','lead') AND status='queued' AND started_at IS NULL
       AND COALESCE(error_code,'')<>'FARM_DAILY_BUDGET_WAIT'
-      AND dedupe_key ~ '^(scout|lead):[0-9]{4}-[0-9]{2}-[0-9]{2}:'
-      AND substr(dedupe_key, strpos(dedupe_key, ':')+1, 10)<$1
-      RETURNING id,kind`,
+      AND ((dedupe_key ~ '^(scout|lead):[0-9]{4}-[0-9]{2}-[0-9]{2}:'
+        AND substr(dedupe_key, strpos(dedupe_key, ':')+1, 10)<$1)
+        OR (dedupe_key LIKE 'scout-manual:%'
+          AND created_at < ($1::date::timestamp AT TIME ZONE 'UTC')))
+      RETURNING id,kind,dedupe_key`,
       [day],
       db,
     )
@@ -340,5 +354,23 @@ export async function expireResearchSlots(day: string) {
         { jobIds: farm.map((job) => job.id) },
         db,
       )
+    // A manual batch whose last scout expired still gets its report: ideas the earlier scouts
+    // found are ranked and the best go to research.
+    const manual = farm.find((job) => String(job.dedupe_key).startsWith('scout-manual:'))
+    if (
+      manual &&
+      !(
+        await query(
+          `SELECT id FROM jobs WHERE kind='scout' AND dedupe_key LIKE 'scout-manual:%'
+           AND status IN ('queued','running') LIMIT 1`,
+          [],
+          db,
+        )
+      ).length &&
+      (await query('SELECT id FROM ideas WHERE ranked_at IS NULL LIMIT 1', [], db)).length
+    ) {
+      const reportKey = `report:after-scouts:${manual.id}`
+      await enqueue('report', reportKey, { kind: 'daily', reportKey }, db)
+    }
   })
 }
