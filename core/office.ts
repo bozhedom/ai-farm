@@ -501,7 +501,11 @@ export async function officeAgents(): Promise<OfficeAgents> {
         costKopecks: m?.costKopecks ?? 0,
       },
       score: live
-        ? { total: live.total, components: live.components }
+        ? {
+            total: live.total,
+            components: live.components,
+            lowData: (m?.ideas ?? 0) < evolution.minIdeas,
+          }
         : stored
           ? { total: stored.score, components: stored.components }
           : null,

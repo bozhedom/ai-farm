@@ -115,6 +115,7 @@ const team = computed(() => {
     avatar: agentAvatar(agent, list.indexOf(agent)),
     badge: agentBadge(agent),
     score: score100(agent.score?.total),
+    lowData: agent.status === 'active' && !!agent.score?.lowData,
   }))
 })
 
@@ -302,7 +303,11 @@ const subtitle = computed(() => {
                     {{ row.agent.name }}
                     <span class="muted xs">пок. {{ row.agent.generation }}</span>
                   </div>
-                  <OfficeScore :value="row.score" :muted="row.agent.status === 'archived'" />
+                  <OfficeScore
+                    :value="row.score"
+                    :muted="row.agent.status === 'archived'"
+                    :low-data="row.lowData"
+                  />
                 </div>
                 <OfficeBadge :badge="row.badge" />
               </div>
@@ -312,7 +317,7 @@ const subtitle = computed(() => {
               <span class="small muted">{{
                 agents.evolution.ready ? 'Можно провести отбор' : agents.evolution.reason
               }}</span>
-              <NuxtLink class="small" to="/office/agents">Как считается балл</NuxtLink>
+              <NuxtLink class="small" to="/office/agents#score">Как считается балл</NuxtLink>
             </div>
           </section>
 

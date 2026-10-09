@@ -100,11 +100,26 @@ const roundSummary = computed(() => {
   }))
   return { round, fired, copied }
 })
-const missingText = computed(() =>
-  (evolution.value?.missing || []).map(
+const missingText = computed(() => {
+  const missing = evolution.value?.missing || []
+  if (!missing.length) return []
+  const need = missing[0]!.need
+  // One line when everyone is short by the same number.
+  if (missing.length > 1 && missing.every((m) => m.need === need))
+    return [`Каждому не хватает ${withCount(need, ['идеи', 'идей', 'идей'])} до отбора.`]
+  return missing.map(
     (m) => `${nameOf(m.agentId)}: не хватает ${withCount(m.need, ['идеи', 'идей', 'идей'])}`,
-  ),
-)
+  )
+})
+const roundsLine = computed(() => {
+  const e = evolution.value
+  if (!e || !e.roundsToday) return ''
+  return e.roundsToday >= e.roundsPerDay
+    ? 'Сегодня отбор уже был. Следующий возможен завтра.'
+    : `Сегодня отборов: ${e.roundsToday} из ${e.roundsPerDay}.`
+})
+const hasDemo = computed(() => !!data.value?.rounds.some((r) => r.isDemo))
+const lowData = (agent: OfficeAgent) => agent.status === 'active' && !!agent.score?.lowData
 function evolve() {
   void run('evolve', () => officeApi.evolve(), 'Отбор запущен. Результат появится здесь.')
 }
@@ -117,6 +132,7 @@ function evolve() {
         <p>
           Поколение {{ data?.generation ?? 1 }}. Лучшие разведчики получают копию, худшие уходят в
           архив.
+          <span v-if="hasDemo" class="badge badge-plain demo-note">Данные демо-провайдера</span>
         </p>
       </div>
       <button
@@ -186,7 +202,7 @@ function evolve() {
           </div>
         </div>
         <div class="rules">
-          <div>
+          <div id="score">
             <b>Балл разведчика</b>Доля принятых идей, качество источников, повторы и цена идеи.
             Когда пойдут продажи, добавятся заказы.
           </div>
@@ -206,7 +222,6 @@ function evolve() {
           <template v-if="roundSummary">
             <p class="muted small round-when">
               Поколение {{ roundSummary.round.generation }}, {{ day(roundSummary.round.at) }}
-              <span v-if="roundSummary.round.isDemo" class="badge">Демо</span>
             </p>
             <template v-if="roundSummary.round.decision === 'ROTATED'">
               <p v-if="roundSummary.fired.length">
@@ -236,9 +251,7 @@ function evolve() {
             <ul v-if="missingText.length" class="missing">
               <li v-for="line in missingText" :key="line">{{ line }}</li>
             </ul>
-            <p class="small muted">
-              Сегодня отборов: {{ evolution.roundsToday }} из {{ evolution.roundsPerDay }}.
-            </p>
+            <p v-if="roundsLine" class="small muted">{{ roundsLine }}</p>
           </template>
           <p class="money-line">
             <strong>Отбор по выручке:</strong>
@@ -273,7 +286,7 @@ function evolve() {
             </thead>
             <tbody>
               <template v-for="agent in scouts" :key="agent.id">
-                <tr :class="{ 'is-off': agent.status === 'archived' }">
+                <tr :id="`agent-${agent.id}`" :class="{ 'is-off': agent.status === 'archived' }">
                   <td data-full>
                     <div class="agent agent-cell">
                       <span class="avatar" :class="agentAvatar(agent, indexOf(agent))">{{
@@ -297,6 +310,7 @@ function evolve() {
                       <OfficeScore
                         :value="score100(agent.score?.total)"
                         :muted="agent.status === 'archived'"
+                        :low-data="lowData(agent)"
                       />
                       <OfficeIcon name="chevron" size="sm" class="chev" />
                     </button>
@@ -385,6 +399,14 @@ function evolve() {
   </div>
 </template>
 <style scoped>
+.demo-note {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+#score,
+tr[id^='agent-'] {
+  scroll-margin-top: 80px;
+}
 .stats {
   margin-bottom: var(--s-5);
 }

@@ -186,6 +186,10 @@ describe('owner office API', () => {
       'Разведчик Г',
     ])
     expect(team.json.evolution).toMatchObject({ enabled: true, minIdeas: 6, ready: false })
+    // One idea each is below the threshold: the office shows «Мало данных», not a verdict.
+    const scored = team.json.agents.filter((a: any) => a.score)
+    expect(scored.length).toBeGreaterThan(0)
+    expect(scored.every((a: any) => a.score.lowData === true)).toBe(true)
     const check = await call('POST', '/api/office/agents/evolve', session, {})
     expect(check.json.reused).toBe(false)
 

@@ -141,7 +141,15 @@ export type OfficeAgent = {
     review: number
     costKopecks: number
   }
-  score: { total: number; components: Record<ScoreComponent, number | null> } | null
+  score: {
+    total: number
+    components: Record<ScoreComponent, number | null>
+    /**
+     * Added by the UX pass: fewer ideas than the selection threshold. The score still counts in
+     * selection (formula unchanged), but people see «Мало данных» instead of the number.
+     */
+    lowData?: boolean
+  } | null
   retired: { at: string; reason: string; roundId: string } | null
 }
 export type EvolutionStatus = {
