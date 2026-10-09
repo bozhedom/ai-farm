@@ -172,6 +172,9 @@ export const scoreTone = (value: number) => (value >= 80 ? 'is-sun' : value < 50
 /** Colour of a feed event. Kinds come from the server; unknown kinds stay neutral. */
 export function feedTone(kind: string, text = ''): Tone {
   const k = `${kind} ${text}`.toLowerCase()
+  // A critic verdict is coloured by the verdict, not by the word «review» in the kind.
+  if (kind === 'idea_reviewed')
+    return /^критик принял/i.test(text) ? 'ok' : /отклонил/i.test(text) ? 'err' : 'wait'
   if (/error|fail|reject|blocked|limit|review|отклон|не прош|не ответ|исчерпан/.test(k))
     return 'err'
   if (/retire|archiv|уволен/.test(k)) return 'off'

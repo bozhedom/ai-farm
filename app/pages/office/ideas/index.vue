@@ -183,7 +183,13 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
             class="chip chip-sm chip-more"
             @click="showAllIndustries = !showAllIndustries"
           >
-            {{ showAllIndustries ? 'Свернуть' : `Ещё ${hiddenIndustries}` }}
+            {{
+              showAllIndustries
+                ? 'Свернуть'
+                : mainIndustries.length
+                  ? `Ещё ${hiddenIndustries}`
+                  : `Отрасли ${hiddenIndustries}`
+            }}
           </button>
         </div>
       </div>
@@ -317,6 +323,9 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
 .demo-note {
   margin-left: 6px;
   vertical-align: 1px;
+}
+.views {
+  flex-wrap: wrap;
 }
 .chip-sm {
   min-height: 30px;
