@@ -105,11 +105,7 @@ const team = computed(() => {
   const active = list
     .filter((a) => a.status === 'active')
     .sort((a, b) => (b.score?.total ?? -1) - (a.score?.total ?? -1))
-  const retired = list
-    .filter((a) => a.status === 'archived' && a.retired)
-    .sort((a, b) => (b.retired!.at > a.retired!.at ? 1 : -1))
-    .slice(0, 1)
-  return [...active, ...retired].map((agent) => ({
+  return active.map((agent) => ({
     agent,
     short: agentShort(agent.name),
     avatar: agentAvatar(agent, list.indexOf(agent)),
@@ -119,6 +115,12 @@ const team = computed(() => {
   }))
 })
 
+// Retired scouts fold into one line: «Уволено 2: В, Г».
+const retiredLine = computed(() => {
+  const retired = (agents.value?.agents || []).filter((a) => a.status === 'archived')
+  if (!retired.length) return ''
+  return `Уволено ${retired.length}: ${retired.map((a) => agentShort(a.name)).join(', ')}`
+})
 const todayFeed = computed(() => (o.value?.feed || []).filter((item) => isToday(item.at)))
 const feedItems = computed(() =>
   todayFeed.value.length ? todayFeed.value : (o.value?.feed || []).slice(0, 8),
@@ -126,8 +128,8 @@ const feedItems = computed(() =>
 const isFresh = computed(() => !!o.value && o.value.totals.ideas === 0 && o.value.feed.length === 0)
 const subtitle = computed(() => {
   const v = o.value
-  if (!v) return todayTitle(clock.value) + '.'
-  return `${todayTitle(clock.value)}. ${v.worker.reason}`
+  // The status and the next run live in the dark card below, not here.
+  return v ? todayTitle(clock.value) : todayTitle(clock.value) + '.'
 })
 </script>
 <template>
@@ -311,6 +313,9 @@ const subtitle = computed(() => {
                 </div>
                 <OfficeBadge :badge="row.badge" />
               </div>
+              <NuxtLink v-if="retiredLine" class="retired-line small muted" to="/office/agents">{{
+                retiredLine
+              }}</NuxtLink>
               <p v-if="!agents" class="muted small">Загружаем команду</p>
             </div>
             <div v-if="agents" class="card-foot">
@@ -427,6 +432,13 @@ const subtitle = computed(() => {
   gap: var(--s-5);
   margin-top: var(--s-5);
   align-items: start;
+}
+.retired-line {
+  display: block;
+  padding: var(--s-2) 0 0;
+}
+.retired-line:hover {
+  color: var(--ink-2);
 }
 .team-list {
   display: grid;

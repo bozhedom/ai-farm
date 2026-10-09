@@ -33,6 +33,10 @@ export type OfficeOverview = {
     ordersDelivered?: number
     /** Added by slice B: sum of confirmed test payments in kopecks. Never revenue. */
     testPaymentsKopecks?: number
+    /** Added by the UX pass: working scouts, for the menu counter. */
+    activeAgents?: number
+    /** Added by the UX pass: client requests not yet handled, for the menu counter. */
+    newLeads?: number
   }
   worker: { alive: boolean; reason: string; nextAt: string | null }
   feed: { at: string; kind: string; text: string; link: string | null }[]

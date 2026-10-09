@@ -88,6 +88,8 @@ export async function officeOverview(now = new Date()): Promise<OfficeOverview> 
           (SELECT COALESCE(sum(revenue_kopecks),0)::int FROM orders) AS revenue,
           (SELECT count(*)::int FROM orders WHERE paid_at IS NOT NULL AND is_test_payment) AS test_payments,
           (SELECT count(*)::int FROM orders WHERE status='delivered') AS delivered,
+          (SELECT count(*)::int FROM strategies WHERE status='active') AS agents,
+          (SELECT count(*)::int FROM opportunities WHERE stage='new') AS new_leads,
           (SELECT COALESCE(sum(COALESCE(NULLIF(o.price_kopecks,0),p.price_kopecks)),0)::int
              FROM orders o JOIN products p ON p.id=o.product_id
              WHERE o.paid_at IS NOT NULL AND o.is_test_payment) AS test_kopecks`,
@@ -182,6 +184,8 @@ export async function officeOverview(now = new Date()): Promise<OfficeOverview> 
       testPayments: totals!.test_payments,
       ordersDelivered: totals!.delivered,
       testPaymentsKopecks: totals!.test_kopecks,
+      activeAgents: totals!.agents,
+      newLeads: totals!.new_leads,
     },
     worker: { alive, reason, nextAt },
     feed,

@@ -2,7 +2,7 @@
 import type { IconName } from '~/composables/office/icons'
 import { officeApi, useOfficeToast } from '~/composables/office/actions'
 import { useOfficeOverview } from '~/composables/office/data'
-import { count, upcoming } from '~/composables/office/format'
+import { count } from '~/composables/office/format'
 import { useOfficeOnline } from '~/composables/office/resource'
 
 const route = useRoute()
@@ -13,14 +13,21 @@ const menuOpen = ref(false)
 
 useHead({ bodyAttrs: { class: computed(() => (menuOpen.value ? 'menu-open' : '')) } })
 
-type Item = { to: string; label: string; icon: IconName; count?: number | null; alert?: number }
+type Item = {
+  to: string
+  label: string
+  icon: IconName
+  count?: number | null
+  alert?: number
+  hint?: string
+}
 const items = computed<Item[]>(() => {
   const o = overview.value
   const orderAlerts = o?.needsOwner.filter((n) => /order|заказ/i.test(n.kind)).length || 0
   return [
     { to: '/office', label: 'Главная', icon: 'home' },
     { to: '/office/ideas', label: 'Идеи', icon: 'idea', count: o?.totals.ideas },
-    { to: '/office/agents', label: 'Агенты', icon: 'agents' },
+    { to: '/office/agents', label: 'Агенты', icon: 'agents', count: o?.totals.activeAgents },
     { to: '/office/products', label: 'Продукты', icon: 'box', count: o?.totals.publicProducts },
     {
       to: '/office/orders',
@@ -29,7 +36,13 @@ const items = computed<Item[]>(() => {
       count: o?.totals.orders,
       alert: orderAlerts,
     },
-    { to: '/office/leads', label: 'Клиенты', icon: 'clients' },
+    {
+      to: '/office/leads',
+      label: 'Клиенты',
+      icon: 'clients',
+      count: o?.totals.newLeads,
+      hint: 'новых запросов',
+    },
     { to: '/office/money', label: 'Деньги', icon: 'money' },
   ]
 })
@@ -57,11 +70,8 @@ const live = computed(() => {
     return { dot: 'is-wait', title: 'Сервер не отвечает', detail: o.worker.reason }
   if (o.mode === 'paused')
     return { dot: 'is-wait', title: 'Пауза', detail: 'Начатые заказы доделываем' }
-  return {
-    dot: '',
-    title: 'Ферма работает',
-    detail: o.worker.nextAt ? `Следующий запуск ${upcoming(o.worker.nextAt)}` : o.worker.reason,
-  }
+  // The next run is on the main screen; the menu only says the farm works.
+  return { dot: '', title: 'Ферма работает', detail: '' }
 })
 
 watch(
@@ -116,7 +126,12 @@ async function logout() {
           <span v-if="item.alert" class="count is-alert" :title="`Ждут вас: ${item.alert}`">{{
             item.alert
           }}</span>
-          <span v-else-if="item.count" class="count">{{ count(item.count) }}</span></NuxtLink
+          <span
+            v-else-if="item.count"
+            class="count"
+            :title="item.hint ? `${count(item.count)} ${item.hint}` : undefined"
+            >{{ count(item.count) }}</span
+          ></NuxtLink
         >
         <span class="label eyebrow">Управление</span>
         <NuxtLink
