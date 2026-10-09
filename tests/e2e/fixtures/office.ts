@@ -276,6 +276,8 @@ export function officeFixtures(now = new Date()) {
     days: number
     startup: number
     monthly: number
+    /** The farm tried to build it and the check failed (ideas.build_error). */
+    buildError?: string
   }
   const seeds: Seed[] = [
     {
@@ -652,6 +654,26 @@ export function officeFixtures(now = new Date()) {
       startup: 15000,
       monthly: 5000,
     },
+    {
+      title: 'Ответы на вопросы о доставке для цветочных магазинов',
+      category: 'Маркетплейсы и интернет-магазины',
+      topic: 'Доставка цветов',
+      status: 'needs_human',
+      score: 61,
+      farm: true,
+      template: 'faq',
+      agent: 'a',
+      verdict: 'PASS',
+      reason:
+        'Вопросы о доставке повторяются в каждом чате магазина, ответы можно собрать из правил.',
+      audience: 'Владельцы цветочных магазинов с доставкой',
+      problem: 'Администратор весь день отвечает про сроки и зоны доставки',
+      days: 1,
+      startup: 0,
+      monthly: 0,
+      buildError:
+        'Страница продукта: Заголовок страницы не называет услугу «ответы на частые вопросы».',
+    },
   ]
 
   const ideas: OfficeIdea[] = seeds
@@ -743,6 +765,8 @@ export function officeFixtures(now = new Date()) {
         ownerNote: i === 6 ? 'Обсудить с Сергеем, у него есть стремянки и пара ребят.' : '',
         ownerStatus: i === 6 ? 'taken' : null,
         ownerTakenAt: i === 6 ? daysAgo(1, 15) : null,
+        buildError: s.buildError ?? null,
+        buildFailedAt: s.buildError ? daysAgo(s.days, 11) : null,
         product:
           s.status === 'productized'
             ? {
@@ -765,6 +789,7 @@ export function officeFixtures(now = new Date()) {
     ['email', 'Ответ на вопрос или отзыв клиента', 29000, 'public', 4],
     ['job_post', 'Вакансия, на которую откликаются', 69000, 'public', 3],
     ['instruction', 'Пошаговая инструкция для пользователей', 79000, 'private', 17],
+    ['summary', 'Краткий пересказ длинного текста', 39000, 'public', 2],
   ].map(([template, name, price, visibility, ideaIndex], i) => ({
     id: uuid(600 + i),
     slug: String(template).replace('_', '-'),
@@ -776,13 +801,15 @@ export function officeFixtures(now = new Date()) {
     priceKopecks: Number(price),
     ideaId: ideas.find((idea) => idea.title === seeds[Number(ideaIndex)]!.title)?.id ?? null,
     ideaTitle: seeds[Number(ideaIndex)]!.title,
-    isDemo: false,
+    // The last one is a demo product on a stand with a real model: buyers do not see it.
+    isDemo: i === 7,
+    demoHidden: i === 7,
     needsRefresh: template === 'social',
     publicUrl: `/services/${String(template).replace('_', '-')}`,
     stats: {
-      orders: [14, 6, 4, 3, 2, 1, 0][i]!,
-      delivered: [12, 5, 4, 3, 1, 1, 0][i]!,
-      leads: [3, 2, 0, 1, 1, 0, 0][i]!,
+      orders: [14, 6, 4, 3, 2, 1, 0, 0][i]!,
+      delivered: [12, 5, 4, 3, 1, 1, 0, 0][i]!,
+      leads: [3, 2, 0, 1, 1, 0, 0, 0][i]!,
     },
   }))
 
@@ -902,6 +929,22 @@ export function officeFixtures(now = new Date()) {
       isDemo: false,
       firstSeenAt: daysAgo(3, 14),
       lastSeenAt: daysAgo(3, 15),
+    },
+    {
+      id: uuid(806),
+      product: { id: products[0]!.id, name: products[0]!.name, slug: products[0]!.slug },
+      template: 'description',
+      url: 'https://www.fl.ru/projects/4410021/opisaniya-tovarov.html',
+      title: 'Нужны описания для 50 товаров, 2024',
+      snippet: 'Опубликовано 12.03.2024. Магазин посуды, нужны описания для карточек.',
+      stage: 'new',
+      note: '',
+      replyDraft: null,
+      replyDraftedAt: null,
+      replyError: 'LEAD_TOO_OLD',
+      isDemo: false,
+      firstSeenAt: daysAgo(1, 10),
+      lastSeenAt: daysAgo(1, 10),
     },
   ]
 

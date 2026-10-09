@@ -133,6 +133,11 @@ const sections: { name: string; path: string; ready: string }[] = [
     path: `/office/ideas/${fx.ideas.find((i) => !i.farmExecutable)!.id}`,
     ready: 'План запуска',
   },
+  {
+    name: 'idea-build-failed',
+    path: `/office/ideas/${fx.ideas.find((i) => i.buildError)!.id}`,
+    ready: 'Сборка не прошла проверку',
+  },
   { name: 'reports', path: '/office/ideas?tab=reports', ready: 'Лучший день по принятым идеям' },
   { name: 'agents', path: '/office/agents', ready: 'Поколения' },
   { name: 'products', path: '/office/products', ready: fx.products[0]!.name },
@@ -198,6 +203,22 @@ test.describe('office behaviour', () => {
     await expect
       .poll(() => posted.find((p) => p.url === `/api/office/ideas/${idea.id}`)?.body)
       .toEqual({ ownerStatus: 'taken' })
+  })
+
+  test('a failed build shows its reason and a demo product is not called on site', async ({
+    page,
+  }) => {
+    await stubOffice(page, fx)
+    const idea = fx.ideas.find((i) => i.buildError)!
+    await page.goto(`/office/ideas/${idea.id}`)
+    await expect(page.getByLabel('Сборка не прошла проверку')).toContainText(idea.buildError!)
+    await page.goto('/office/products')
+    const demo = fx.products.find((p) => p.demoHidden)!
+    const card = page.locator(`#product-${demo.id}`)
+    await expect(card).toContainText('Демо, на сайте не виден')
+    await expect(card.getByRole('link', { name: 'Открыть на сайте' })).toHaveCount(0)
+    await page.goto('/office/leads')
+    await expect(page.getByText('Отклик не готовим: запрос старше 60 дней.')).toBeVisible()
   })
 
   test('order page warns before issuing a new buyer link', async ({ page }) => {
