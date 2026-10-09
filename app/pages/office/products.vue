@@ -3,7 +3,6 @@ import type { OfficeProduct } from '../../../core/contracts/office'
 import { officeApi, useOfficeAction } from '~/composables/office/actions'
 import { useOfficeOverview, useOfficeProducts } from '~/composables/office/data'
 import { day, rub, withCount } from '~/composables/office/format'
-import { templateLabel } from '~/composables/office/labels'
 
 useHead({ title: 'Продукты' })
 const { data, status, pending, refresh } = useOfficeProducts()
@@ -13,6 +12,7 @@ const filter = ref<'all' | 'public' | 'private'>('all')
 const products = computed(() =>
   (data.value || []).filter((p) => filter.value === 'all' || p.visibility === filter.value),
 )
+const hasDemo = computed(() => (data.value || []).some((p) => p.isDemo))
 const publicCount = computed(
   () => (data.value || []).filter((p) => p.visibility === 'public').length,
 )
@@ -54,6 +54,7 @@ const canOrder = computed(() => overview.value?.mode === 'running')
               ? `${withCount(publicCount, ['продукт', 'продукта', 'продуктов'])} на сайте из ${data.length}.`
               : 'Что продаётся на сайте и по какой цене.'
           }}
+          <span v-if="hasDemo" class="badge badge-plain demo-note">Данные демо-провайдера</span>
         </p>
       </div>
       <a class="btn" href="/" target="_blank" rel="noopener"
@@ -101,6 +102,7 @@ const canOrder = computed(() => overview.value?.mode === 'running')
     <div v-else class="grid">
       <article
         v-for="p in products"
+        :id="`product-${p.id}`"
         :key="p.id"
         class="card product rise"
         :class="{ 'is-hidden': p.visibility === 'private' }"
@@ -110,14 +112,17 @@ const canOrder = computed(() => overview.value?.mode === 'running')
             p.visibility === 'public' ? 'На сайте' : 'Скрыт'
           }}</span>
           <span v-if="p.needsRefresh" class="badge badge-wait">Нужно обновить</span>
-          <span v-if="p.isDemo" class="badge badge-plain">Демо</span>
           <span class="price num">{{ rub(p.priceKopecks) }}</span>
         </div>
         <h2>{{ p.name }}</h2>
         <p class="muted small">
-          {{ templateLabel(p.template) }}. Версия {{ p.version
-          }}<template v-if="p.publishedAt">, на сайте с {{ day(p.publishedAt) }}</template
-          >.
+          {{
+            p.publishedAt && p.visibility === 'public'
+              ? `На сайте с ${day(p.publishedAt)}.`
+              : p.publishedAt
+                ? `Был на сайте с ${day(p.publishedAt)}.`
+                : 'На сайт ещё не выходил.'
+          }}
         </p>
         <dl class="p-stats">
           <div>
@@ -125,16 +130,22 @@ const canOrder = computed(() => overview.value?.mode === 'running')
             <dd class="num">{{ p.stats.orders }}</dd>
           </div>
           <div>
-            <dt>Выдано</dt>
+            <dt>Готово</dt>
             <dd class="num">{{ p.stats.delivered }}</dd>
           </div>
           <div>
-            <dt>Клиентов</dt>
-            <dd class="num">{{ p.stats.leads }}</dd>
+            <dt>Запросов клиентов</dt>
+            <dd class="num">
+              <NuxtLink v-if="p.stats.leads" :to="`/office/leads?product=${p.id}`">{{
+                p.stats.leads
+              }}</NuxtLink>
+              <template v-else>0</template>
+            </dd>
           </div>
         </dl>
         <p v-if="p.ideaId" class="small">
-          <NuxtLink :to="`/office/ideas/${p.ideaId}`">Идея, из которой он вырос</NuxtLink>
+          Из идеи:
+          <NuxtLink :to="`/office/ideas/${p.ideaId}`">«{{ p.ideaTitle || 'открыть' }}»</NuxtLink>
         </p>
         <div class="p-actions">
           <a
@@ -195,6 +206,13 @@ const canOrder = computed(() => overview.value?.mode === 'running')
 <style scoped>
 .filter {
   margin-bottom: var(--s-4);
+}
+.demo-note {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.product {
+  scroll-margin-top: 80px;
 }
 .grid {
   display: grid;

@@ -543,7 +543,8 @@ export async function officeProducts(filter: unknown = {}): Promise<OfficeProduc
       `SELECT p.*,
         (SELECT count(*)::int FROM orders o WHERE o.product_id=p.id) AS orders,
         (SELECT count(*)::int FROM orders o WHERE o.product_id=p.id AND o.status='delivered') AS delivered,
-        (SELECT count(*)::int FROM opportunities l WHERE l.product_id=p.id) AS leads
+        (SELECT count(*)::int FROM opportunities l WHERE l.product_id=p.id) AS leads,
+        (SELECT i.title FROM ideas i WHERE i.id=p.idea_id) AS idea_title
        FROM products p ORDER BY p.status,(p.visibility='public') DESC,p.published_at DESC NULLS LAST,p.created_at,p.id
        LIMIT $1 OFFSET $2`,
       [limit, input.offset],
@@ -561,6 +562,7 @@ export async function officeProducts(filter: unknown = {}): Promise<OfficeProduc
     publishedAt: iso(p.published_at),
     priceKopecks: p.price_kopecks,
     ideaId: p.idea_id,
+    ideaTitle: p.idea_title ?? null,
     isDemo: p.is_demo,
     needsRefresh:
       p.template === 'social' &&

@@ -194,6 +194,8 @@ export type OfficeProduct = {
   publishedAt: string | null
   priceKopecks: number
   ideaId: string | null
+  /** Added by the UX pass: title of the idea the product grew from. */
+  ideaTitle?: string | null
   isDemo: boolean
   needsRefresh: boolean
   publicUrl: string
