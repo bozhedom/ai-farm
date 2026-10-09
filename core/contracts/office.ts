@@ -174,13 +174,16 @@ export type EvolutionRound = {
   trigger: string
   isDemo: boolean
   at: string
-  scores: { agentId: string; name: string; score: number }[]
+  /** `samples` (added by the UX pass): ideas the agent had at this round. */
+  scores: { agentId: string; name: string; score: number; samples?: number }[]
   archived: string[]
   children: { id: string; parentId: string; mutation: AgentMutation }[]
 }
 export type OfficeAgents = {
   generation: number
   agents: OfficeAgent[]
+  /** Added by the UX pass: all ideas and critic-accepted ideas over all generations. */
+  totals?: { ideas: number; passed: number }
   evolution: EvolutionStatus
   rounds: EvolutionRound[]
 }
@@ -309,6 +312,8 @@ export type OfficeSettings = {
   researchEnabled?: boolean
   /** Added by the UX pass: UTC hour (0-20) when the daily run may start. */
   scheduleHourUtc?: number
+  /** Added by the UX pass: technical model id for support; `providers.model` is the human name. */
+  modelId?: string | null
 }
 export type OfficeSettingsUpdate = Partial<
   Pick<

@@ -2,6 +2,7 @@
 import type { OfficeLead } from '../../../core/contracts/office'
 import { copyText, officeApi, useOfficeAction, useOfficeToast } from '~/composables/office/actions'
 import { useOfficeLeads } from '~/composables/office/data'
+import { reasonText } from '~/composables/office/errors'
 import { ago, domain, withCount } from '~/composables/office/format'
 import { leadBadge, templateLabel } from '~/composables/office/labels'
 
@@ -62,7 +63,12 @@ function redraft(lead: OfficeLead) {
 const subtitle = computed(() => {
   if (!data.value) return 'Люди, которым уже сейчас нужна такая услуга.'
   if (!data.value.total) return 'Запросов пока нет.'
-  return `${withCount(data.value.total, ['запрос', 'запроса', 'запросов'])}. ${counts.value.new ? `${withCount(counts.value.new, ['ждёт', 'ждут', 'ждут'])} отклика.` : 'Новых нет.'}`
+  const fresh = all.value.filter(isNew)
+  const ready = fresh.filter((lead) => lead.replyDraft).length
+  const waiting = fresh.length - ready
+  if (!fresh.length)
+    return `${withCount(data.value.total, ['запрос', 'запроса', 'запросов'])}. Новых нет.`
+  return `${withCount(data.value.total, ['запрос', 'запроса', 'запросов'])}. Отклик готов у ${ready}${waiting ? `, без отклика ${waiting}` : ''}.`
 })
 </script>
 <template>
@@ -169,8 +175,12 @@ const subtitle = computed(() => {
             <span class="eyebrow">Отклик</span>
           </div>
           <div v-if="lead.replyDraft" class="reply">{{ lead.replyDraft }}</div>
-          <p v-else-if="lead.replyError" class="reply reply-err">{{ lead.replyError }}</p>
-          <p v-else class="reply muted">Отклик будет после следующего цикла.</p>
+          <p v-else-if="lead.replyError" class="reply reply-err">
+            Отклик не получился: {{ reasonText(lead.replyError) }}
+          </p>
+          <p v-else class="reply muted">
+            Отклика пока нет: за день ферма готовит несколько откликов, остальные по кнопке.
+          </p>
           <div class="actions">
             <button
               v-if="!lead.replyDraft && isNew(lead)"

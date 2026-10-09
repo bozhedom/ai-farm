@@ -322,7 +322,10 @@ onMounted(() => {
         <dl class="lines">
           <div>
             <dt>Модель</dt>
-            <dd>{{ s.providers.model }}</dd>
+            <dd>
+              {{ s.providers.model }}
+              <span v-if="s.modelId" class="model-id xs muted">{{ s.modelId }}</span>
+            </dd>
           </div>
           <div>
             <dt>Поиск</dt>
@@ -429,6 +432,11 @@ onMounted(() => {
   margin: 0;
   padding-left: 18px;
   line-height: 1.7;
+}
+.model-id {
+  display: block;
+  font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .mode-hint {
   margin-top: var(--s-3);

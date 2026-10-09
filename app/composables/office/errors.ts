@@ -38,6 +38,34 @@ const messages: Record<string, string> = {
 
 export type OfficeError = { status: number; code: string; text: string }
 
+const reasonCodes: Record<string, string> = {
+  POLICY_CONTENT_BLOCKED: 'Тема под запретом правил фермы.',
+  UNTRUSTED_INSTRUCTION_BLOCKED: 'В материале были команды для модели.',
+  OUTPUT_FORMAT_INVALID: 'Пример не совпал с форматом услуги.',
+  OUTPUT_FORMAT_REQUIRED: 'В примере не хватило обязательных частей.',
+  OUTPUT_REVIEW_REQUIRED: 'Проверка отклонила пример.',
+  MODEL_SCHEMA_INVALID: 'Модель ответила не по формату.',
+  MODEL_OUTPUT_INCOMPLETE: 'Модель не дописала ответ.',
+  OPENROUTER_RESPONSE_ERROR: 'OpenRouter ответил ошибкой. Попробуйте позже.',
+  BUDGET_BLOCKED: 'Не хватило дневного бюджета.',
+  PRODUCT_NOT_PUBLIC: 'Продукт не на сайте, ссылку в отклик не поставить.',
+}
+/**
+ * A reason from the server may be a bare code (POLICY_CONTENT_BLOCKED). People see words; the
+ * code stays in the technical log.
+ */
+export function reasonText(text: string | null | undefined) {
+  const value = String(text ?? '').trim()
+  if (!/^[A-Z][A-Z0-9_]{2,80}$/.test(value)) return value
+  return (
+    reasonCodes[value] ||
+    messages[value] ||
+    (/_HTTP_\d+$/.test(value)
+      ? 'Модель была недоступна.'
+      : 'Служебная причина, подробности в техжурнале.')
+  )
+}
+
 export function describeError(error: unknown): OfficeError {
   const e = error as {
     status?: number

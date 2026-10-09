@@ -36,8 +36,9 @@ const stats = computed(() => {
     archived: list.filter((a) => a.status === 'archived').length,
     copies: copies.length,
     copiesActive: copies.filter((a) => a.status === 'active').length,
-    ideas: list.reduce((sum, a) => sum + a.metrics.ideas, 0),
-    passed: list.reduce((sum, a) => sum + a.metrics.passed, 0),
+    // All generations: the agent metrics only cover the generation each agent was scored in.
+    ideas: data.value?.totals?.ideas ?? list.reduce((sum, a) => sum + a.metrics.ideas, 0),
+    passed: data.value?.totals?.passed ?? list.reduce((sum, a) => sum + a.metrics.passed, 0),
   }
 })
 const evolution = computed(() => data.value?.evolution)
@@ -120,6 +121,30 @@ const roundsLine = computed(() => {
 })
 const hasDemo = computed(() => !!data.value?.rounds.some((r) => r.isDemo))
 const lowData = (agent: OfficeAgent) => agent.status === 'active' && !!agent.score?.lowData
+/** What an agent had at the selection round that closed this generation, from the stored round. */
+const atRound = (agent: OfficeAgent, generation: number) => {
+  if (generation >= (data.value?.generation ?? 1)) return null
+  const round = data.value?.rounds.find(
+    (r) => r.generation === generation && r.decision === 'ROTATED',
+  )
+  return round?.scores.find((s) => s.agentId === agent.id) ?? null
+}
+const treeScore = (agent: OfficeAgent, generation: number) => {
+  const past = atRound(agent, generation)
+  if (past) return score100(past.score)
+  return agent.score && !lowData(agent) ? score100(agent.score.total) : null
+}
+const treeLine = (agent: OfficeAgent, generation: number) => {
+  const past = atRound(agent, generation)
+  const ideasAt = past?.samples
+  if (agent.retired)
+    return `Уволен ${day(agent.retired.at)}: ${agent.metrics.passed} из ${agent.metrics.ideas} идей`
+  if (past)
+    return ideasAt !== undefined
+      ? `На отборе: ${withCount(ideasAt, ['идея', 'идеи', 'идей'])}, остался`
+      : 'Прошёл отбор'
+  return `${agent.metrics.passed} из ${agent.metrics.ideas} идей приняты`
+}
 function evolve() {
   void run('evolve', () => officeApi.evolve(), 'Отбор запущен. Результат появится здесь.')
 }
@@ -146,6 +171,9 @@ function evolve() {
         <OfficeIcon name="refresh" />{{ busy ? 'Запускаем' : 'Провести отбор сейчас' }}
       </button>
     </div>
+    <p v-if="evolution && !evolution.ready" class="small muted evolve-why">
+      Отбор пока недоступен: {{ evolution.reason }}
+    </p>
 
     <OfficeState v-if="!data" :status="status" :pending="pending" :rows="4" @retry="refresh" />
     <template v-else>
@@ -204,7 +232,8 @@ function evolve() {
         <div class="rules">
           <div id="score">
             <b>Балл разведчика</b>Доля принятых идей, качество источников, повторы и цена идеи.
-            Когда пойдут продажи, добавятся заказы.
+            Когда пойдут продажи, добавятся заказы. Балл считается заново в каждом поколении: после
+            отбора счёт у всех начинается с нуля.
           </div>
           <div>
             <b>Увольнение</b>Худшая половина уходит в архив, когда у каждого набралось
@@ -353,7 +382,7 @@ function evolve() {
       <section class="card rise gens" aria-labelledby="generations">
         <div class="card-head">
           <h2 id="generations">Поколения</h2>
-          <span class="muted small">Кто от кого, кто ушёл</span>
+          <span class="muted small">Балл на момент отбора своего поколения</span>
         </div>
         <div v-for="g in generations" :key="g.generation" class="gen">
           <div class="gen-label">
@@ -376,21 +405,17 @@ function evolve() {
                 }}</span
                 ><b>{{ agentShort(agent.name) }}</b
                 ><span
-                  v-if="agent.score"
+                  v-if="treeScore(agent, g.generation) !== null"
                   class="num"
                   :class="{ muted: agent.status === 'archived' }"
-                  >{{ score100(agent.score.total) }}</span
-                ><span v-else class="fresh">новый</span>
+                  >{{ treeScore(agent, g.generation) }}</span
+                ><span v-else class="fresh">{{ lowData(agent) ? 'мало данных' : 'новый' }}</span>
               </div>
               <span v-if="agent.parentId" class="parent"
                 >Копия <b>{{ agentShort(nameOf(agent.parentId)) }}</b
                 >, {{ mutationText(agent.mutation) }}</span
               >
-              <span class="why">{{
-                agent.retired
-                  ? `Уволен ${day(agent.retired.at)}: ${agent.metrics.passed} из ${agent.metrics.ideas} идей`
-                  : `${agent.metrics.passed} из ${agent.metrics.ideas} идей приняты`
-              }}</span>
+              <span class="why">{{ treeLine(agent, g.generation) }}</span>
             </div>
           </div>
         </div>
@@ -399,6 +424,9 @@ function evolve() {
   </div>
 </template>
 <style scoped>
+.evolve-why {
+  margin: calc(-1 * var(--s-3)) 0 var(--s-5);
+}
 .demo-note {
   margin-left: 6px;
   vertical-align: 1px;

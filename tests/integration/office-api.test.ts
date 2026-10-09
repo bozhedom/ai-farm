@@ -187,6 +187,11 @@ describe('owner office API', () => {
     ])
     expect(team.json.evolution).toMatchObject({ enabled: true, minIdeas: 6, ready: false })
     // One idea each is below the threshold: the office shows «Мало данных», not a verdict.
+    // The manager's numbers cover every generation, straight from the ideas table.
+    const [all] = await query(
+      "SELECT count(*)::int AS ideas,count(*) FILTER (WHERE critique->>'verdict'='PASS')::int AS passed FROM ideas",
+    )
+    expect(team.json.totals).toEqual({ ideas: all!.ideas, passed: all!.passed })
     const scored = team.json.agents.filter((a: any) => a.score)
     expect(scored.length).toBeGreaterThan(0)
     expect(scored.every((a: any) => a.score.lowData === true)).toBe(true)

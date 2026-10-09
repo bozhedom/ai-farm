@@ -2,6 +2,7 @@
 import type { IdeaStatus } from '../../../../core/contracts/office'
 import { officeApi, useOfficeAction } from '~/composables/office/actions'
 import { useOfficeIdea } from '~/composables/office/data'
+import { reasonText } from '~/composables/office/errors'
 import { when } from '~/composables/office/format'
 import {
   ideaStatus,
@@ -155,7 +156,7 @@ const checkStatus: Record<string, string> = {
                 >{{ checkStatus[check.status] || check.status }}</span
               >
               <div>
-                <p>{{ check.critique }}</p>
+                <p>{{ reasonText(check.critique) }}</p>
                 <NuxtLink
                   v-if="check.productId"
                   :to="`/office/products#product-${check.productId}`"

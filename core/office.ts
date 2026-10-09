@@ -444,6 +444,7 @@ function roundView(row: Record<string, any>, label: (id: string) => string): Evo
       agentId: s.strategyId,
       name: agentName(label(s.strategyId)),
       score: s.score,
+      samples: typeof s.samples === 'number' ? s.samples : undefined,
     })),
     archived: row.archived ?? [],
     children: children.map((c: any) => ({ id: c.id, parentId: c.parentId, mutation: c.mutation })),
@@ -451,12 +452,16 @@ function roundView(row: Record<string, any>, label: (id: string) => string): Evo
 }
 
 export async function officeAgents(): Promise<OfficeAgents> {
-  const [[state], strategies, rounds, evolution, scored] = await Promise.all([
+  const [[state], strategies, rounds, evolution, scored, [totals]] = await Promise.all([
     query('SELECT generation FROM system_state WHERE id=true'),
     query('SELECT * FROM strategies ORDER BY status,created_at,id'),
     query('SELECT * FROM evolution_rounds ORDER BY created_at DESC LIMIT 20'),
     evolutionStatus(),
     currentScores(),
+    query(
+      `SELECT count(*)::int AS ideas,
+        count(*) FILTER (WHERE critique->>'verdict'='PASS')::int AS passed FROM ideas`,
+    ),
   ])
   const labels = agentLabels(strategies as StrategyRow[])
   const label = (id: string) => labels.get(id) ?? '?'
@@ -526,6 +531,7 @@ export async function officeAgents(): Promise<OfficeAgents> {
   return {
     generation: state!.generation,
     agents,
+    totals: { ideas: totals!.ideas, passed: totals!.passed },
     evolution,
     rounds: rounds.map((row) => roundView(row, label)),
   }
@@ -757,6 +763,20 @@ export async function officeReports(filter: unknown = {}): Promise<OfficeReportL
   }
 }
 
+const modelLabels: Record<string, string> = {
+  demo: 'Демо (модель не подключена)',
+  ollama: 'Локальная модель (Ollama)',
+  openai: 'OpenAI, платная модель',
+  openrouter: 'OpenRouter, бесплатная модель',
+  yandex: 'YandexGPT',
+}
+const modelIds: Record<string, (c: ReturnType<typeof config>) => string> = {
+  ollama: (c) => c.OLLAMA_MODEL,
+  openai: (c) => c.OPENAI_MODEL,
+  openrouter: (c) => c.OPENROUTER_MODEL,
+  yandex: (c) => c.YANDEX_MODEL,
+}
+
 const searchLabels: Record<string, string> = {
   demo: 'Демо (поиск не подключён)',
   searxng: 'SearXNG',
@@ -777,16 +797,7 @@ export async function officeSettings(): Promise<OfficeSettings> {
     leadsPerDay: state!.leads_per_day,
     scheduleHourUtc: state!.schedule_hour_utc ?? 0,
     providers: {
-      model:
-        c.MODEL_PROVIDER === 'ollama'
-          ? c.OLLAMA_MODEL
-          : c.MODEL_PROVIDER === 'openai'
-            ? c.OPENAI_MODEL
-            : c.MODEL_PROVIDER === 'openrouter'
-              ? c.OPENROUTER_MODEL
-              : c.MODEL_PROVIDER === 'yandex'
-                ? c.YANDEX_MODEL
-                : 'Демо (модель не подключена)',
+      model: modelLabels[c.MODEL_PROVIDER] ?? 'Модель',
       search: searchLabels[c.SEARCH_PROVIDER] ?? c.SEARCH_PROVIDER,
       payment:
         c.PAYMENT_MODE === 'sepolia'
@@ -797,6 +808,7 @@ export async function officeSettings(): Promise<OfficeSettings> {
     },
     limits: { dailyKopecks: c.DAILY_BUDGET_KOPECKS, monthlyKopecks: c.MONTHLY_BUDGET_KOPECKS },
     researchEnabled: state!.research_enabled,
+    modelId: modelIds[c.MODEL_PROVIDER]?.(c) ?? null,
   }
 }
 
