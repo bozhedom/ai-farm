@@ -257,7 +257,9 @@ async function claimAttempt(
     attempt.confirmed_at === null &&
     !(holder.tx_hash === hash && holder.status !== 'awaiting_payment') &&
     ((how.proven && holder.amount_wei !== String(order.amount_wei)) ||
-      replaceableErrors.includes(attempt.error_code))
+      replaceableErrors.includes(attempt.error_code) ||
+      // The scanner already gave this order another, exact transfer instead of this hash.
+      (attempt.error_code === 'REPLACED_BY_SCAN' && holder.tx_hash !== hash))
   if (!unusable) return false
   await query(
     `UPDATE payment_attempts SET order_id=$2,detected_by_scan=$3,submitted_at=now(),checked_at=null,
@@ -308,6 +310,9 @@ export async function submitTransaction(id: string, hash: string, proven = false
       return 'TX_ALREADY_USED'
     }
     if (order.tx_hash === hash) return null
+    // A transfer the node already showed for this invoice (found by the scanner or checked) stays:
+    // another hash cannot pay the same unique amount, and a typo must not unpin a real payment.
+    if (order.tx_hash && (await pinnedTransferSeen(db, order))) return null
     await query(
       `UPDATE orders SET tx_hash=$2,confirmations=0,payment_error=null,last_payment_check=null,
        payment_proof=null,payment_lease_token=null,payment_locked_until=null WHERE id=$1`,
@@ -323,6 +328,22 @@ export async function submitTransaction(id: string, hash: string, proven = false
     return null
   })
   if (refused) throw new Error(refused)
+}
+
+/**
+ * Whether the node has shown the order's pinned transaction as a transfer that may pay it: mined
+ * and seen, without a verified mismatch. A hash the node never showed (a typo, a transfer that
+ * never left the wallet) does not count.
+ */
+async function pinnedTransferSeen(db: Connection, order: Record<string, any>) {
+  const [attempt] = await query(
+    'SELECT seen_at,confirmed_at,error_code FROM payment_attempts WHERE tx_hash=$1 AND order_id=$2',
+    [order.tx_hash, order.id],
+    db,
+  )
+  if (!attempt) return false
+  if (attempt.confirmed_at) return true
+  return !!attempt.seen_at && !replaceableErrors.includes(attempt.error_code)
 }
 
 const sameAddress = (a: unknown, b: string) =>
@@ -434,8 +455,16 @@ async function attachDetectedPayment(orderId: string, hash: string, amountWei: s
       order.payment_mode !== 'sepolia' ||
       order.status !== 'awaiting_payment' ||
       String(order.amount_wei) !== amountWei ||
-      order.tx_hash === hash ||
-      (order.tx_hash && !replaceableErrors.includes(order.payment_error))
+      order.tx_hash === hash
+    )
+      return false
+    // A pinned hash blocks the scanner only while it may still pay. One rejected by verification
+    // (replaceable error) or never shown by the node (a typo) gives way to the exact transfer.
+    const replaced: string | null = order.tx_hash
+    if (
+      replaced &&
+      !replaceableErrors.includes(order.payment_error) &&
+      (await pinnedTransferSeen(db, order))
     )
       return false
     order.amount_wei = String(order.amount_wei)
@@ -453,10 +482,89 @@ async function attachDetectedPayment(orderId: string, hash: string, amountWei: s
       [orderId, hash],
       db,
     )
+    if (replaced) {
+      await query(
+        `UPDATE payment_attempts SET error_code=COALESCE(error_code,'REPLACED_BY_SCAN')
+         WHERE tx_hash=$1 AND order_id=$2 AND confirmed_at IS NULL`,
+        [replaced, orderId],
+        db,
+      )
+      await audit(
+        'payment_hash_replaced',
+        'Указанный хеш не подтвердился, а на точную сумму счёта найден другой перевод. Сверяем найденный.',
+        { orderId, hash, replacedHash: replaced, replacedError: order.payment_error ?? null },
+        db,
+      )
+    }
     await audit(
       'payment_detected',
       'Найден тестовый перевод на точную сумму счёта. Хеш сохранён для сверки.',
       { orderId, hash },
+      db,
+    )
+    return true
+  })
+}
+
+/** Ended invoices the scanner still watches: a transfer that arrives late goes to the owner. */
+export const latePaymentWatchSeconds = 86400
+
+/**
+ * Plain exact-amount transfers in one block that arrived after their invoice ended. Amounts are
+ * unique per invoice, so a match is that buyer's payment; it is never fulfilled automatically.
+ */
+export function matchLateTransfers(block: any, invoices: OpenInvoice[], receiver: string) {
+  if (!block || typeof block !== 'object' || !Array.isArray(block.transactions))
+    throw new Error('RPC_INVALID_RESPONSE')
+  const time = Number(quantity(block.timestamp)) * 1000
+  const byAmount = new Map(invoices.map((invoice) => [BigInt(invoice.amount_wei), invoice]))
+  const found: { orderId: string; hash: string; amountWei: string }[] = []
+  for (const tx of block.transactions) {
+    if (!tx || typeof tx !== 'object' || typeof tx.hash !== 'string' || !hashPattern.test(tx.hash))
+      throw new Error('RPC_INVALID_RESPONSE')
+    if (!sameAddress(tx.to, receiver) || tx.input !== '0x') continue
+    const invoice = byAmount.get(quantity(tx.value))
+    if (!invoice || !sameAddress(invoice.receiver, receiver)) continue
+    if (time <= new Date(invoice.expires_at).getTime()) continue
+    found.push({ orderId: invoice.id, hash: tx.hash.toLowerCase(), amountWei: invoice.amount_wei })
+  }
+  return found
+}
+
+/**
+ * A transfer for an ended invoice: the order goes to the owner with PAID_AFTER_EXPIRY. Nothing
+ * starts and nothing counts as paid; the owner returns the test ETH by hand.
+ */
+async function flagLatePayment(orderId: string, hash: string, amountWei: string) {
+  return transaction(async (db) => {
+    const [order] = await query('SELECT * FROM orders WHERE id=$1 FOR UPDATE', [orderId], db)
+    if (
+      !order ||
+      order.payment_mode !== 'sepolia' ||
+      !['awaiting_payment', 'expired'].includes(order.status) ||
+      String(order.amount_wei) !== amountWei ||
+      new Date(order.expires_at) >= new Date()
+    )
+      return false
+    const [pinned] = await query(
+      `INSERT INTO payment_attempts(tx_hash,order_id,detected_by_scan,seen_at,error_code)
+       VALUES($1,$2,true,now(),'PAID_AFTER_EXPIRY') ON CONFLICT(tx_hash) DO NOTHING
+       RETURNING order_id`,
+      [hash, orderId],
+      db,
+    )
+    await query(
+      `UPDATE orders SET status='manual_review',payment_error='PAID_AFTER_EXPIRY',
+       tx_hash=CASE WHEN $3 THEN $2 ELSE tx_hash END,confirmations=0,
+       payment_lease_token=null,payment_locked_until=null WHERE id=$1`,
+      [orderId, hash, !!pinned],
+      db,
+    )
+    if (order.status === 'awaiting_payment') await closeReservation(order.reservation_id, db)
+    await audit(
+      'late_payment_received',
+      'Пришла оплата после срока счёта. Заказ не выполняется: верните перевод вручную.',
+      { orderId, hash, amountWei, previousStatus: order.status },
       db,
     )
     return true
@@ -472,15 +580,26 @@ export async function scanPayments(call: Rpc = rpc, now = new Date()) {
   const c = config()
   if (c.PAYMENT_MODE !== 'sepolia' || !c.SEPOLIA_SCAN_ENABLED) return { scanned: 0, found: 0 }
   const receiver = c.SEPOLIA_RECEIVER.toLowerCase()
+  // Open invoices without a usable hash: none yet, one verification rejected, or one the node
+  // has never shown (a typo must not stop automatic detection of the real transfer).
   const invoices = await query<OpenInvoice>(
-    `SELECT id,amount_wei::text AS amount_wei,receiver,created_at,expires_at FROM orders
+    `SELECT id,amount_wei::text AS amount_wei,receiver,created_at,expires_at FROM orders o
      WHERE payment_mode='sepolia' AND status='awaiting_payment' AND receiver=$1
      AND expires_at>now()-make_interval(secs=>$2)
-     AND (tx_hash IS NULL OR payment_error=ANY($3::text[]))`,
+     AND (tx_hash IS NULL OR payment_error=ANY($3::text[]) OR NOT EXISTS(
+       SELECT 1 FROM payment_attempts a WHERE a.tx_hash=o.tx_hash AND a.order_id=o.id
+       AND (a.confirmed_at IS NOT NULL OR a.seen_at IS NOT NULL)))`,
     [receiver, scanGraceSeconds, replaceableErrors],
   )
+  // Ended invoices of the last day: a late transfer is reported to the owner, never fulfilled.
+  const late = await query<OpenInvoice>(
+    `SELECT id,amount_wei::text AS amount_wei,receiver,created_at,expires_at FROM orders
+     WHERE payment_mode='sepolia' AND status IN ('awaiting_payment','expired') AND receiver=$1
+     AND expires_at<now() AND expires_at>now()-make_interval(secs=>$2)`,
+    [receiver, latePaymentWatchSeconds],
+  )
   // Idle: no RPC traffic. The next invoice restarts the scan from its creation time.
-  if (!invoices.length) return { scanned: 0, found: 0 }
+  if (!invoices.length && !late.length) return { scanned: 0, found: 0 }
   const lease = randomUUID()
   await query(
     'INSERT INTO payment_scan_state(chain_id) VALUES($1) ON CONFLICT(chain_id) DO NOTHING',
@@ -500,7 +619,11 @@ export async function scanPayments(call: Rpc = rpc, now = new Date()) {
     if (quantity(await call('eth_chainId', [])) !== BigInt(POLICY.chainId))
       throw new Error('WRONG_CHAIN')
     const latest = quantity(await call('eth_blockNumber', []))
-    const oldest = Math.min(...invoices.map((i) => new Date(i.created_at).getTime()))
+    // Open invoices need blocks from their creation, ended ones only from their deadline.
+    const oldest = Math.min(
+      ...invoices.map((i) => new Date(i.created_at).getTime()),
+      ...late.map((i) => new Date(i.expires_at).getTime()),
+    )
     const stale = cursor === null || new Date(state.updated_at).getTime() < oldest - 60000
     const plan = planScan(cursor, latest, scanLookback + (now.getTime() - oldest) / 1000, stale)
     if (plan) {
@@ -515,6 +638,8 @@ export async function scanPayments(call: Rpc = rpc, now = new Date()) {
         if (quantity(block.number) !== numbers[index]) throw new Error('BLOCK_MISMATCH')
         for (const match of matchTransfers(block, invoices, receiver))
           if (await attachDetectedPayment(match.orderId, match.hash, match.amountWei)) found++
+        for (const match of matchLateTransfers(block, late, receiver))
+          await flagLatePayment(match.orderId, match.hash, match.amountWei)
         cursor = numbers[index]!
         scanned++
       }
@@ -581,6 +706,12 @@ async function expireInvoices() {
   })
 }
 
+/**
+ * A mined transfer waiting for confirmations is re-read this often (the worker loop runs every
+ * few seconds); a hash the node has not shown yet keeps the 30-second pace.
+ */
+export const minedRecheckSeconds = 4
+
 export async function reconcilePayments(call: Rpc = rpc) {
   // Scan first: a transfer mined just before expiry gets its hash before the invoice closes.
   try {
@@ -592,10 +723,11 @@ export async function reconcilePayments(call: Rpc = rpc) {
   const orders = await transaction(async (db) => {
     const pending = await query(
       `SELECT * FROM orders WHERE payment_mode='sepolia' AND status='awaiting_payment'
-       AND tx_hash IS NOT NULL AND (last_payment_check IS NULL OR last_payment_check<now()-interval '30 seconds')
+       AND tx_hash IS NOT NULL AND (last_payment_check IS NULL OR last_payment_check<now()-CASE
+         WHEN confirmations>0 THEN make_interval(secs=>$1) ELSE interval '30 seconds' END)
        AND (payment_locked_until IS NULL OR payment_locked_until<now())
        ORDER BY last_payment_check NULLS FIRST,created_at FOR UPDATE SKIP LOCKED LIMIT 4`,
-      [],
+      [minedRecheckSeconds],
       db,
     )
     for (const order of pending) {

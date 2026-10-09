@@ -340,4 +340,103 @@ describe('public Sepolia payment on a mocked chain', () => {
       (await query('SELECT status,payment_error FROM orders WHERE id=$1', [other.id]))[0],
     ).toEqual({ status: 'awaiting_payment', payment_error: 'TX_OUTSIDE_INVOICE_WINDOW' })
   })
+
+  it('replaces a hash the node never showed with the exact transfer the scanner finds', async () => {
+    const chain = mockChain()
+    const { id, token, wei } = await newOrder()
+    // A typo: a well-formed hash that does not exist on the node.
+    const typo = '0x' + '7'.repeat(64)
+    await payPublicOrder(token, { mode: 'sepolia', hash: typo }, chain.rpc)
+    await reconcilePayments(chain.rpc)
+    expect((await query('SELECT tx_hash FROM orders WHERE id=$1', [id]))[0]!.tx_hash).toBe(typo)
+    const real = chain.transfer(receiver, wei)
+    await reconcilePayments(chain.rpc)
+    expect((await query('SELECT tx_hash,payment_error FROM orders WHERE id=$1', [id]))[0]).toEqual({
+      tx_hash: real,
+      payment_error: null,
+    })
+    expect(
+      (await query("SELECT data FROM audit_events WHERE kind='payment_hash_replaced'"))[0]!.data,
+    ).toMatchObject({ orderId: id, hash: real, replacedHash: typo })
+    // The buyer's typo cannot take the slot back from the transfer the node showed.
+    await payPublicOrder(token, { mode: 'sepolia', hash: typo }, chain.rpc)
+    expect((await query('SELECT tx_hash FROM orders WHERE id=$1', [id]))[0]!.tx_hash).toBe(real)
+    chain.mine()
+    chain.mine()
+    await recheck()
+    await reconcilePayments(chain.rpc)
+    expect((await publicOrderView(token)).status).toBe('in_progress')
+  })
+
+  it('never replaces a transfer the node already showed', async () => {
+    const chain = mockChain()
+    const { id, token, wei } = await newOrder()
+    const paid = chain.transfer(receiver, wei)
+    await payPublicOrder(token, { mode: 'sepolia', hash: paid }, chain.rpc)
+    await reconcilePayments(chain.rpc)
+    // A second transfer of the same amount (a double payment) does not move the pinned one.
+    chain.transfer(receiver, wei)
+    await reconcilePayments(chain.rpc)
+    expect((await query('SELECT tx_hash FROM orders WHERE id=$1', [id]))[0]!.tx_hash).toBe(paid)
+    expect(await query("SELECT id FROM audit_events WHERE kind='payment_hash_replaced'")).toEqual(
+      [],
+    )
+  })
+
+  it('reports a transfer after the invoice ended to the owner and never starts the work', async () => {
+    const chain = mockChain(5000n)
+    const { id, token, wei } = await newOrder()
+    await query(
+      `UPDATE orders SET created_at=now()-interval '40 minutes',expires_at=now()-interval '10 minutes'
+       WHERE id=$1`,
+      [id],
+    )
+    await reconcilePayments(chain.rpc)
+    expect((await publicOrderView(token)).status).toBe('expired')
+    const hash = chain.transfer(receiver, wei)
+    // The scan catches up from the deadline, one step of blocks per cycle.
+    for (let i = 0; i < 80; i++) {
+      await reconcilePayments(chain.rpc)
+      if ((await query('SELECT status FROM orders WHERE id=$1', [id]))[0]!.status !== 'expired')
+        break
+    }
+    const [row] = await query('SELECT * FROM orders WHERE id=$1', [id])
+    expect(row).toMatchObject({
+      status: 'manual_review',
+      payment_error: 'PAID_AFTER_EXPIRY',
+      tx_hash: hash,
+      paid_at: null,
+      revenue_kopecks: 0,
+    })
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toEqual([])
+    const [event] = await query(
+      "SELECT message,data FROM audit_events WHERE kind='late_payment_received'",
+    )
+    expect(event!.message).toContain('верните перевод вручную')
+    expect(event!.data).toMatchObject({ orderId: id, hash, previousStatus: 'expired' })
+    // Reported once; later cycles leave it with the owner.
+    chain.mine()
+    await reconcilePayments(chain.rpc)
+    expect(
+      (await query("SELECT id FROM audit_events WHERE kind='late_payment_received'")).length,
+    ).toBe(1)
+    expect((await publicOrderView(token)).status).toBe('needs_attention')
+  })
+
+  it('re-reads a mined transfer every few seconds and an unseen hash every 30 seconds', async () => {
+    const chain = mockChain()
+    const mined = await newOrder()
+    chain.transfer(receiver, mined.wei)
+    await reconcilePayments(chain.rpc)
+    const unseen = await newOrder()
+    await payPublicOrder(unseen.token, { mode: 'sepolia', hash: '0x' + '5'.repeat(64) }, chain.rpc)
+    await reconcilePayments(chain.rpc)
+    await query("UPDATE orders SET last_payment_check=now()-interval '6 seconds'")
+    chain.mine()
+    await reconcilePayments(chain.rpc)
+    const checked = await query(
+      "SELECT id,confirmations FROM orders WHERE last_payment_check>now()-interval '2 seconds'",
+    )
+    expect(checked).toEqual([{ id: mined.id, confirmations: 2 }])
+  })
 })

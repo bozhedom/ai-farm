@@ -48,6 +48,14 @@ const send = (to: string, wei: bigint) =>
   ]) as Promise<string>
 const mine = (blocks: number) => node('anvil_mine', ['0x' + blocks.toString(16)])
 const recheck = () => query('UPDATE orders SET last_payment_check=null')
+/** Ended invoices are scanned from their deadline, one step of blocks per cycle. */
+async function settleLate(id: string) {
+  for (let i = 0; i < 40; i++) {
+    await reconcilePayments()
+    const [row] = await query('SELECT status FROM orders WHERE id=$1', [id])
+    if (row!.status === 'manual_review') return
+  }
+}
 
 async function newOrder() {
   const created = await createPublicOrder({
@@ -186,20 +194,77 @@ describe.skipIf(!anvil)('crypto on a local anvil node (ANVIL_RPC_URL, npm run te
       [late.id],
     )
     await mine(3)
-    await reconcilePayments()
-    const [row] = await query('SELECT status,payment_error FROM orders WHERE id=$1', [late.id])
-    expect(row).toEqual({ status: 'awaiting_payment', payment_error: 'TX_OUTSIDE_INVOICE_WINDOW' })
-    expect((await publicOrderView(late.token)).message.detail).toBe(
-      'Перевод сделан вне срока счёта, он не подходит к этому заказу.',
-    )
+    await settleLate(late.id)
+    // A transfer after the deadline never starts the work: the owner returns it by hand.
+    const [row] = await query('SELECT status,payment_error,paid_at FROM orders WHERE id=$1', [
+      late.id,
+    ])
+    expect(row).toEqual({
+      status: 'manual_review',
+      payment_error: 'PAID_AFTER_EXPIRY',
+      paid_at: null,
+    })
+    expect((await publicOrderView(late.token)).status).toBe('needs_attention')
+    expect(
+      (await query("SELECT data FROM audit_events WHERE kind='late_payment_received'"))[0]!.data,
+    ).toMatchObject({ orderId: late.id, hash })
 
     const unpaid = await newOrder()
     await query(`UPDATE orders SET expires_at=now()-interval '10 minutes' WHERE id=$1`, [unpaid.id])
     await expect(
       payPublicOrder(unpaid.token, { mode: 'sepolia', hash: await send(receiver, unpaid.wei) }),
     ).rejects.toThrow('ORDER_NOT_PAYABLE')
+    // The buyer's late transfer is not lost: the scanner reports it to the owner.
+    await settleLate(unpaid.id)
+    expect((await publicOrderView(unpaid.token)).status).toBe('needs_attention')
+    // Without any transfer an ended invoice simply expires.
+    const idle = await newOrder()
+    await query(`UPDATE orders SET expires_at=now()-interval '10 minutes' WHERE id=$1`, [idle.id])
     await reconcilePayments()
-    expect((await publicOrderView(unpaid.token)).status).toBe('expired')
+    expect((await publicOrderView(idle.token)).status).toBe('expired')
+  })
+
+  it('replaces a mistyped hash with the real transfer found by the scanner', async () => {
+    const { id, token, wei } = await newOrder()
+    const typo = '0x' + '7'.repeat(64)
+    await payPublicOrder(token, { mode: 'sepolia', hash: typo })
+    await reconcilePayments()
+    expect((await query('SELECT tx_hash FROM orders WHERE id=$1', [id]))[0]!.tx_hash).toBe(typo)
+    const hash = await send(receiver, wei)
+    await reconcilePayments()
+    expect((await publicOrderView(token)).payment).toMatchObject({
+      hash,
+      detectedAutomatically: true,
+    })
+    await mine(2)
+    await recheck()
+    await reconcilePayments()
+    expect((await query('SELECT status,tx_hash FROM orders WHERE id=$1', [id]))[0]).toEqual({
+      status: 'paid',
+      tx_hash: hash,
+    })
+  })
+
+  it('sends a transfer for an ended invoice to the owner without starting the work', async () => {
+    const { id, wei } = await newOrder()
+    await query(
+      `UPDATE orders SET created_at=now()-interval '40 minutes',expires_at=now()-interval '10 minutes'
+       WHERE id=$1`,
+      [id],
+    )
+    await reconcilePayments()
+    expect((await query('SELECT status FROM orders WHERE id=$1', [id]))[0]!.status).toBe('expired')
+    const hash = await send(receiver, wei)
+    await settleLate(id)
+    expect(
+      (await query('SELECT status,payment_error,tx_hash,paid_at FROM orders WHERE id=$1', [id]))[0],
+    ).toEqual({
+      status: 'manual_review',
+      payment_error: 'PAID_AFTER_EXPIRY',
+      tx_hash: hash,
+      paid_at: null,
+    })
+    expect(await query("SELECT id FROM jobs WHERE kind='fulfill'")).toEqual([])
   })
 
   it('hands a transfer pinned first to the wrong order to the order it pays', async () => {
