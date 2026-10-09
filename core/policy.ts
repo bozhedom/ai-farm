@@ -173,6 +173,9 @@ const structuredSections: Partial<Record<Template, string[]>> = {
   job_post: ['Вакансия', 'Задачи', 'Требования', 'Условия'],
 }
 
+/** The last section of several formats; `polishOutput` words an empty one as a sentence. */
+const clarifySection = 'Что уточнить'
+
 function validateSections(text: string, sections: string[]) {
   const headings = [
     ...text.matchAll(
@@ -387,9 +390,51 @@ export function reportSchemaFor(ideaIds: string[]) {
         )
         .max(10)
     : z.array(z.object({ ideaId: z.string(), comment: plain(5, 400) }).strict()).max(0)
-  return reportSchema.extend({ ideaComments })
+  return reportSchema.extend({ ideaComments }).superRefine((report, context) => {
+    for (const issue of reportIssues(report, ideaIds))
+      context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  })
 }
-export function validateReport(value: ReportNarrative) {
+
+/** Prices come from the server list and limits from its environment: the owner is never asked. */
+const moneyVerbs =
+  '(?:подтверд|измен|повыс|пониз|сниз|подня|увелич|уменьш|установ|назнач|пересмотр|утверд|согласов|скоррект|поменя|выстав)'
+const moneyNouns = '(?:цен[аыуеой]|стоимост|лимит|бюджет|тариф)'
+const moneyAdvice = new RegExp(
+  `${moneyVerbs}[\\p{L}]*(?:\\s+[\\p{L}]+){0,3}?\\s+${moneyNouns}|(?<![\\p{L}])${moneyNouns}[\\p{L}]*(?:\\s+[\\p{L}]+){0,2}?\\s+${moneyVerbs}`,
+  'iu',
+)
+
+function reportTexts(report: ReportNarrative): [(string | number)[], string][] {
+  return [
+    [['headline'], report.headline],
+    [['summary'], report.summary],
+    ...report.ideaComments.map((c, i): [(string | number)[], string] => [
+      ['ideaComments', i, 'comment'],
+      c.comment,
+    ]),
+    ...report.nextActions.map((t, i): [(string | number)[], string] => [['nextActions', i], t]),
+    ...report.needsOwner.map((t, i): [(string | number)[], string] => [['needsOwner', i], t]),
+  ]
+}
+
+/** Manager report text: plain Russian, ideas by name, no codes, ids or money advice. */
+export function reportIssues(report: ReportNarrative, ideaIds: string[] = []) {
+  const issues: { path: (string | number)[]; message: string }[] = []
+  for (const [path, raw] of reportTexts(report)) {
+    const text = softenDashes(raw)
+    const id = ideaIds.find((value) => text.toLowerCase().includes(value.slice(0, 8).toLowerCase()))
+    const issue = id
+      ? 'Называй идею по названию, а не по идентификатору.'
+      : moneyAdvice.test(text)
+        ? 'Цены и лимиты задаёт сервер. Не предлагай владельцу менять или подтверждать цену, бюджет или лимиты.'
+        : textQualityIssue(text)
+    if (issue) issues.push({ path, message: issue })
+  }
+  return issues
+}
+
+export function validateReport(value: ReportNarrative, ideaIds: string[] = []) {
   validateContent(
     [
       value.headline,
@@ -399,7 +444,15 @@ export function validateReport(value: ReportNarrative) {
       ...value.needsOwner,
     ].join('\n'),
   )
-  return value
+  const issue = reportIssues(value, ideaIds)[0]
+  if (issue) throw new TextQualityError(issue.message, 'REPORT_TEXT_REJECTED')
+  return {
+    headline: softenDashes(value.headline),
+    summary: softenDashes(value.summary),
+    ideaComments: value.ideaComments.map((c) => ({ ...c, comment: softenDashes(c.comment) })),
+    nextActions: value.nextActions.map(softenDashes),
+    needsOwner: value.needsOwner.map(softenDashes),
+  }
 }
 
 export const replyDraftSchema = z.object({ draft: plain(80, 700) }).strict()
@@ -428,8 +481,37 @@ const schemeLike = /(?<![\p{L}])[a-z][a-z0-9+.-]{1,20}:(?:\/\/|[^\s]*\?)/iu
  * page. No contacts, messengers, other domains or schemes, disguised addresses or promises
  * that the product page does not make.
  */
-export function validateReplyDraft(text: string, allowedUrl: string, productText = '') {
+/**
+ * Text quality of a reply draft. The product link counts as a word; Latin words of the product
+ * and of the request itself (a brand the client named) may be repeated.
+ */
+export function replyTextIssue(text: string, allowedUrl: string, productText = '', source = '') {
+  // Links, addresses and domains have their own hard rules (POLICY_REPLY_URL / _CONTACT).
+  const words = text
+    .split(allowedUrl)
+    .join('ссылка')
+    .replace(/(?:[a-z][a-z0-9+.-]*:\/\/|www\.)\S+/giu, 'ссылка')
+    .replace(/\S+[@＠]\S+/gu, 'почта')
+    .replace(new RegExp(domainLike.source, 'giu'), 'сайт')
+  return textQualityIssue(softenDashes(words), { allow: latinWords(productText, source) })
+}
+
+/** The reply schema with text checks the model can fix in its one repair. */
+export function replyDraftSchemaFor(allowedUrl: string, productText = '', source = '') {
+  return replyDraftSchema.superRefine(({ draft }, context) => {
+    const issue = replyTextIssue(draft, allowedUrl, productText, source)
+    if (issue) context.addIssue({ code: 'custom', path: ['draft'], message: issue })
+  })
+}
+
+export function validateReplyDraft(
+  text: string,
+  allowedUrl: string,
+  productText = '',
+  source = '',
+) {
   replyDraftSchema.parse({ draft: text })
+  text = softenDashes(text)
   validateContent(text)
   if (/@|＠/.test(text) || hasPhoneNumber(text) || obfuscated.test(text) || messengers.test(text))
     throw new Error('POLICY_REPLY_CONTACT')
@@ -443,6 +525,8 @@ export function validateReplyDraft(text: string, allowedUrl: string, productText
   for (const word of ['гарант', 'скидк', 'бесплатн'])
     if (text.toLowerCase().includes(word) && !allowed.includes(word))
       throw new Error('POLICY_REPLY_PROMISE')
+  const issue = replyTextIssue(text, allowedUrl, productText, source)
+  if (issue) throw new TextQualityError(issue, 'POLICY_REPLY_TEXT')
   return text.trim()
 }
 
@@ -450,7 +534,8 @@ export const productPageSchema = z
   .object({
     headline: plain(4, 160),
     forWhom: plainList(1, 5),
-    youGet: plainList(1, 5),
+    /** Ignored: what the buyer gets comes from the server catalog (`buyerCopy`). */
+    youGet: plainList(1, 5).optional(),
     limits: plainList(0, 5),
   })
   .strict()
@@ -470,9 +555,22 @@ export function validateProductOffer(value: unknown, expected: Template, require
   const offer = (required ? productOfferRequiredSchema : productOfferSchema).parse(value)
   const { priceId, page, ...base } = offer
   const spec = validateProduct(base, expected)
-  if (page)
-    validateContent([page.headline, ...page.forWhom, ...page.youGet, ...page.limits].join('\n'))
-  return { spec, priceKopecks: priceId ? priceKopecksFor(priceId) : null, page: page ?? null }
+  if (!page) return { spec, priceKopecks: priceId ? priceKopecksFor(priceId) : null, page: null }
+  validateContent([page.headline, ...page.forWhom, ...page.limits].join('\n'))
+  const issue = productOfferIssues({ ...base, page }, expected)[0]
+  if (issue) throw new TextQualityError(`Страница продукта: ${issue.message}`)
+  // The promise and "what you get" stay server-owned; the model adds the niche: a headline,
+  // who it is for and honest limits.
+  const stored: ProductPageSpec = {
+    headline: softenDashes(page.headline),
+    forWhom: page.forWhom.map(softenDashes),
+    limits: page.limits.map(softenDashes),
+  }
+  return {
+    spec: { ...spec, name: softenDashes(spec.name), audience: softenDashes(spec.audience) },
+    priceKopecks: priceId ? priceKopecksFor(priceId) : null,
+    page: stored,
+  }
 }
 
 export const agentTones = ['plain', 'expert', 'friendly'] as const
@@ -570,3 +668,328 @@ export function applyMutation(
 export const categoryLabels: Readonly<Record<string, string>> = Object.freeze(
   Object.fromEntries(taxonomyCategories.map((c) => [c.id, c.label])),
 )
+
+// ---------------------------------------------------------------------------------------------
+// Text quality of model text that people read: product pages, manager reports, reply drafts and
+// control samples. Russian prose without stray Latin words, other scripts, service words, double
+// dots or broken endings. A failed check is a validation issue: free models get their one repair.
+
+/** Latin words that may stand inside Russian text: brands, file formats, common abbreviations. */
+export const allowedLatinWords: ReadonlySet<string> = new Set([
+  'ozon',
+  'wildberries',
+  'wb',
+  'avito',
+  'yandex',
+  'google',
+  'telegram',
+  'vk',
+  'youtube',
+  'instagram',
+  'whatsapp',
+  'viber',
+  'tilda',
+  'wix',
+  'wordpress',
+  'shopify',
+  'etsy',
+  'amazon',
+  'ebay',
+  'aliexpress',
+  'apple',
+  'iphone',
+  'ipad',
+  'android',
+  'ios',
+  'windows',
+  'excel',
+  'word',
+  'powerpoint',
+  'notion',
+  'figma',
+  'canva',
+  'zoom',
+  'chatgpt',
+  'gpt',
+  'pdf',
+  'png',
+  'jpeg',
+  'jpg',
+  'svg',
+  'txt',
+  'docx',
+  'xlsx',
+  'csv',
+  'mp3',
+  'mp4',
+  'faq',
+  'seo',
+  'smm',
+  'crm',
+  'cms',
+  'api',
+  'url',
+  'it',
+  'ai',
+  'b2b',
+  'b2c',
+  'hr',
+  'pr',
+  'ux',
+  'ui',
+  'sms',
+  'email',
+  'e-mail',
+  'wi-fi',
+  'wifi',
+  'usb',
+  'kpi',
+  'mvp',
+  'utm',
+  'qr',
+  '2d',
+  '3d',
+  '4k',
+  'hd',
+  'led',
+  'tv',
+])
+
+const wordPattern = /[\p{L}\p{N}]+(?:[-'’][\p{L}\p{N}]+)*/gu
+const latinLetter = /\p{Script=Latin}/u
+const cyrillicLetter = /\p{Script=Cyrillic}/u
+/** Letters of any script other than Latin and Cyrillic: Chinese, Greek, Arabic and the rest. */
+const foreignLetter = /(?![\p{Script=Latin}\p{Script=Cyrillic}])\p{L}/u
+const danglingWords = new Set(
+  'и а но или в во на с со к ко по о об от до для из за без при через что как чтобы также'.split(
+    ' ',
+  ),
+)
+/** Words and marks of the system itself: field names, schema and prompt talk. */
+const serviceWords = /(?<![\p{L}])(?:промпт[а-я]*|json|шаблону?\s+['"«][a-z_]+)|[{}[\]`]/iu
+
+const lower = (word: string) => word.toLowerCase().replace(/’/g, "'")
+
+/** Latin words of a source text (a buyer's input, a request snippet): they may be repeated. */
+export function latinWords(...texts: string[]) {
+  const words = new Set<string>()
+  for (const text of texts)
+    for (const [word] of text.matchAll(wordPattern))
+      if (latinLetter.test(word) && !cyrillicLetter.test(word)) words.add(lower(word))
+  return words
+}
+
+function latinAllowed(word: string, extra: ReadonlySet<string>) {
+  const value = lower(word)
+  return (
+    allowedLatinWords.has(value) ||
+    extra.has(value) ||
+    /^[IVXLCDM]+$/.test(word) ||
+    /^\d+[xх]\d+$/iu.test(word) ||
+    /^[a-c]\d{1,2}$/i.test(word)
+  )
+}
+
+/**
+ * Long and en dashes between words become a hyphen; between numbers a plain range; at the start
+ * of a line a list marker. The meaning stays, the typography follows the farm's plain style.
+ */
+export function softenDashes(text: string) {
+  return text
+    .replace(/(\d)[ \t]*[—–][ \t]*(\d)/gu, '$1-$2')
+    .replace(/^([ \t]*)[—–][ \t]*/gmu, '$1- ')
+    .replace(/[ \t]+[—–][ \t]+/gu, ' - ')
+    .replace(/[—–]/gu, '-')
+}
+
+/** Templates where the buyer's own wording and punctuation are the result. */
+const verbatimTemplates: readonly Template[] = ['proofreading', 'translation', 'social']
+const nothingToClarify =
+  /^((?:#{1,3}[ \t]+)?(?:\*\*)?Что уточнить:(?:\*\*)?)[ \t]*\n?(?:[ \t]*[-*•][ \t]*)?(?:уточнений|вопросов|пробелов|недостающих сведений)?\s*(?:нет|не требуется|не требуются)\.?\s*(?![\s\S])/imu
+
+/**
+ * Final touch of a delivered text: no long dashes (unless the buyer wrote them, or the result is
+ * the buyer's own text) and no placeholder bullet «Уточнений нет»: the section says it in a
+ * sentence. Facts are not changed.
+ */
+export function polishOutput(template: Template, input: string, text: string) {
+  let result = text
+  if (structuredSections[template]?.at(-1) === clarifySection)
+    result = result.replace(nothingToClarify, '$1\nВсё нужное есть в исходном тексте.')
+  if (!verbatimTemplates.includes(template) && !/[—–]/u.test(input)) result = softenDashes(result)
+  return result.trimEnd()
+}
+
+/**
+ * Language of a delivered result: Russian without other scripts or English words the buyer
+ * did not use ("оригиналов" written as "originals"). Translations and verbatim posts are exempt.
+ */
+export function resultLanguageIssue(template: Template, input: string, text: string) {
+  if (template === 'translation' || template === 'social') return null
+  return textQualityIssue(text, { allow: latinWords(input), wordsOnly: true })
+}
+
+/** A result schema whose language problems the model may fix in its one repair. */
+export function withResultLanguage<T>(schema: z.ZodType<T>, template: Template, input: string) {
+  return schema.superRefine((value, context) => {
+    const text = Object.values(value as Record<string, unknown>)
+      .flat()
+      .filter((item) => typeof item === 'string')
+      .join('\n')
+    const issue = resultLanguageIssue(template, input, text)
+    if (issue)
+      context.addIssue({
+        code: 'custom',
+        path: [],
+        message: `${issue} Сохрани все факты и формат, исправь только язык.`,
+      })
+  })
+}
+
+export type TextQualityOptions = {
+  /** Extra Latin words allowed here, e.g. from the source text. */
+  allow?: Iterable<string>
+  /** A translation: other languages and scripts are the point of the text. */
+  foreign?: boolean
+  /**
+   * Only the language: other scripts and stray Latin. For results made from a buyer's text,
+   * whose own brackets, quotes and punctuation are not the model's to judge.
+   */
+  wordsOnly?: boolean
+}
+
+/** The first problem of a text for a person to read, as a hint for the model, or null. */
+export function textQualityIssue(text: string, options: TextQualityOptions = {}): string | null {
+  const value = text.trim()
+  if (!value) return 'Пустой текст.'
+  const extra = new Set([...(options.allow ?? [])].map(lower))
+  if (!options.foreign) {
+    const foreign = foreignLetter.exec(value)
+    if (foreign)
+      return `Символы другой письменности («${foreign[0]}»). Пиши только по-русски, без китайских и других иностранных слов.`
+    for (const [word] of value.matchAll(wordPattern)) {
+      if (!latinLetter.test(word) || latinAllowed(word, extra)) continue
+      // "SEO-подборка" is Russian: each part of a hyphenated word is checked on its own.
+      for (const part of word.split(/[-'’]/u)) {
+        if (!latinLetter.test(part)) continue
+        if (cyrillicLetter.test(part))
+          return `Слово «${word}» смешивает латиницу и кириллицу. Пиши по-русски, с пробелами между словами.`
+        if (!latinAllowed(part, extra))
+          return `Латинское слово «${word}» в русском тексте. Замени его русским словом; служебные коды, статусы, названия полей и идентификаторы не пиши.`
+      }
+    }
+  }
+  if (options.wordsOnly) return null
+  const service = serviceWords.exec(value)
+  if (service)
+    return `Служебные слова или символы («${service[0]}»). Пиши обычный текст для человека.`
+  if (/[—–]/u.test(value)) return 'Не используй длинное тире «—», пиши дефис или запятую.'
+  if (/(?<!\.)\.\.(?!\.)/u.test(value)) return 'Две точки подряд. Поставь одну точку.'
+  const count = (char: string) => value.split(char).length - 1
+  if (count('«') !== count('»') || count('(') !== count(')'))
+    return 'Незакрытые кавычки или скобки. Похоже, текст оборван.'
+  const last = value.match(/([\p{L}]+)[^\p{L}]*$/u)?.[1]?.toLowerCase()
+  if (/[,;:(«„-]$/u.test(value) || (last && danglingWords.has(last) && !/[.!?…]$/u.test(value)))
+    return 'Текст обрывается на середине фразы. Допиши мысль до конца.'
+  return null
+}
+
+/** A text that failed `textQualityIssue`; `reason` is the Russian explanation. */
+export class TextQualityError extends Error {
+  constructor(
+    readonly reason: string,
+    code = 'TEXT_QUALITY_FAILED',
+  ) {
+    super(code)
+  }
+}
+
+export function assertTextQuality(texts: string[], options: TextQualityOptions = {}) {
+  for (const text of texts) {
+    const issue = textQualityIssue(text, options)
+    if (issue) throw new TextQualityError(issue)
+  }
+}
+
+/**
+ * Words that tie a page headline to its service type. A page about grooming checklists cannot
+ * sell product descriptions: the headline must name what the service delivers.
+ */
+export const templateTopicWords: Readonly<Record<Template, readonly string[]>> = Object.freeze({
+  description: ['описани', 'карточ', 'товар'],
+  faq: ['вопрос', 'ответ', 'faq'],
+  social: ['пост', 'публикац', 'соцсет'],
+  proofreading: ['вычит', 'исправ', 'ошибк', 'корректур', 'правк', 'грамот', 'редакт'],
+  translation: ['перевод', 'перевест'],
+  summary: ['кратк', 'пересказ', 'выжимк', 'резюме', 'конспект', 'сводк', 'содержани', 'главно'],
+  email: ['ответ', 'письм', 'отзыв'],
+  landing: ['страниц', 'лендинг', 'сайт'],
+  proposal: ['предложени', 'кп'],
+  instruction: ['инструкц', 'шаг', 'памятк', 'регламент'],
+  lesson: ['урок', 'учебн', 'объясн', 'занят'],
+  job_post: ['ваканси', 'найм', 'сотрудник', 'соискател'],
+})
+
+export function headlineMatchesTemplate(template: Template, headline: string) {
+  const value = headline.toLowerCase().replace(/ё/g, 'е')
+  return templateTopicWords[template].some((stem) =>
+    new RegExp(`(?<![\\p{L}])${stem}`, 'u').test(value),
+  )
+}
+
+/** Model text of a product offer that reaches buyers or the owner, with its field paths. */
+function offerTexts(offer: {
+  name: string
+  audience: string
+  inputLabel: string
+  page?: { headline: string; forWhom: string[]; limits: string[] }
+}): [(string | number)[], string][] {
+  return [
+    [['name'], offer.name],
+    [['audience'], offer.audience],
+    [['inputLabel'], offer.inputLabel],
+    ...(offer.page
+      ? ([
+          [['page', 'headline'], offer.page.headline],
+          ...offer.page.forWhom.map((t, i): [(string | number)[], string] => [
+            ['page', 'forWhom', i],
+            t,
+          ]),
+          ...offer.page.limits.map((t, i): [(string | number)[], string] => [
+            ['page', 'limits', i],
+            t,
+          ]),
+        ] as [(string | number)[], string][])
+      : []),
+  ]
+}
+
+/** Problems of an offer page: text quality and a headline about this service type. */
+export function productOfferIssues(
+  offer: Parameters<typeof offerTexts>[0],
+  template: Template,
+): { path: (string | number)[]; message: string }[] {
+  const issues: { path: (string | number)[]; message: string }[] = []
+  for (const [path, text] of offerTexts(offer)) {
+    const issue = textQualityIssue(softenDashes(text))
+    if (issue) issues.push({ path, message: issue })
+  }
+  if (offer.page && !headlineMatchesTemplate(template, offer.page.headline))
+    issues.push({
+      path: ['page', 'headline'],
+      message: `Заголовок должен называть эту услугу («${recipes[template].delivery}»), а не другую идею: используй одно из слов ${templateTopicWords[
+        template
+      ]
+        .map((stem) => `«${stem}…»`)
+        .join(', ')}. Остальные поля ответа оставь как были.`,
+    })
+  return issues
+}
+
+/** The architect's offer for a product built from an idea, with text checks the model can fix. */
+export function productOfferSchemaFor(template: Template) {
+  return productOfferRequiredSchema.superRefine((offer, context) => {
+    for (const issue of productOfferIssues(offer, template))
+      context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  })
+}

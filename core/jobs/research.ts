@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { config, usesSourcePosts } from '../config'
+import { isDemoStand } from '../stand'
 import { audit, query, transaction } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model, search } from '../providers'
@@ -16,11 +17,16 @@ import {
   validateInput,
   validateTemplateInput,
   validateProductOffer,
-  productOfferRequiredSchema,
+  productOfferSchemaFor,
+  headlineMatchesTemplate,
+  latinWords,
+  textQualityIssue,
+  TextQualityError,
   type Template,
   type ProductSpec,
   type ProductPageSpec,
 } from '../policy'
+import { serviceName } from '../service-names'
 import type { Job } from '../queue'
 import { reviewContext } from './text-context'
 import { generateText } from './generate-text'
@@ -45,9 +51,20 @@ export async function research(job: Job) {
   // publishes the product on the storefront with a listed price and a page.
   const ideaId: string | undefined = savedJob!.payload.ideaId
   const [sourceIdea] = ideaId
-    ? await query('SELECT id,title,research,strategy_id FROM ideas WHERE id=$1', [ideaId])
+    ? await query(
+        'SELECT id,title,research,strategy_id,suggested_template,is_demo FROM ideas WHERE id=$1',
+        [ideaId],
+      )
     : []
   if (ideaId && !sourceIdea) throw new Error('INPUT_IDEA_UNKNOWN')
+  // A demo idea never becomes a product on a stand with a real model.
+  if (sourceIdea?.is_demo && !isDemoStand()) {
+    await audit('idea_research_skipped', 'Демо-идея не собирается в продукт на рабочем стенде.', {
+      ideaId: sourceIdea.id,
+      jobId: job.id,
+    })
+    return
+  }
   const businessIdea = sourceIdea
     ? {
         title: sourceIdea.title as string,
@@ -220,28 +237,24 @@ export async function research(job: Job) {
     let blockedReason: string | undefined
     let offerPrice: number | null = null
     let offerPage: ProductPageSpec | null = null
-    if (critique.verdict === 'PASS') {
+    // An idea is built only into the service type it was accepted for.
+    if (critique.verdict === 'PASS' && sourceIdea && sourceIdea.suggested_template !== template)
+      blockedReason = `Тип услуги не совпадает с идеей: идея для «${serviceName(sourceIdea.suggested_template)}», сборка для «${serviceName(template)}».`
+    if (critique.verdict === 'PASS' && !blockedReason) {
       try {
         const offer = validateProductOffer(
           businessIdea
-            ? await model({
-                role: 'Архитектор',
-                key: `${job.id}:${template}:build`,
-                reservationId,
-                context: {
-                  ...context,
-                  idea,
-                  critique,
-                  allowedTemplate: template,
-                  prices: priceIds.map((id) => ({ id, price: formatRub(priceKopecksFor(id)) })),
-                  defaultPriceId: priceIds.find(
-                    (id) => priceKopecksFor(id) === defaultPriceKopecks[template],
-                  ),
-                  pageTask:
-                    'Выбери priceId только из prices (обычно defaultPriceId). page: headline (обещание одной фразой), forWhom (кому подходит), youGet (что получит покупатель), limits (честные ограничения). Простой текст без HTML.',
-                },
-                schema: productOfferRequiredSchema,
-                demoValue: demoProductOffer(template, businessIdea),
+            ? await architectOffer(job, template, reservationId, {
+                ...context,
+                idea,
+                critique,
+                allowedTemplate: template,
+                service: { ...context.service, name: serviceName(template) },
+                prices: priceIds.map((id) => ({ id, price: formatRub(priceKopecksFor(id)) })),
+                defaultPriceId: priceIds.find(
+                  (id) => priceKopecksFor(id) === defaultPriceKopecks[template],
+                ),
+                pageTask: `Выбери priceId только из prices (обычно defaultPriceId). page.headline: одна короткая фраза о том, что получит покупатель этой услуги («${serviceName(template)}») в нише идеи, тема услуги обязательна. page.forWhom: кому подходит, по аудитории идеи. page.limits: честные ограничения. Что входит в результат, сервер пишет сам: youGet не нужен. Простой русский текст без HTML, латинских слов (кроме названий брендов), служебных кодов и длинного тире.`,
               })
             : await model({
                 role: 'Архитектор',
@@ -295,6 +308,13 @@ export async function research(job: Job) {
           sample: sample.text,
         }
         validateOutput(template, sample.text)
+        // The sample is shown on the product page: the same text rules as the page itself.
+        // Latin words of the server's own fixture (PNG, PDF) may be repeated.
+        const sampleIssue = textQualityIssue(sample.text, {
+          allow: latinWords(fixture),
+          foreign: template === 'translation',
+        })
+        if (sampleIssue) throw new TextQualityError(`Контрольный пример: ${sampleIssue}`)
         const quality = await model({
           role: 'Проверяющий',
           key: `${job.id}:${template}:fixture-review`,
@@ -314,7 +334,9 @@ export async function research(job: Job) {
           reason: quality.reason,
         }
       } catch (error) {
-        if (
+        if (error instanceof TextQualityError) blockedReason = error.reason
+        else if (error instanceof ArchitectRejected) blockedReason = error.reason
+        else if (
           error instanceof Error &&
           /POLICY|TEMPLATE|UNTRUSTED|OUTPUT_FORMAT|OUTPUT_SOURCE/.test(error.message)
         )
@@ -438,6 +460,27 @@ export async function research(job: Job) {
             db,
           )
         }
+      } else if (sourceIdea && !accepted) {
+        // The farm could not build it alone: the idea waits for the owner with the reason.
+        const reason = `Сборка не прошла проверку: ${buildFailure(blockedReason, critique)}`
+        await query(
+          "UPDATE ideas SET status='needs_human',build_error=$2,build_failed_at=now() WHERE id=$1 AND status='accepted'",
+          [sourceIdea.id, reason.slice(0, 600)],
+          db,
+        )
+        await audit(
+          'idea_build_failed',
+          `Идея «${sourceIdea.title}»: ${reason}`.slice(0, 900),
+          {
+            ideaId: sourceIdea.id,
+            hypothesisId: id,
+            template,
+            title: sourceIdea.title,
+            reason,
+            isDemo: config().MODEL_PROVIDER === 'demo',
+          },
+          db,
+        )
       }
       await audit(
         publish ? (occupied ? 'product_updated' : 'product_created') : 'hypothesis_reviewed',
@@ -459,4 +502,67 @@ export async function research(job: Job) {
     if (publication?.error) throw new Error(publication.error)
   }
   await closeReservation(reservationId)
+}
+
+/** The architect's page failed its text checks even after the model's one repair. */
+class ArchitectRejected extends Error {
+  constructor(readonly reason: string) {
+    super('ARCHITECT_OFFER_REJECTED')
+  }
+}
+
+/**
+ * The architect writes the page of a product built from an idea. Text checks are part of the
+ * schema, so a free model fixes its answer once; a second failure keeps the product off the site.
+ */
+async function architectOffer(
+  job: Job,
+  template: Template,
+  reservationId: string,
+  context: Record<string, unknown> & { businessIdea?: { title: string; audience: string } },
+) {
+  const key = `${job.id}:${template}:build`
+  const demo = demoProductOffer(template, context.businessIdea)
+  // The demo headline is the idea title; it must name the service like a real answer would.
+  if (!headlineMatchesTemplate(template, demo.page.headline))
+    demo.page = { ...demo.page, headline: serviceName(template) }
+  try {
+    return await model({
+      role: 'Архитектор',
+      key,
+      reservationId,
+      context,
+      schema: productOfferSchemaFor(template),
+      demoValue: demo,
+    })
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'MODEL_SCHEMA_INVALID') throw error
+    const [event] = await query(
+      `SELECT data FROM audit_events WHERE kind='model_schema_validation' AND data->>'callKey'=$1
+       ORDER BY id DESC LIMIT 1`,
+      [key],
+    )
+    const issue = event?.data?.issues?.[0]?.message
+    throw new ArchitectRejected(
+      `страница продукта не прошла проверку текста и после исправления${issue ? `. ${issue}` : '.'}`,
+    )
+  }
+}
+
+const buildCodes: Record<string, string> = {
+  POLICY_CONTENT_BLOCKED: 'текст задевает запрещённую тему.',
+  UNTRUSTED_INSTRUCTION_BLOCKED: 'в тексте есть команды для модели.',
+  OUTPUT_FORMAT_REQUIRED: 'контрольный пример не в формате услуги.',
+  TEMPLATE_MISMATCH: 'модель выбрала другой тип услуги.',
+  TEMPLATE_UNSUPPORTED: 'неизвестный тип услуги.',
+  TRANSLATION_LANGUAGE_REQUIRED: 'в контрольном примере перевода нет языка.',
+}
+
+/** Why a build failed, in words for the owner. */
+function buildFailure(blocked: string | undefined, critique: { verdict: string; reason: string }) {
+  if (blocked)
+    return /^[A-Z_]+$/.test(blocked)
+      ? (buildCodes[blocked] ?? 'серверная проверка отклонила продукт.')
+      : blocked
+  return `критик ${critique.verdict === 'REVISE' ? 'вернул гипотезу на доработку' : 'отклонил гипотезу'}. ${critique.reason}`
 }

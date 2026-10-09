@@ -95,7 +95,9 @@ describe('farm day in demo mode', () => {
       expect(priceList).toContain(product.price_kopecks)
       expect(product.published_at).toBeTruthy()
       expect(product.page.headline).toBeTruthy()
-      expect(product.page.youGet.length).toBeGreaterThan(0)
+      expect(product.page.forWhom.length).toBeGreaterThan(0)
+      // What the buyer gets stays the server catalog's promise, never the model's words.
+      expect(product.page.youGet).toBeUndefined()
       expect(product.idea_status).toBe('productized')
       const [version] = await query(
         'SELECT price_kopecks,page FROM product_versions WHERE product_id=$1 AND version=$2',

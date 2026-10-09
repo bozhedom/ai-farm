@@ -63,9 +63,67 @@ const excludedHosts =
 const nonRequestPath =
   /\/(?:register|registration|signup|sign-up|login|auth|reestr|contragent|catalog|blog|articles?|media|tutorials?|cart\/company)(?:\/|$)|\/(?:order|projects?)\/(?:add|create)(?:\/|$)/u
 const excludedWork =
-  /(?:курсов[а-я]*|дипломн[а-я]*|контрольн[а-я]*)\s+работ|(?:написа[а-я]*|заказ[а-я]*)\s+реферат|помощь\s+студент|студенческ[а-я]*\s+работ/u
+  /(?:курсов[а-я]*|дипломн[а-я]*|контрольн[а-я]*)\s+работ|(?:написа[а-я]*|заказ[а-я]*)\s+реферат|помощь\s+студент|студенческ[а-я]*\s+работ|(?<![\p{L}])(?:для|к|в|по)\s+(?:дипломн[а-я]*|диплом[ау]?|курсов(?:ой|ую|ая))(?![\p{L}])|(?<![\p{L}])(?:вкр|выпускн[а-я]*\s+квалификационн)/u
 const closedRequest =
-  /(?:заказ|проект|задание|тендер)\s+(?:уже\s+)?(?:закрыт|завершен|выполнен|в архиве)|заказчик\s+выбрал\s+исполнителя|исполнитель\s+(?:уже\s+)?выбран|project (?:closed|completed)/u
+  /(?:заказ|проект|задание|тендер)\s+(?:уже\s+)?(?:закрыт|завершен|выполнен|в архиве)|заказчик\s+выбрал\s+исполнителя|исполнитель\s+(?:уже\s+)?(?:выбран|определен)|(?<![\p{L}])(?:закрыт|закрыто|закрыта|в архиве|архивный)(?![\p{L}])|project (?:closed|completed)/u
+
+const months: Record<string, number> = {
+  январ: 0,
+  феврал: 1,
+  март: 2,
+  апрел: 3,
+  мая: 4,
+  май: 4,
+  июн: 5,
+  июл: 6,
+  август: 7,
+  сентябр: 8,
+  октябр: 9,
+  ноябр: 10,
+  декабр: 11,
+}
+/** Requests older than this are not offered to the owner: the client has moved on. */
+export const leadMaxAgeDays = 60
+
+/**
+ * The newest date a search title or snippet shows: full dates, "12 марта 2022", or a bare year
+ * (not "2000 знаков"). Null when the text has none: a snippet without a date proves nothing.
+ */
+export function newestLeadDate(text: string, now = new Date()): Date | null {
+  const value = normalize(text)
+  const dates: Date[] = []
+  const year = (raw: string) => (raw.length === 2 ? 2000 + Number(raw) : Number(raw))
+  const push = (y: number, m: number, d: number) => {
+    if (y < 1995 || y > now.getUTCFullYear() + 1 || m < 0 || m > 11 || d < 1 || d > 31) return
+    dates.push(new Date(Date.UTC(y, m, d)))
+  }
+  for (const match of value.matchAll(/(?<!\d)(\d{1,2})[./](\d{1,2})[./](\d{4}|\d{2})(?!\d)/gu))
+    push(year(match[3]!), Number(match[2]) - 1, Number(match[1]))
+  for (const match of value.matchAll(/(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)/gu))
+    push(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  for (const match of value.matchAll(
+    /(?<!\d)(\d{1,2})\s+(январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)[а-я]*\s+(\d{4})(?!\d)/gu,
+  ))
+    push(Number(match[3]), months[match[2]!]!, Number(match[1]))
+  if (!dates.length)
+    for (const match of value.matchAll(
+      /(?<![\d.,])(19\d{2}|20\d{2})(?![\d.,])(?!\s*(?:знак|символ|слов|руб|р\.|₽|шт|страниц|тыс|строк|позиц|товар|к(?![\p{L}])))/gu,
+    ))
+      push(Number(match[1]), 11, 31)
+  return dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null
+}
+
+/** Why a search result is not worth a reply: closed, student work, or older than `leadMaxAgeDays`. */
+export function staleLead(title: string, snippet: string, now = new Date()) {
+  const text = normalize(`${title} ${snippet}`).replace(/\s+/g, ' ')
+  if (closedRequest.test(text)) return 'LEAD_CLOSED' as const
+  // Work for students is excluded from the pilot; older saved leads are checked again too.
+  if (excludedWork.test(text)) return 'LEAD_EXCLUDED' as const
+  const newest = newestLeadDate(`${title} ${snippet}`, now)
+  if (newest && now.getTime() - newest.getTime() > leadMaxAgeDays * 86400000)
+    return 'LEAD_TOO_OLD' as const
+  return null
+}
 export const requestText =
   /(?:^|[^\p{L}])(?:ищу|ищем|требуется|требуются|нужен|нужна|нужны)\s+|(?:^|[.!?]\s+)(?:нам\s+)?(?:нужно|необходимо)\s+(?:написать|составить|подготовить|отредактировать|перевести|сократить|создать)|looking for (?:a |an )?(?:writer|editor|translator|copywriter)/u
 const supplierTitle =
@@ -76,7 +134,11 @@ const supplierText =
 const normalize = (value: string) => value.normalize('NFKC').toLowerCase().replace(/ё/g, 'е')
 
 /** Snippet qualification can yield zero candidates; it proves neither freshness nor demand. */
-export function selectCustomerCandidates(template: Template, evidence: Evidence[]): Evidence[] {
+export function selectCustomerCandidates(
+  template: Template,
+  evidence: Evidence[],
+  now = new Date(),
+): Evidence[] {
   templateSchema.parse(template)
   const seen = new Set<string>()
   return evidence
@@ -105,6 +167,7 @@ export function selectCustomerCandidates(template: Template, evidence: Evidence[
         nonRequestPath.test(url.pathname) ||
         excludedWork.test(text) ||
         closedRequest.test(text) ||
+        !!staleLead(item.title, item.snippet, now) ||
         !customerDiscoveryRules[template].topic.test(text)
       )
         return false

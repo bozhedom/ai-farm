@@ -1,7 +1,12 @@
 import { config, usesSourcePosts } from '../config'
 import { model } from '../providers'
 import { demoResult } from '../providers/demo'
-import { outputSchemaForTemplate, type ProductSpec } from '../policy'
+import {
+  outputSchemaForTemplate,
+  polishOutput,
+  withResultLanguage,
+  type ProductSpec,
+} from '../policy'
 import {
   sourceSocialDelivery,
   sourcePostsSchema,
@@ -19,14 +24,24 @@ import {
 
 type TextProduct = Pick<ProductSpec, 'template' | 'promise'>
 
-/** Use the saved promise: changing providers never silently changes an accepted order's recipe. */
-export async function generateText(args: {
+type GenerateArgs = {
   key: string
   reservationId: string
   product: TextProduct
   input: string
   approach: string
-}) {
+}
+
+/**
+ * Use the saved promise: changing providers never silently changes an accepted order's recipe.
+ * The server polishes the result (long dashes, an empty "what to clarify") without new facts.
+ */
+export async function generateText(args: GenerateArgs) {
+  const result = await generateRaw(args)
+  return { ...result, text: polishOutput(args.product.template, args.input, result.text) }
+}
+
+async function generateRaw(args: GenerateArgs): Promise<{ text: string }> {
   if (args.product.template === 'social' && args.product.promise === sourceSocialDelivery) {
     validateSourcePostInput(args.input)
     const result = await model({
@@ -60,7 +75,7 @@ export async function generateText(args: {
         ),
         outputFormat: structuredTextFormat(template),
       },
-      schema: structuredTextSchema(template),
+      schema: withResultLanguage(structuredTextSchema(template), template, args.input),
       // Demo follows the original branch below; this fallback stays explicitly synthetic.
       demoValue: { text: demoResult(template, args.input) },
     })
@@ -74,7 +89,11 @@ export async function generateText(args: {
     key: args.key,
     reservationId: args.reservationId,
     context: generationContext(args.product, args.input, args.approach),
-    schema: outputSchemaForTemplate(args.product.template),
+    schema: withResultLanguage(
+      outputSchemaForTemplate(args.product.template),
+      args.product.template,
+      args.input,
+    ),
     demoValue: { text: demoResult(args.product.template, args.input) },
   })
 }

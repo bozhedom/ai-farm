@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { config } from '../config'
+import { isDemoStand } from '../stand'
 import { audit, query, transaction, type Connection } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model } from '../providers'
@@ -8,6 +9,7 @@ import { reportSchemaFor, validateReport, type ReportNarrative } from '../policy
 import { enqueue, type Job } from '../queue'
 import { applyIdeaDecisions } from '../ideas'
 import { categoryById } from '../taxonomy'
+import { formatRub } from '../storefront'
 import { errorCode, mustPropagate, withLease } from './lease'
 
 export type ReportKind = 'daily' | 'weekly'
@@ -25,36 +27,93 @@ export function reportPeriod(kind: ReportKind, key: string, now = new Date()) {
   return { start: new Date(now.getTime() - 7 * 86400000), end: now }
 }
 
-/** Server numbers for the period. The manager model receives them; it never computes them. */
+/**
+ * Server numbers for the period. The manager model receives them; it never computes them. On a
+ * stand with a real model, demo ideas, products, orders, leads and calls are left out.
+ */
 export async function reportMetrics(start: Date, end: Date, db?: Connection) {
   const [row] = await query(
-    `SELECT
-      (SELECT count(*)::int FROM ideas WHERE created_at>=$1 AND created_at<$2) AS ideas,
-      (SELECT count(*)::int FROM ideas WHERE created_at>=$1 AND created_at<$2 AND critique->>'verdict'='PASS') AS passed,
-      (SELECT count(*)::int FROM ideas WHERE created_at>=$1 AND created_at<$2 AND critique->>'verdict'='REVISE') AS revise,
-      (SELECT count(*)::int FROM ideas WHERE created_at>=$1 AND created_at<$2 AND critique->>'verdict'='BLOCKED') AS blocked,
-      (SELECT count(*)::int FROM ideas WHERE created_at>=$1 AND created_at<$2 AND duplicate_of IS NOT NULL) AS duplicates,
-      (SELECT count(*)::int FROM ideas WHERE created_at>=$1 AND created_at<$2 AND status IN ('accepted','productized')) AS accepted,
-      (SELECT count(*)::int FROM ideas WHERE created_at>=$1 AND created_at<$2 AND status='needs_human') AS "needsHuman",
-      (SELECT count(*)::int FROM jobs WHERE kind='scout' AND created_at>=$1 AND created_at<$2 AND status='done') AS "scoutsDone",
+    `WITH i AS (SELECT * FROM ideas WHERE created_at>=$1 AND created_at<$2 AND (NOT is_demo OR $3))
+     SELECT
+      (SELECT count(*)::int FROM i) AS ideas,
+      (SELECT count(*)::int FROM i WHERE critique->>'verdict'='PASS') AS passed,
+      (SELECT count(*)::int FROM i WHERE critique->>'verdict'='REVISE') AS revise,
+      (SELECT count(*)::int FROM i WHERE critique->>'verdict'='BLOCKED') AS blocked,
+      (SELECT count(*)::int FROM i WHERE duplicate_of IS NOT NULL) AS duplicates,
+      (SELECT count(*)::int FROM i WHERE status IN ('accepted','productized')) AS accepted,
+      (SELECT count(*)::int FROM i WHERE status='needs_human') AS "needsHuman",
+      (SELECT count(*)::int FROM jobs j WHERE kind='scout' AND created_at>=$1 AND created_at<$2 AND status='done'
+        AND ($3 OR NOT EXISTS (SELECT 1 FROM ideas d WHERE d.job_id=j.id AND d.is_demo))) AS "scoutsDone",
       (SELECT count(*)::int FROM jobs WHERE kind='scout' AND created_at>=$1 AND created_at<$2 AND status='failed') AS "scoutsFailed",
-      (SELECT count(*)::int FROM products WHERE visibility='public' AND status='sandbox') AS "publicProducts",
-      (SELECT count(*)::int FROM opportunities WHERE first_seen_at>=$1 AND first_seen_at<$2) AS leads,
-      (SELECT count(*)::int FROM orders WHERE delivered_at>=$1 AND delivered_at<$2) AS "ordersDelivered",
-      (SELECT COALESCE(sum(charged_kopecks),0)::int FROM tool_calls WHERE created_at>=$1 AND created_at<$2) AS "spentKopecks",
+      (SELECT count(*)::int FROM products WHERE visibility='public' AND status='sandbox' AND (NOT is_demo OR $3)) AS "publicProducts",
+      (SELECT count(*)::int FROM opportunities WHERE first_seen_at>=$1 AND first_seen_at<$2 AND (NOT is_demo OR $3)) AS leads,
+      (SELECT count(*)::int FROM orders o WHERE delivered_at>=$1 AND delivered_at<$2
+        AND ($3 OR NOT EXISTS (SELECT 1 FROM product_versions v WHERE v.product_id=o.product_id
+          AND v.version::text=o.product_snapshot->>'version' AND v.is_demo))) AS "ordersDelivered",
+      (SELECT COALESCE(sum(charged_kopecks),0)::int FROM tool_calls WHERE created_at>=$1 AND created_at<$2 AND (NOT is_demo OR $3)) AS "spentKopecks",
       (SELECT COALESCE(sum(revenue_kopecks),0)::int FROM orders) AS "realRevenueKopecks"`,
-    [start, end],
+    [start, end, isDemoStand()],
     db,
   )
   return row as Record<string, number>
 }
 
+const statusWords: Record<string, string> = {
+  new: 'ждёт решения',
+  accepted: 'принята, ферма сделает сама',
+  needs_human: 'нужен человек',
+  rejected: 'отклонена',
+  productized: 'продукт уже на сайте',
+}
+const verdictWords: Record<string, string> = {
+  PASS: 'критик принял',
+  REVISE: 'критик вернул на доработку',
+  BLOCKED: 'критик отклонил',
+}
+
+/**
+ * What the manager model sees: the same server numbers in words, Russian labels instead of
+ * status codes. Codes in the context ended up in the text ("ужеaccepted", "REVISE").
+ */
+export function reportContextFor(
+  metrics: Record<string, number>,
+  ranking: Awaited<ReturnType<typeof reportRanking>>,
+) {
+  return {
+    numbers: {
+      'Идей найдено': metrics.ideas ?? 0,
+      'Принято критиком': metrics.passed ?? 0,
+      'Возвращено на доработку': metrics.revise ?? 0,
+      'Отклонено критиком': metrics.blocked ?? 0,
+      Повторов: metrics.duplicates ?? 0,
+      'Ферма сделает сама': metrics.accepted ?? 0,
+      'Нужен человек': metrics.needsHuman ?? 0,
+      'Разведок завершено': metrics.scoutsDone ?? 0,
+      'Разведок с ошибкой': metrics.scoutsFailed ?? 0,
+      'Продуктов на сайте': metrics.publicProducts ?? 0,
+      'Найдено запросов клиентов': metrics.leads ?? 0,
+      'Выдано заказов': metrics.ordersDelivered ?? 0,
+      'Расходы на модели': formatRub(metrics.spentKopecks ?? 0),
+      'Настоящая выручка': formatRub(metrics.realRevenueKopecks ?? 0),
+    },
+    ranking: ranking.map((item, index) => ({
+      ideaId: item.ideaId,
+      Место: index + 1,
+      Название: item.title,
+      Балл: item.rankScore,
+      Статус: statusWords[item.status] ?? 'ждёт решения',
+      Критик: verdictWords[item.verdict] ?? 'нет решения',
+      Отрасль: item.industry,
+    })),
+  }
+}
+
 async function reportRanking(start: Date, end: Date, db?: Connection) {
   const rows = await query(
     `SELECT i.id,i.title,i.rank_score,i.status,i.category,i.farm_executable,i.critique->>'verdict' AS verdict
-     FROM ideas i WHERE created_at>=$1 AND created_at<$2
+     FROM ideas i WHERE created_at>=$1 AND created_at<$2 AND (NOT is_demo OR $3)
      ORDER BY rank_score DESC,created_at,id LIMIT 10`,
-    [start, end],
+    [start, end, isDemoStand()],
     db,
   )
   return rows.map((row) => ({
@@ -93,20 +152,25 @@ export async function report(job: Job) {
   let narrative: ReportNarrative | null = null
   let narrativeError: string | null = null
   try {
+    const ideaIds = ranking.map((item) => item.ideaId)
     narrative = validateReport(
       await model({
         role: 'Руководитель',
         key: `${job.id}:report`,
         reservationId,
         context: {
-          period: { kind, start: start.toISOString(), end: end.toISOString() },
-          metrics,
-          ranking,
-          task: 'Напиши короткий отчёт руководителя для владельца по серверным цифрам и рейтингу. headline: главный итог одной фразой. summary: 2-4 предложения простыми словами. ideaComments: по одному короткому комментарию к лучшим идеям из ranking (ideaId только из списка). nextActions: что ферма сделает дальше. needsOwner: что требует решения владельца. Не меняй цифры, не ранжируй заново, не обещай доход. Тестовые оплаты не выручка.',
+          period: {
+            kind: kind === 'weekly' ? 'неделя' : 'день',
+            start: start.toISOString(),
+            end: end.toISOString(),
+          },
+          ...reportContextFor(metrics, ranking),
+          task: 'Напиши короткий отчёт руководителя для владельца по серверным цифрам numbers и рейтингу ranking. headline: главный итог одной фразой. summary: 2-4 предложения простыми словами. ideaComments: по одному короткому комментарию к лучшим идеям из ranking (поле ideaId только из списка, в тексте называй идею по названию, без идентификаторов). nextActions: что ферма сделает дальше. needsOwner: что требует решения владельца. Пиши по-русски без английских слов, кодов и длинного тире. Не меняй цифры, не ранжируй заново, не обещай доход. Цены, бюджет и лимиты задаёт сервер: не предлагай владельцу их менять или подтверждать. Тестовые оплаты не выручка.',
         },
-        schema: reportSchemaFor(ranking.map((item) => item.ideaId)),
+        schema: reportSchemaFor(ideaIds),
         demoValue: demoReport(metrics, ranking),
       }),
+      ideaIds,
     )
   } catch (error) {
     if (mustPropagate(error)) throw error
@@ -169,13 +233,15 @@ export async function scheduleIdeaResearch(db: Connection, limit: number, schedu
   if (!room) return []
   const candidates = await query(
     `SELECT i.id,i.suggested_template,i.strategy_id,i.title,
-       EXISTS(SELECT 1 FROM products p WHERE p.template=i.suggested_template AND p.visibility='public' AND p.status='sandbox') AS listed
+       EXISTS(SELECT 1 FROM products p WHERE p.template=i.suggested_template AND p.visibility='public' AND p.status='sandbox'
+         AND (NOT p.is_demo OR $1)) AS listed
      FROM ideas i
      WHERE i.status='accepted' AND i.farm_executable AND i.suggested_template IS NOT NULL
+     AND (NOT i.is_demo OR $1)
      AND NOT EXISTS(SELECT 1 FROM hypotheses h WHERE h.idea_id=i.id)
      AND NOT EXISTS(SELECT 1 FROM jobs j WHERE j.dedupe_key='idea-research:'||i.id::text)
      ORDER BY listed,i.rank_score DESC,i.created_at,i.id LIMIT 50`,
-    [],
+    [isDemoStand()],
     db,
   )
   const picked: { id: string; template: string }[] = []

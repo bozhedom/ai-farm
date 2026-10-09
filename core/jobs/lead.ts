@@ -1,18 +1,20 @@
 import { config } from '../config'
+import { isDemoStand } from '../stand'
 import { audit, query } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model, search, searchQuery } from '../providers'
 import { demoReplyDraft } from '../providers/demo'
 import {
   POLICY,
-  replyDraftSchema,
+  replyDraftSchemaFor,
   templateSchema,
   validateReplyDraft,
   type Evidence,
   type Template,
 } from '../policy'
 import type { Job } from '../queue'
-import { requestText, selectCustomerCandidates } from '../customer-discovery'
+import { requestText, selectCustomerCandidates, staleLead } from '../customer-discovery'
+import { serviceName } from '../service-names'
 import { saveOpportunities } from '../opportunities'
 import { topicById } from '../taxonomy'
 import { formatRub, publicSlug } from '../storefront'
@@ -24,6 +26,7 @@ type ProductRow = {
   slug: string
   status: string
   visibility: string
+  is_demo: boolean
   spec: { name?: string; promise?: string }
   price_kopecks: number
   topic_id: string | null
@@ -45,11 +48,23 @@ export function leadTopic(title: string) {
 
 async function loadProduct(id: string) {
   const [row] = await query<ProductRow>(
-    `SELECT p.id,p.template,p.slug,p.status,p.visibility,p.spec,p.price_kopecks,i.topic_id
+    `SELECT p.id,p.template,p.slug,p.status,p.visibility,p.is_demo,p.spec,p.price_kopecks,i.topic_id
      FROM products p LEFT JOIN ideas i ON i.id=p.idea_id WHERE p.id=$1`,
     [id],
   )
   return row
+}
+
+/**
+ * Replies point buyers at the product page: only products buyers can open qualify. A demo
+ * product is hidden from the site on a stand with a real model, so it gets no replies there.
+ */
+function onStorefront(product: ProductRow) {
+  return (
+    product.status === 'sandbox' &&
+    product.visibility === 'public' &&
+    (!product.is_demo || isDemoStand())
+  )
 }
 
 /** Drafts made today across all products: a daily cap, not a per-job one. */
@@ -73,7 +88,7 @@ async function draftReply(
   lead: { id: string; title: string; snippet: string },
 ) {
   const publicUrl = publicProductUrl(product.slug)
-  const name = product.spec.name || product.template
+  const name = serviceName(product.template, product.spec.name || product.template)
   const promise = product.spec.promise || ''
   let draft: string | null = null
   let failure: string | null = null
@@ -99,12 +114,17 @@ async function draftReply(
         ],
         task: 'Подготовь черновик отклика в поле draft.',
       },
-      schema: replyDraftSchema,
+      schema: replyDraftSchemaFor(publicUrl, `${name} ${promise}`, `${lead.title} ${lead.snippet}`),
       demoValue: {
         draft: demoReplyDraft({ name, promise, priceKopecks: product.price_kopecks, publicUrl }),
       },
     })
-    draft = validateReplyDraft(value.draft, publicUrl, `${name} ${promise}`)
+    draft = validateReplyDraft(
+      value.draft,
+      publicUrl,
+      `${name} ${promise}`,
+      `${lead.title} ${lead.snippet}`,
+    )
   } catch (error) {
     if (mustPropagate(error)) throw error
     failure = errorCode(error, 'REPLY_DRAFT_FAILED')
@@ -145,7 +165,7 @@ export async function lead(job: Job) {
   const product = await loadProduct(job.payload.productId || '')
   if (!product) throw new Error('INPUT_PRODUCT_UNKNOWN')
   // Replies point buyers at the product page: only products on the storefront qualify.
-  if (product.status !== 'sandbox' || product.visibility !== 'public') return
+  if (!onStorefront(product)) return
   templateSchema.parse(product.template)
   const reservationId = await reserveBudget(`lead:${job.id}`, 'lead')
   const evidence = await search(product.template, `${job.id}:customers`, reservationId, 'customers')
@@ -168,14 +188,23 @@ export async function lead(job: Job) {
     ? await query(
         `SELECT id,title,snippet FROM opportunities
          WHERE (product_id=$1 OR (product_id IS NULL AND template=$2)) AND reply_draft IS NULL
-         AND reply_error IS NULL AND stage='new'
+         AND reply_error IS NULL AND stage='new' AND (NOT is_demo OR $4)
          ORDER BY first_seen_at,id LIMIT $3`,
-        [product.id, product.template, room],
+        [product.id, product.template, room + 20, isDemoStand()],
       )
     : []
   let drafted = 0
   for (const item of pending) {
     if (room <= 0) break
+    // Closed or old requests saved earlier get no reply and do not use the daily limit.
+    const stale = staleLead(item.title, item.snippet)
+    if (stale) {
+      await query('UPDATE opportunities SET reply_error=$2,updated_at=now() WHERE id=$1', [
+        item.id,
+        stale,
+      ])
+      continue
+    }
     if (await draftReply(job, reservationId, product, item as any)) drafted++
     room--
   }
@@ -203,14 +232,13 @@ async function leadDraft(job: Job) {
     (
       await query(
         `SELECT id FROM products WHERE template=$1 AND status='sandbox' AND visibility='public'
-         ORDER BY published_at DESC NULLS LAST,id LIMIT 1`,
-        [item.template],
+         AND (NOT is_demo OR $2) ORDER BY published_at DESC NULLS LAST,id LIMIT 1`,
+        [item.template, isDemoStand()],
       )
     )[0]?.id
   const product = productId ? await loadProduct(productId) : undefined
   if (!product) throw new Error('INPUT_PRODUCT_UNKNOWN')
-  if (product.status !== 'sandbox' || product.visibility !== 'public')
-    throw new Error('INPUT_PRODUCT_NOT_PUBLIC')
+  if (!onStorefront(product)) throw new Error('INPUT_PRODUCT_NOT_PUBLIC')
   const reservationId = await reserveBudget(`lead:${job.id}`, 'lead')
   const ok = await draftReply(job, reservationId, product, item as any)
   if (!ok)

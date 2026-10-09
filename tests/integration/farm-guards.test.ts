@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { pool, query } from '../../core/db'
+import { pool, query, transaction } from '../../core/db'
 import * as settings from '../../core/config'
 import * as providers from '../../core/providers'
+import { reportMetrics, reportPeriod, scheduleIdeaResearch } from '../../core/jobs/report'
 import { claimJob, enqueue, finishJob } from '../../core/queue'
 import { runJob } from '../../core/jobs/run'
 import { requestScout, scheduleWork } from '../../core/autonomy'
@@ -164,6 +165,65 @@ describe('farm guards from the review', () => {
     await expect(setProductVisibility(product!.id, { visibility: 'public' })).rejects.toThrow(
       'PRODUCT_DEMO_ONLY',
     )
+  })
+
+  it('keeps demo ideas, products and numbers out of a stand with a real model', async () => {
+    const idea = await acceptedIdea('marketplaces-cards')
+    expect(idea.is_demo).toBe(true)
+    const live = () =>
+      vi.spyOn(settings, 'config').mockReturnValue({
+        ...settings.config(),
+        MODEL_PROVIDER: 'openrouter',
+        SEARCH_PROVIDER: 'searxng',
+      })
+    live()
+    // The research job queued by the demo report refuses the demo idea.
+    await runAll(['research'])
+    expect(await query('SELECT id FROM products WHERE idea_id=$1', [idea.id])).toHaveLength(0)
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='idea_research_skipped'"),
+    ).toHaveLength(1)
+    await query("DELETE FROM jobs WHERE dedupe_key LIKE 'idea-research:%'")
+    expect(await transaction((db) => scheduleIdeaResearch(db, 5, false))).toEqual([])
+    const day = reportPeriod('daily', 'report:daily:' + new Date().toISOString().slice(0, 10))
+    expect((await reportMetrics(day.start, day.end)).ideas).toBe(0)
+    // On the demo stand the same idea is built, but its product gets no replies on a live stand.
+    vi.restoreAllMocks()
+    expect(await transaction((db) => scheduleIdeaResearch(db, 5, false))).toHaveLength(1)
+    await runAll(['research'])
+    const [product] = await query('SELECT * FROM products WHERE idea_id=$1', [idea.id])
+    expect(product!.is_demo).toBe(true)
+    live()
+    await enqueue('lead', 'lead:2026-10-09:demo-product', { productId: product!.id })
+    await runAll(['lead'])
+    expect(await query('SELECT id FROM opportunities WHERE reply_draft IS NOT NULL')).toHaveLength(
+      0,
+    )
+    expect(
+      await query("SELECT id FROM audit_events WHERE kind='lead_search_completed'"),
+    ).toHaveLength(0)
+  })
+
+  it('leaves an idea with the owner when its product page fails the text check', async () => {
+    const idea = await acceptedIdea('marketplaces-cards')
+    const original = providers.model
+    vi.spyOn(providers, 'model').mockImplementation(async (args: any) => {
+      const value: any = await original(args)
+      // A free model's real answer: the page of another idea, with stray English.
+      if (args.role === 'Архитектор')
+        return {
+          ...value,
+          page: { ...value.page, headline: 'Цифровой чек-листа ухода после груминга' },
+        }
+      return value
+    })
+    await runAll(['research'])
+    expect(await query('SELECT id FROM products WHERE idea_id=$1', [idea.id])).toHaveLength(0)
+    const [after] = await query('SELECT status,build_error FROM ideas WHERE id=$1', [idea.id])
+    expect(after!.status).toBe('needs_human')
+    expect(after!.build_error).toMatch(/^Сборка не прошла проверку: Страница продукта: Заголовок/)
+    const [event] = await query("SELECT data FROM audit_events WHERE kind='idea_build_failed'")
+    expect(event!.data).toMatchObject({ ideaId: idea.id, reason: after!.build_error })
   })
 
   it('masks phone numbers without a plus sign in lead snippets', async () => {
