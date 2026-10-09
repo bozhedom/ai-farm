@@ -1,11 +1,19 @@
 <script setup lang="ts">
 // Public buyer site frame: one test-mode line, own header and footer, nothing from the office.
+import { savedOrders } from '~/utils/public-site'
+
 const props = defineProps<{
   notice?: string | null
   seller?: { name: string; contact: string; termsUrl: string | null } | null
   active?: 'catalog' | 'order'
 }>()
 useHead({ htmlAttrs: { class: 'ds' } })
+// With exactly one order saved on this device, «Мой заказ» opens it; otherwise the list.
+const myOrder = ref('/#orders')
+onMounted(() => {
+  const saved = savedOrders()
+  if (saved.length === 1) myOrder.value = `/order/${saved[0]!.token}`
+})
 </script>
 
 <template>
@@ -26,7 +34,7 @@ useHead({ htmlAttrs: { class: 'ds' } })
         <nav class="site-nav" aria-label="Разделы">
           <NuxtLink to="/#catalog" :class="{ strong: props.active === 'catalog' }">Услуги</NuxtLink>
           <NuxtLink to="/#how" class="hide-sm">Как это работает</NuxtLink>
-          <NuxtLink to="/#orders" :class="{ strong: props.active === 'order' }">Мой заказ</NuxtLink>
+          <NuxtLink :to="myOrder" :class="{ strong: props.active === 'order' }">Мой заказ</NuxtLink>
         </nav>
       </div>
     </header>
