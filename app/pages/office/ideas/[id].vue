@@ -105,6 +105,31 @@ const checkStatus: Record<string, string> = {
         <p>{{ idea.critique.reason }}</p>
       </section>
 
+      <section
+        v-if="idea.buildError"
+        class="card verdict-card is-err rise"
+        aria-label="Сборка не прошла проверку"
+      >
+        <strong>Сборка не прошла проверку</strong>
+        <p>{{ idea.buildError }}</p>
+        <p class="muted small">
+          Продукт на сайт не вышел, сама ферма эту идею больше не собирает. Решите: доделать вручную
+          или убрать из рейтинга.<template v-if="idea.buildFailedAt">
+            Проверка была {{ when(idea.buildFailedAt) }}.</template
+          >
+        </p>
+        <div v-if="idea.status === 'needs_human'" class="row actions">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            :disabled="!!busy"
+            @click="setStatus('rejected', 'Идея убрана из рейтинга.')"
+          >
+            Убрать из рейтинга
+          </button>
+        </div>
+      </section>
+
       <OfficeIdeaFacts :idea="idea" full class="facts-block" />
 
       <div class="cols">
@@ -116,7 +141,11 @@ const checkStatus: Record<string, string> = {
           </p>
           <div v-if="idea.product" class="row product-actions">
             <a
-              v-if="idea.product.visibility === 'public' && idea.product.status === 'sandbox'"
+              v-if="
+                idea.product.visibility === 'public' &&
+                idea.product.status === 'sandbox' &&
+                !idea.product.demoHidden
+              "
               class="btn btn-primary btn-sm"
               :href="idea.product.publicUrl"
               target="_blank"
@@ -166,7 +195,9 @@ const checkStatus: Record<string, string> = {
               </div>
             </li>
           </ul>
-          <p v-else class="muted">Ещё не собирали. Руководитель решит после дневного отчёта.</p>
+          <p v-else-if="!idea.buildError" class="muted">
+            Ещё не собирали. Руководитель решит после дневного отчёта.
+          </p>
         </section>
         <section v-else class="card card-tint-clay rise">
           <h2>План запуска</h2>
@@ -281,6 +312,10 @@ const checkStatus: Record<string, string> = {
 }
 .verdict-card p {
   margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.verdict-card .actions {
+  margin-top: var(--s-3);
 }
 .facts-block {
   margin-bottom: var(--s-5);

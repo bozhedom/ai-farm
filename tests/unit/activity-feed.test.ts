@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { cleanText, feedItems, feedKinds, plural, type FeedContext } from '../../core/activity-feed'
+import {
+  buildErrorText,
+  cleanText,
+  feedItems,
+  feedKinds,
+  plural,
+  type FeedContext,
+} from '../../core/activity-feed'
 
 const ctx: FeedContext = {
   label: (id) => ({ a: 'А', b: 'Б', c: 'В', d: 'Г' })[id] ?? '?',
@@ -126,6 +133,61 @@ describe('owner feed in human words', () => {
     expect(cleanText('А — Б → В · Г')).toBe('А, Б В, Г')
     expect(text('unknown_kind', {})).toEqual([])
     expect(text('job_error', { kind: 'scout', terminal: false })).toEqual([])
+  })
+
+  it('explains failed builds and late or replaced payments', () => {
+    expect(feedKinds).toEqual(
+      expect.arrayContaining([
+        'idea_build_failed',
+        'late_payment_received',
+        'payment_hash_replaced',
+      ]),
+    )
+    expect(
+      text('idea_build_failed', {
+        ideaId: 'i1',
+        title: 'Меню для кафе',
+        reason:
+          'Сборка не прошла проверку: Контрольный пример: Текст обрывается на середине фразы. Допиши мысль до конца.',
+      }),
+    ).toEqual([
+      'Сборка по идее «Меню для кафе» не прошла проверку: контрольный пример: Текст обрывается на середине фразы.',
+    ])
+    expect(text('late_payment_received', { orderId: 'order-1042-0000' })).toEqual([
+      'Заказ №1042: перевод пришёл после срока счёта. Верните его вручную.',
+    ])
+    expect(text('payment_hash_replaced', { orderId: 'order-1042-0000' })).toEqual([
+      'Заказ №1042: неверный номер перевода заменён найденным переводом.',
+    ])
+  })
+
+  it('rewrites model instructions in a build failure as what went wrong', () => {
+    expect(
+      buildErrorText(
+        'Сборка не прошла проверку: Страница продукта: Не используй длинное тире «—», пиши дефис или запятую.',
+      ),
+    ).toBe('Страница продукта: В тексте длинное тире.')
+    expect(
+      buildErrorText(
+        'Сборка не прошла проверку: Латинское слово «site» в русском тексте. Замени его русским словом; служебные коды, статусы, названия полей и идентификаторы не пиши.',
+      ),
+    ).toBe('Латинское слово «site» в русском тексте.')
+    expect(
+      buildErrorText(
+        'Сборка не прошла проверку: критик вернул гипотезу на доработку. Мало фактов.',
+      ),
+    ).toBe('Критик вернул продукт на доработку. Мало фактов.')
+    expect(
+      buildErrorText('Сборка не прошла проверку: Контрольный пример отклонён (REVISE): Мало.'),
+    ).toBe('Контрольный пример вернули на доработку: Мало.')
+    expect(
+      buildErrorText(
+        'Сборка не прошла проверку: страница продукта не прошла проверку текста и после исправления. Заголовок должен называть эту услугу («описания товаров»), а не другую идею: используй одно из слов «описани…», «карточ…». Остальные поля ответа оставь как были.',
+      ),
+    ).toBe(
+      'Страница продукта не прошла проверку текста и после исправления. Заголовок страницы не называет услугу «описания товаров».',
+    )
+    expect(buildErrorText('')).toBe('Серверная проверка отклонила продукт.')
   })
 
   it('uses Russian plurals', () => {

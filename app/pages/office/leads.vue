@@ -2,7 +2,7 @@
 import type { OfficeLead } from '../../../core/contracts/office'
 import { copyText, officeApi, useOfficeAction, useOfficeToast } from '~/composables/office/actions'
 import { useOfficeLeads } from '~/composables/office/data'
-import { reasonText } from '~/composables/office/errors'
+import { leadSkipCodes, lowerFirst, reasonText } from '~/composables/office/errors'
 import { ago, domain, withCount } from '~/composables/office/format'
 import { leadBadge, templateLabel } from '~/composables/office/labels'
 
@@ -175,8 +175,11 @@ const subtitle = computed(() => {
             <span class="eyebrow">Отклик</span>
           </div>
           <div v-if="lead.replyDraft" class="reply">{{ lead.replyDraft }}</div>
+          <p v-else-if="lead.replyError && leadSkipCodes.has(lead.replyError)" class="reply muted">
+            Отклик не готовим: {{ lowerFirst(reasonText(lead.replyError)) }}
+          </p>
           <p v-else-if="lead.replyError" class="reply reply-err">
-            Отклик не получился: {{ reasonText(lead.replyError) }}
+            Отклик не получился: {{ lowerFirst(reasonText(lead.replyError)) }}
           </p>
           <p v-else class="reply muted">
             Отклика пока нет: за день ферма готовит несколько откликов, остальные по кнопке.
@@ -185,7 +188,8 @@ const subtitle = computed(() => {
             <button
               v-if="!lead.replyDraft && isNew(lead)"
               type="button"
-              class="btn btn-primary btn-sm"
+              class="btn btn-sm"
+              :class="{ 'btn-primary': !leadSkipCodes.has(lead.replyError || '') }"
               :disabled="!!busy"
               @click="redraft(lead)"
             >

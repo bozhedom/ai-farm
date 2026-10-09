@@ -30,6 +30,7 @@ const messages: Record<string, string> = {
   IDEA_TAKE_FORBIDDEN: 'Взять в работу можно только идею, где нужен человек.',
   IDEA_ALREADY_TAKEN: 'У вас уже есть идея в работе. Сначала верните её в рейтинг.',
   IDEA_STATUS_CHANGE_FORBIDDEN: 'Так поменять статус идеи нельзя.',
+  LEAD_DRAFT_LIMIT: 'Для этого запроса отклик уже готовили три раза.',
   LEAD_SEARCH_LIMIT: 'На сегодня поиски клиентов закончились. Лимит в настройках.',
   PRODUCT_NOT_PUBLIC: 'Сначала покажите продукт на сайте.',
   INVALID_INPUT: 'Проверьте введённые данные.',
@@ -49,7 +50,27 @@ const reasonCodes: Record<string, string> = {
   OPENROUTER_RESPONSE_ERROR: 'OpenRouter ответил ошибкой. Попробуйте позже.',
   BUDGET_BLOCKED: 'Не хватило дневного бюджета.',
   PRODUCT_NOT_PUBLIC: 'Продукт не на сайте, ссылку в отклик не поставить.',
+  INPUT_PRODUCT_NOT_PUBLIC: 'Продукт не на сайте, ссылку в отклик не поставить.',
+  PAID_AFTER_EXPIRY: 'Перевод пришёл после срока счёта, верните его вручную.',
+  LEAD_CLOSED: 'Запрос уже закрыт.',
+  LEAD_EXCLUDED: 'Такие задачи не берём.',
+  LEAD_TOO_OLD: 'Запрос старше 60 дней.',
+  POLICY_REPLY_TEXT: 'Отклик не прошёл проверку текста.',
+  POLICY_REPLY_URL: 'В отклике была чужая ссылка.',
+  POLICY_REPLY_CONTACT: 'В отклике были контакты, их не пишем.',
+  POLICY_REPLY_PROMISE: 'Отклик обещал то, чего ферма не делает.',
+  REPLY_DRAFT_FAILED: 'Модель не смогла написать отклик.',
+  TEXT_QUALITY_FAILED: 'Текст модели не прошёл проверку.',
+  REPORT_TEXT_REJECTED: 'Отчёт не прошёл проверку текста.',
+  FREE_CALL_STILL_RUNNING: 'Модель ещё отвечает, повторим позже.',
+  UNCERTAIN_CALL_REQUIRES_REVIEW: 'Исход вызова модели неясен, нужна проверка.',
 }
+/** «Запрос уже закрыт» -> «запрос уже закрыт» after a colon; acronyms stay. */
+export const lowerFirst = (value: string) =>
+  /^\p{Lu}\p{Ll}+(?!\p{L})/u.test(value) ? value[0]!.toLowerCase() + value.slice(1) : value
+
+/** Lead codes that mean «no reply on purpose», not a failure. */
+export const leadSkipCodes = new Set(['LEAD_CLOSED', 'LEAD_EXCLUDED', 'LEAD_TOO_OLD'])
 /**
  * A reason from the server may be a bare code (POLICY_CONTENT_BLOCKED). People see words; the
  * code stays in the technical log.

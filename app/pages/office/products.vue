@@ -9,13 +9,28 @@ const { data, status, pending, refresh } = useOfficeProducts()
 const { data: overview } = useOfficeOverview()
 const { busy, run } = useOfficeAction()
 const filter = ref<'all' | 'public' | 'private'>('all')
+/** Buyers see it: public, and not a demo product on a stand with a real model. */
+const onSite = (p: OfficeProduct) => p.visibility === 'public' && !p.demoHidden
 const products = computed(() =>
-  (data.value || []).filter((p) => filter.value === 'all' || p.visibility === filter.value),
+  (data.value || []).filter(
+    (p) => filter.value === 'all' || (filter.value === 'public') === onSite(p),
+  ),
 )
 const hasDemo = computed(() => (data.value || []).some((p) => p.isDemo))
-const publicCount = computed(
-  () => (data.value || []).filter((p) => p.visibility === 'public').length,
-)
+const publicCount = computed(() => (data.value || []).filter(onSite).length)
+function siteBadge(p: OfficeProduct) {
+  if (p.visibility === 'public' && p.demoHidden)
+    return { label: 'Демо, на сайте не виден', cls: 'badge-off' }
+  return p.visibility === 'public'
+    ? { label: 'На сайте', cls: 'badge-ok' }
+    : { label: 'Скрыт', cls: 'badge-off' }
+}
+function siteLine(p: OfficeProduct) {
+  if (p.demoHidden) return 'Демо-продукт. Сайт показывает его только на демо-стенде.'
+  if (p.publishedAt && p.visibility === 'public') return `На сайте с ${day(p.publishedAt)}.`
+  if (p.publishedAt) return `Был на сайте с ${day(p.publishedAt)}.`
+  return 'На сайт ещё не выходил.'
+}
 
 function toggleVisibility(product: OfficeProduct) {
   const next = product.visibility === 'public' ? 'private' : 'public'
@@ -105,25 +120,15 @@ const canOrder = computed(() => overview.value?.mode === 'running')
         :id="`product-${p.id}`"
         :key="p.id"
         class="card product rise"
-        :class="{ 'is-hidden': p.visibility === 'private' }"
+        :class="{ 'is-hidden': !onSite(p) }"
       >
         <div class="p-head">
-          <span class="badge" :class="p.visibility === 'public' ? 'badge-ok' : 'badge-off'">{{
-            p.visibility === 'public' ? 'На сайте' : 'Скрыт'
-          }}</span>
+          <span class="badge" :class="siteBadge(p).cls">{{ siteBadge(p).label }}</span>
           <span v-if="p.needsRefresh" class="badge badge-wait">Нужно обновить</span>
           <span class="price num">{{ rub(p.priceKopecks) }}</span>
         </div>
         <h2>{{ p.name }}</h2>
-        <p class="muted small">
-          {{
-            p.publishedAt && p.visibility === 'public'
-              ? `На сайте с ${day(p.publishedAt)}.`
-              : p.publishedAt
-                ? `Был на сайте с ${day(p.publishedAt)}.`
-                : 'На сайт ещё не выходил.'
-          }}
-        </p>
+        <p class="muted small">{{ siteLine(p) }}</p>
         <dl class="p-stats">
           <div>
             <dt>Заказов</dt>
@@ -149,7 +154,7 @@ const canOrder = computed(() => overview.value?.mode === 'running')
         </p>
         <div class="p-actions">
           <a
-            v-if="p.visibility === 'public'"
+            v-if="onSite(p)"
             class="btn btn-sm btn-primary"
             :href="p.publicUrl"
             target="_blank"

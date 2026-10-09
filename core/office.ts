@@ -4,7 +4,14 @@ import { config, usesSourcePosts } from './config'
 import { audit, query, transaction } from './db'
 import { budgetSummary } from './budget'
 import { enqueue } from './queue'
-import { activityFeed, cleanText, feedContext, feedItems, type FeedEvent } from './activity-feed'
+import {
+  activityFeed,
+  buildErrorText,
+  cleanText,
+  feedContext,
+  feedItems,
+  type FeedEvent,
+} from './activity-feed'
 import { orderTitle, serviceName } from './service-names'
 import {
   agentLabels,
@@ -20,6 +27,7 @@ import { categoryById, taxonomyCategories, topicById } from './taxonomy'
 import { sourceSocialDelivery } from './source-posts'
 import { publicSlug } from './storefront'
 import { beforeDailyHour, nextDailyRun } from './autonomy'
+import { isDemoStand } from './stand'
 import type {
   BudgetCategory,
   EvolutionRound,
@@ -249,6 +257,8 @@ function ideaView(
     ownerNote: row.owner_note,
     ownerStatus: row.owner_status === 'taken' ? 'taken' : null,
     ownerTakenAt: iso(row.owner_taken_at),
+    buildError: row.build_error ? buildErrorText(row.build_error) : null,
+    buildFailedAt: iso(row.build_failed_at),
     product: product
       ? {
           id: product.id,
@@ -256,6 +266,7 @@ function ideaView(
           publicUrl: publicUrl(product.slug),
           visibility: product.visibility,
           status: product.status,
+          demoHidden: !!product.is_demo && !isDemoStand(),
         }
       : null,
   }
@@ -265,7 +276,7 @@ function ideaView(
 async function ideaProducts(ids: string[]) {
   if (!ids.length) return []
   return query(
-    `SELECT DISTINCT ON (idea_id) id,idea_id,slug,template,spec,visibility,status FROM products
+    `SELECT DISTINCT ON (idea_id) id,idea_id,slug,template,spec,visibility,status,is_demo FROM products
      WHERE idea_id=ANY($1::uuid[]) ORDER BY idea_id,(status='sandbox') DESC,created_at DESC`,
     [ids],
   )
@@ -571,6 +582,7 @@ export async function officeProducts(filter: unknown = {}): Promise<OfficeProduc
     ideaId: p.idea_id,
     ideaTitle: p.idea_title ?? null,
     isDemo: p.is_demo,
+    demoHidden: p.is_demo && !isDemoStand(),
     needsRefresh:
       p.template === 'social' &&
       usesSourcePosts(provider) &&
@@ -1040,6 +1052,14 @@ const errorTexts: [RegExp, string][] = [
   [/_HTTP_429$/, 'Модель перегружена, повторим позже.'],
   [/_HTTP_\d+$/, 'Модель недоступна.'],
   [/^UNCERTAIN_CALL_REQUIRES_REVIEW$/, 'Исход вызова модели неясен, нужна проверка.'],
+  [/^FREE_CALL_STILL_RUNNING$/, 'Модель ещё отвечает, повторим позже.'],
+  [/^POLICY_REPLY_TEXT$/, 'Отклик не прошёл проверку текста.'],
+  [/^POLICY_REPLY_(URL|CONTACT)$/, 'В отклике были чужие ссылки или контакты.'],
+  [/^POLICY_REPLY_PROMISE$/, 'Отклик обещал то, чего ферма не делает.'],
+  [/^REPORT_TEXT_REJECTED$/, 'Отчёт не прошёл проверку текста.'],
+  [/^TEXT_QUALITY_FAILED$/, 'Текст модели не прошёл проверку.'],
+  [/^INPUT_PRODUCT_NOT_PUBLIC$/, 'Продукт не на сайте.'],
+  [/^PAID_AFTER_EXPIRY$/, 'Перевод пришёл после срока счёта, верните его вручную.'],
   [/^RESEARCH_WINDOW_CLOSED$/, 'Сезон закрыт.'],
   [/^(STOPPED|PAUSED)$/, 'Ферма была на паузе или остановлена.'],
   [/BUDGET/, 'Не хватило бюджета.'],

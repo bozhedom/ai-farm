@@ -89,6 +89,9 @@ export type OfficeIdea = {
   /** Added by the UX pass: the owner took this "needs a person" idea into work. */
   ownerStatus?: 'taken' | null
   ownerTakenAt?: string | null
+  /** Why the farm could not build a product from this idea (ideas.build_error), in words. */
+  buildError?: string | null
+  buildFailedAt?: string | null
   /** Added by the UX pass: the newest product built from this idea. */
   product?: {
     id: string
@@ -96,6 +99,8 @@ export type OfficeIdea = {
     publicUrl: string
     visibility: 'private' | 'public'
     status: string
+    /** A demo product on a stand with a real model: the storefront does not show it. */
+    demoHidden?: boolean
   } | null
 }
 export type OfficeIdeaList = {
@@ -200,6 +205,8 @@ export type OfficeProduct = {
   /** Added by the UX pass: title of the idea the product grew from. */
   ideaTitle?: string | null
   isDemo: boolean
+  /** A demo product on a stand with a real model: the storefront does not show it. */
+  demoHidden?: boolean
   needsRefresh: boolean
   publicUrl: string
   stats: { orders: number; delivered: number; leads: number }

@@ -16,6 +16,10 @@ export const paymentErrors: Record<string, string> = {
   RPC_UNAVAILABLE: 'RPC временно недоступен. Сверка повторится автоматически.',
   TX_ALREADY_USED:
     'Хеш перевода на сумму этого счёта уже закреплён за другим заказом. Сверьте переводы вручную.',
+  PAID_AFTER_EXPIRY:
+    'Перевод пришёл после срока счёта, верните его вручную. Заказ не выполнялся, тестовый перевод не считается выручкой.',
+  REPLACED_BY_SCAN:
+    'Такого перевода в сети нет. Его заменил найденный перевод на точную сумму счёта.',
   PAID_ORDERS_LIMIT:
     'Тестовая оплата подтверждена, но дневной предел оплаченных заказов с сайта исчерпан. Исполнение не запускалось.',
   BUDGET_BLOCKED:
@@ -93,7 +97,8 @@ export function orderProgress(
       ? jobErrors[job?.error_code] ||
         (!job && paymentErrorText(order.payment_error)) ||
         'Автоматические попытки остановлены. Причина и исходный материал сохранены.'
-      : (order.payment_error === 'TX_ALREADY_USED' && paymentErrorText(order.payment_error)) ||
+      : (['TX_ALREADY_USED', 'PAID_AFTER_EXPIRY'].includes(order.payment_error) &&
+          paymentErrorText(order.payment_error)) ||
         'За сутки после окончания счёта платёж не подтверждён. Автоматическая выдача остановлена, история перевода сохранена.'
   } else if (order.status === 'expired') {
     title = 'Срок счёта истёк'
@@ -205,6 +210,12 @@ export function publicProgress(
           'needs_attention',
           'Оплата получена, но сегодня не успеем',
           'На сегодня мы набрали заказов больше, чем можем сделать. Владелец посмотрит ваш заказ вручную.',
+        )
+      if (!paid && order.payment_error === 'PAID_AFTER_EXPIRY')
+        return say(
+          'needs_attention',
+          'Заказ не начат',
+          'Перевод пришёл после срока. Продавец вернёт его.',
         )
       if (!paid && order.payment_error === 'TX_ALREADY_USED')
         return say(

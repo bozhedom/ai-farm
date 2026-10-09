@@ -7,7 +7,8 @@ import { claimJob, enqueue, finishJob } from '../../core/queue'
 import { runJob } from '../../core/jobs/run'
 import { requestScout, scheduleWork } from '../../core/autonomy'
 import { publicCatalog } from '../../core/public-catalog'
-import { requestLeadDraft, setProductVisibility } from '../../core/office'
+import { officeIdea, requestLeadDraft, setProductVisibility } from '../../core/office'
+import { activityFeed } from '../../core/activity-feed'
 import { saveOpportunities } from '../../core/opportunities'
 import { POLICY } from '../../core/policy'
 import { taxonomyTopics } from '../../core/taxonomy'
@@ -224,6 +225,14 @@ describe('farm guards from the review', () => {
     expect(after!.build_error).toMatch(/^Сборка не прошла проверку: Страница продукта: Заголовок/)
     const [event] = await query("SELECT data FROM audit_events WHERE kind='idea_build_failed'")
     expect(event!.data).toMatchObject({ ideaId: idea.id, reason: after!.build_error })
+    // The owner reads the reason without the model's instructions, in the card and the feed.
+    const view = await officeIdea(idea.id)
+    expect(view.buildError).toMatch(/^Страница продукта: Заголовок страницы не называет услугу/)
+    expect(view.buildError).not.toMatch(/используй|оставь/)
+    expect(view.buildFailedAt).toBeTruthy()
+    const line = (await activityFeed(50)).find((item) => item.kind === 'idea_build_failed')
+    expect(line?.text).toMatch(/^Сборка по идее «.+» не прошла проверку: страница продукта: /)
+    expect(line?.link).toBe(`/office/ideas/${idea.id}`)
   })
 
   it('masks phone numbers without a plus sign in lead snippets', async () => {

@@ -51,6 +51,44 @@ export function cleanText(text: unknown, max = 160) {
   return value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value
 }
 
+/**
+ * Instructions the text check gives the model («Допиши мысль до конца»), rewritten as what the
+ * owner needs to know: what was wrong. Order matters: whole sentences first.
+ */
+const buildErrorRewrites: [RegExp, string][] = [
+  [/^\s*Сборка не прошла проверку:\s*/iu, ''],
+  [/\s*Пиши только по-русски[^.]*\./gu, ''],
+  [/\s*Пиши по-русски[^.]*\./gu, ''],
+  [/\s*Замени его русским словом[^.]*\./gu, ''],
+  [/\s*Пиши обычный текст для человека\./gu, ''],
+  [/\s*Сохрани все факты и формат[^.]*\./gu, ''],
+  [/\s*Остальные поля ответа оставь как были\./gu, ''],
+  [/Не используй длинное тире[^.]*\./gu, 'В тексте длинное тире.'],
+  [/(Две точки подряд\.)\s*Поставь одну точку\./gu, '$1'],
+  [/(Текст обрывается на середине фразы\.)\s*Допиши мысль до конца\./gu, '$1'],
+  [
+    /Заголовок должен называть эту услугу \((«[^»]*»)\)[^.]*\./gu,
+    'Заголовок страницы не называет услугу $1.',
+  ],
+  [/отклонён \(REVISE\)/gu, 'вернули на доработку'],
+  [/\s*\((?:REVISE|BLOCKED|PASS)\)/gu, ''],
+  [/гипотезу/gu, 'продукт'],
+]
+
+/** Why a build from an idea failed, as the owner reads it: no model instructions or codes. */
+export function buildErrorText(text: unknown) {
+  let value = String(text ?? '').trim()
+  for (const [pattern, replacement] of buildErrorRewrites)
+    value = value.replace(pattern, replacement)
+  value = value.replace(/\s+/g, ' ').trim()
+  if (!value) return 'Серверная проверка отклонила продукт.'
+  return value[0]!.toUpperCase() + value.slice(1)
+}
+
+/** «Контрольный пример» -> «контрольный пример» inside a sentence; acronyms stay. */
+const lowerFirst = (value: string) =>
+  /^\p{Lu}\p{Ll}+(?!\p{L})/u.test(value) ? value[0]!.toLowerCase() + value.slice(1) : value
+
 /** «Заказ №1042» for an order id the context knows; plain «Заказ» otherwise. */
 const orderOf = (ctx: FeedContext, id: unknown) => orderTitle(ctx.orders.get(String(id))?.number)
 const named = (ctx: FeedContext, id: unknown) => agentName(ctx.label(String(id)))
@@ -100,6 +138,13 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
         `Идея «${cleanText(d.title)}» требует человека. Оставили в рейтинге с планом запуска.`,
         `/office/ideas/${d.ideaId}`,
       )
+    case 'idea_build_failed': {
+      const reason = buildErrorText(d.reason)
+      return item(
+        `Сборка по идее «${cleanText(d.title)}» не прошла проверку: ${lowerFirst(reason)}`,
+        `/office/ideas/${d.ideaId}`,
+      )
+    }
     case 'idea_taken':
       return item(`Вы взяли идею в работу: «${cleanText(d.title)}».`, `/office/ideas/${d.ideaId}`)
     case 'idea_released':
@@ -153,6 +198,16 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
         `/office/orders/${d.orderId}`,
       )
     }
+    case 'late_payment_received':
+      return item(
+        `${orderOf(ctx, d.orderId)}: перевод пришёл после срока счёта. Верните его вручную.`,
+        `/office/orders/${d.orderId}`,
+      )
+    case 'payment_hash_replaced':
+      return item(
+        `${orderOf(ctx, d.orderId)}: неверный номер перевода заменён найденным переводом.`,
+        `/office/orders/${d.orderId}`,
+      )
     case 'order_delivered': {
       const order = ctx.orders.get(String(d.orderId))
       const minutes =
@@ -252,6 +307,7 @@ export const feedKinds = [
   'idea_found',
   'idea_reviewed',
   'idea_needs_human',
+  'idea_build_failed',
   'idea_taken',
   'idea_released',
   'product_published',
@@ -261,6 +317,8 @@ export const feedKinds = [
   'lead_draft_ready',
   'lead_search_completed',
   'test_payment_confirmed',
+  'late_payment_received',
+  'payment_hash_replaced',
   'order_delivered',
   'job_error',
   'evolution_rotated',

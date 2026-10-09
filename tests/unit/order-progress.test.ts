@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { orderProgress } from '../../core/order-progress'
+import { orderProgress, publicProgress } from '../../core/order-progress'
 
 const now = new Date('2026-10-01T10:00:00Z')
 const state = {
@@ -85,4 +85,19 @@ it('offers owner resolution only for test review and keeps a closed order distin
   })
   expect(closed.detail).toContain('без выдачи')
   expect(closed.detail).toContain('деньги не возвращались')
+})
+it('tells the owner and the buyer about a transfer after the invoice ended', () => {
+  const order = {
+    status: 'manual_review',
+    payment_mode: 'sepolia',
+    payment_error: 'PAID_AFTER_EXPIRY',
+    paid_at: null,
+    expires_at: '2026-10-01T09:00:00Z',
+  }
+  expect(orderProgress(order, null, state, now).detail).toMatch(
+    /^Перевод пришёл после срока счёта, верните его вручную\./,
+  )
+  expect(publicProgress(order, null, null, state, now).message.detail).toBe(
+    'Перевод пришёл после срока. Продавец вернёт его.',
+  )
 })
