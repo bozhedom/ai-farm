@@ -1,4 +1,12 @@
-import { createError, defineEventHandler, getCookie, getHeader, getRequestURL, setHeader } from 'h3'
+import {
+  createError,
+  defineEventHandler,
+  getCookie,
+  getHeader,
+  getRequestURL,
+  setHeader,
+  setResponseStatus,
+} from 'h3'
 import { config } from '../../core/config'
 import { validSession } from '../../core/auth'
 import { stampClientIp } from '../utils/client'
@@ -58,6 +66,8 @@ export const orderPagePolicy = [
   "form-action 'self'",
 ].join('; ')
 
+const badPathPage = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Неверная ссылка. AI Farm</title><style>body{margin:0;font:16px/1.5 system-ui,sans-serif;background:#f6f3ec;color:#1d1f1c;display:grid;place-items:center;min-height:100vh;padding:16px;box-sizing:border-box}main{max-width:420px}h1{font-size:24px;margin:0 0 8px}a{color:#1e6b46;font-weight:600}</style></head><body><main><h1>Неверная ссылка</h1><p>В адресе есть лишние символы. Скопируйте ссылку целиком или начните с главной.</p><p><a href="/">На главную</a></p></main></body></html>`
+
 export default defineEventHandler(async (event) => {
   setHeader(event, 'X-Content-Type-Options', 'nosniff')
   setHeader(event, 'Referrer-Policy', 'no-referrer')
@@ -67,8 +77,16 @@ export default defineEventHandler(async (event) => {
   // Client-sent values are replaced by our own signed one.
   stampClientIp(event)
   const path = rawPath(event.path || '/')
-  if (ambiguousPath(path, getRequestURL(event).pathname))
+  if (ambiguousPath(path, getRequestURL(event).pathname)) {
+    // A browser opening a broken page link gets a short Russian page; API clients keep the code.
+    if (!path.startsWith('/api/') && /text\/html/.test(getHeader(event, 'accept') || '')) {
+      setResponseStatus(event, 400, 'BAD_PATH')
+      setHeader(event, 'Content-Type', 'text/html; charset=utf-8')
+      setHeader(event, 'Cache-Control', 'no-store')
+      return badPathPage
+    }
     throw createError({ statusCode: 400, statusMessage: 'BAD_PATH' })
+  }
   if (!(config().PUBLIC_INDEXING && indexablePage(path)))
     setHeader(event, 'X-Robots-Tag', 'noindex, nofollow')
   if (path.startsWith('/order/')) {

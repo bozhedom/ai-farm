@@ -21,6 +21,10 @@ const missing = ref(
   !valid || (!first.value && publicErrorCode(firstError.value) === 'ORDER_NOT_FOUND'),
 )
 const offline = ref(!first.value && !missing.value)
+if (import.meta.server && missing.value) {
+  const event = useRequestEvent()
+  if (event) setResponseStatus(event, 404)
+}
 const number = computed(() =>
   order.value
     ? order.value.number
@@ -176,7 +180,10 @@ onMounted(() => (mounted.value = true))
                 <template v-if="order.contact">Написать продавцу: {{ order.contact }}</template>
               </p>
             </div>
-            <PublicOrderSteps :steps="order.steps" :active="!final.includes(order.status)" />
+            <PublicOrderSteps
+              :steps="order.steps"
+              :active="!final.includes(order.status) && !paying"
+            />
             <div class="summary">
               <div>
                 <span class="eyebrow">Цена</span>

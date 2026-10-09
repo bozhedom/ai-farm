@@ -1635,7 +1635,7 @@ describe('owner resolution of test obligations', () => {
     expect(await budgetSummary()).toEqual(amounts)
     expect(await query("SELECT id FROM audit_events WHERE kind='order_resolved'")).toHaveLength(1)
     expect((await orderDetails(created.id)).progress).toMatchObject({
-      title: 'Тестовый заказ закрыт',
+      title: 'Закрыт без выдачи',
       canSubmit: false,
       canResolve: false,
       errorCode: 'OUTPUT_REVIEW_REQUIRED',

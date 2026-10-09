@@ -78,11 +78,11 @@ it('offers owner resolution only for test review and keeps a closed order distin
     now,
   )
   expect(closed).toMatchObject({
-    title: 'Тестовый заказ закрыт',
+    title: 'Закрыт без выдачи',
     canSubmit: false,
     canResolve: false,
     errorCode: 'OUTPUT_REVIEW_REQUIRED',
   })
   expect(closed.detail).toContain('без выдачи')
-  expect(closed.detail).toContain('возврат не выполнялся')
+  expect(closed.detail).toContain('деньги не возвращались')
 })
