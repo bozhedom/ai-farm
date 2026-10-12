@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { pool, query } from '../../core/db'
 import { config } from '../../core/config'
+import { listing } from '../../core/trading/universe'
 import { cost, decimal, units } from '../../core/trading/decimal'
 import { paperFill } from '../../core/trading/accounting'
 import {
@@ -48,16 +49,38 @@ class Exchange implements TradingVenue {
     BTC: { total: 0n, available: 0n },
     ETH: { total: 0n, available: 0n },
   }
+  symbols: TradingSymbol[] = ['BTC-USDT', 'ETH-USDT']
+  async discover() {
+    return this.symbols.flatMap((symbol) =>
+      listing(
+        symbol.slice(0, -5),
+        'USDT',
+        symbol,
+        { active: true },
+        {
+          at: Date.now(),
+          bid: '99.99',
+          ask: '100',
+          last: '100',
+          open: '102',
+          high: '105',
+          low: '98',
+          turnover: '10000000',
+        },
+      ),
+    )
+  }
   async market(symbol: TradingSymbol) {
     const m = market(symbol, this.price, this.reference)
+    for (let i = 0; i < 30; i++) m.candles[i]!.close = (units(this.reference) * 102n) / 100n
     if (this.stale) m.book.at -= 60_000
     return m
   }
-  async account(): Promise<Account> {
+  async account(symbols: readonly TradingSymbol[]): Promise<Account> {
     return {
       identity: this.identity,
       balances: this.balances,
-      feeBps: { 'BTC-USDT': 10, 'ETH-USDT': 10 },
+      feeBps: Object.fromEntries(symbols.map((s) => [s, 10])),
     }
   }
   async pending() {
@@ -69,7 +92,8 @@ class Exchange implements TradingVenue {
     const m = await this.market(request.symbol)
     const fill = paperFill(request, m.book, m.instrument.lot)
     this.fills.set(request.clientId, fill)
-    const ccy = request.symbol === 'BTC-USDT' ? 'BTC' : 'ETH'
+    const ccy = request.symbol.slice(0, -5)
+    this.balances[ccy] ||= { total: 0n, available: 0n }
     this.balances[ccy].total += request.side === 'buy' ? fill.filledQty : -fill.filledQty
     this.balances.USDT.total += (request.side === 'buy' ? -fill.quote : fill.quote) + fill.quoteFee
     this.balances[ccy].available = this.balances[ccy].total
@@ -608,9 +632,9 @@ describe('multiple independent exchanges', () => {
       release = resolve
     })
     const account = exchange.account.bind(exchange)
-    exchange.account = async () => {
+    exchange.account = async (symbols) => {
       await gate
-      return account()
+      return account(symbols)
     }
     let done = false
     const slow = tradingTick(own, () => false, ['okx']).finally(() => {
@@ -760,5 +784,234 @@ describe('multiple independent exchanges', () => {
     } finally {
       config().TRADING_LIVE_ENABLED = false
     }
+  })
+})
+
+describe('dynamic coin selection', () => {
+  const paper = scope('okx', 'paper')
+  async function expireScan() {
+    await query("UPDATE trading_scouts SET attempted_at=now()-interval '6 minutes'")
+  }
+  async function idleAssignments() {
+    await query(
+      "UPDATE trading_agents SET assigned_at=now()-interval '7 hours',last_order_at=NULL WHERE status='active'",
+    )
+  }
+
+  it('runs strategies and exact reconciliation for assets outside the original pair list', async () => {
+    exchange.symbols = ['PEPE-USDT', 'SOL-USDT']
+    await startTrading(paper, '', false, factory)
+    expect(new Set((await agents(paper)).map((a) => a.symbol))).toEqual(new Set(exchange.symbols))
+    await startTrading(scope('okx', 'demo'), '', true, factory)
+    await tick()
+    await tick()
+    await tick()
+    await tick()
+    expect(exchange.placed.map((o) => o.symbol)).toEqual(['PEPE-USDT', 'PEPE-USDT'])
+    expect(exchange.balances.PEPE!.total).toBe(0n)
+    expect((await portfolio(scope('okx', 'demo'))).reason).toBe('DEMO_PROBE_COMPLETE')
+    expect(await query('SELECT * FROM trading_assignments')).toHaveLength(5)
+  })
+
+  it('eventually inspects lower-ranked coins without losing coverage of assigned pairs', async () => {
+    exchange.price = '102'
+    exchange.symbols = Array.from(
+      { length: 24 },
+      (_, i) => `COIN${String(i).padStart(2, '0')}-USDT` as TradingSymbol,
+    )
+    await startTrading(paper, '', false, factory)
+    const [first] = await query(
+      "SELECT coins FROM trading_scouts WHERE exchange='okx' AND mode='paper'",
+    )
+    expect(first!.coins.filter((c: { inspectedAt: number | null }) => c.inspectedAt).length).toBe(
+      12,
+    )
+    await expireScan()
+    await tick()
+    const [second] = await query(
+      "SELECT coins FROM trading_scouts WHERE exchange='okx' AND mode='paper'",
+    )
+    expect(
+      second!.coins.filter((c: { inspectedAt: number | null }) => c.inspectedAt).length,
+    ).toBeGreaterThan(12)
+    for (const a of await agents(paper))
+      expect(second!.coins.find((c: { symbol: string }) => c.symbol === a.symbol).eligible).toBe(
+        true,
+      )
+  })
+
+  it('rotates idle flat agents and preserves their cash, fees and performance history', async () => {
+    exchange.price = '102'
+    await startTrading(paper, '', false, factory)
+    const before = await agents(paper)
+    await query("UPDATE trading_agents SET realized=$1,fees=$2,round_trips=3 WHERE mode='paper'", [
+      units('0.3').toString(),
+      units('0.1').toString(),
+    ])
+    await idleAssignments()
+    exchange.symbols = ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'PEPE-USDT']
+    await expireScan()
+    await tick()
+    const after = await agents(paper)
+    expect(after.some((a) => ['SOL-USDT', 'PEPE-USDT'].includes(a.symbol))).toBe(true)
+    for (const a of after) {
+      expect(a.cash).toBe(before.find((b) => b.id === a.id)!.cash)
+      expect(a.realized).toBe(units('0.3').toString())
+      expect(a.fees).toBe(units('0.1').toString())
+      expect(a.round_trips).toBe(3)
+    }
+    expect(
+      (await query("SELECT * FROM trading_assignments WHERE reason='SCOUT_IDLE_ROTATION'")).length,
+    ).toBeGreaterThan(0)
+    expect(await query('SELECT * FROM trading_orders')).toHaveLength(0)
+  })
+
+  it('keeps held coins after removal from the catalogue, then exits by age before changing the pair', async () => {
+    await startTrading(paper, '', false, factory)
+    await tick()
+    const holding = (await agents(paper)).filter((a) => BigInt(a.base) > 0n)
+    expect(holding).toHaveLength(2)
+    exchange.symbols = ['PEPE-USDT', 'SOL-USDT']
+    await idleAssignments()
+    await expireScan()
+    await tick()
+    for (const a of holding)
+      expect((await agents(paper)).find((b) => b.id === a.id)!.symbol).toBe(a.symbol)
+    await query(
+      "UPDATE trading_agents SET position_opened_at=now()-interval '25 hours',selector_version='fixed-v1' WHERE base>0",
+    )
+    await tick()
+    const sales = await query("SELECT * FROM trading_orders WHERE side='sell'")
+    expect(sales).toHaveLength(2)
+    expect(sales.every((o) => o.reason === 'SCOUT_TIME_EXIT')).toBe(true)
+    expect((await agents(paper)).every((a) => a.base === '0')).toBe(true)
+    await tick()
+    for (const a of holding)
+      expect(exchange.symbols).toContain(
+        (await agents(paper)).find((b) => b.parent_id === a.id)!.symbol,
+      )
+    expect((await tradingView(paper)).metrics.fees).not.toBe('0')
+  })
+
+  it('preserves the last report on failure, blocks new buys and still closes existing positions', async () => {
+    await startTrading(paper, '', false, factory)
+    await tick()
+    const [before] = await query(
+      'SELECT coins,scanned_at FROM trading_scouts WHERE exchange=$1 AND mode=$2',
+      ['okx', 'paper'],
+    )
+    exchange.discover = async () => {
+      throw new Error('TRADING_NETWORK_UNAVAILABLE')
+    }
+    await expireScan()
+    await noCooldown()
+    exchange.price = '104'
+    await tick()
+    const [after] = await query('SELECT * FROM trading_scouts WHERE exchange=$1 AND mode=$2', [
+      'okx',
+      'paper',
+    ])
+    expect(after!.coins).toEqual(before!.coins)
+    expect(after!.scanned_at).toEqual(before!.scanned_at)
+    expect(after!.error).toBe('TRADING_NETWORK_UNAVAILABLE')
+    expect(await query("SELECT * FROM trading_orders WHERE side='sell'")).toHaveLength(2)
+    const count = (await query('SELECT * FROM trading_orders')).length
+    exchange.price = '100'
+    await noCooldown()
+    await tick()
+    expect(await query('SELECT * FROM trading_orders')).toHaveLength(count)
+  })
+
+  it('holds cash when the complete catalogue has no candidates without fabricating a loss', async () => {
+    const original = exchange.discover.bind(exchange)
+    exchange.discover = async () =>
+      (await original()).map((c) => ({ ...c, turnover: units('100') }))
+    await startTrading(paper, '', false, factory)
+    await tick()
+    expect(await agents(paper)).toHaveLength(0)
+    expect((await tradingView(paper)).metrics).toMatchObject({
+      equity: '100',
+      cash: '100',
+      pnl: '0',
+    })
+    expect((await portfolio(paper)).status).toBe('running')
+    exchange.discover = original
+    await expireScan()
+    await tick()
+    expect(await agents(paper)).toHaveLength(4)
+  })
+
+  it('does not rotate paused agents or erase dust that the exchange cannot sell', async () => {
+    exchange.price = '102'
+    await startTrading(paper, '', false, factory)
+    const [a] = await agents(paper)
+    await query('UPDATE trading_agents SET base=1,basis=1 WHERE id=$1', [a!.id])
+    await idleAssignments()
+    exchange.symbols = ['PEPE-USDT', 'SOL-USDT']
+    await expireScan()
+    await tick()
+    expect((await agents(paper)).find((b) => b.id === a!.id)).toMatchObject({
+      symbol: a!.symbol,
+      base: '1',
+      basis: '1',
+      last_signal: 'SCOUT_DUST_POSITION',
+    })
+    await controlTrading(paper, 'pause')
+    const before = await agents(paper)
+    await idleAssignments()
+    await expireScan()
+    await tick()
+    expect((await agents(paper)).map((a) => a.symbol)).toEqual(before.map((a) => a.symbol))
+  })
+
+  it('refuses unexpected altcoin holdings at first admission and after activation', async () => {
+    exchange.balances.PEPE = { total: units('1'), available: units('1') }
+    await expect(startTrading(scope('okx', 'demo'), '', false, factory)).rejects.toThrow(
+      'TRADING_INITIAL_ASSETS',
+    )
+    exchange.balances.PEPE = { total: 0n, available: 0n }
+    await startTrading(scope('okx', 'demo'), '', false, factory)
+    exchange.balances.DOGE = { total: units('1'), available: units('1') }
+    await tick()
+    expect((await portfolio(scope('okx', 'demo'))).reason).toBe('TRADING_BALANCE_DRIFT')
+    expect(exchange.placed).toHaveLength(0)
+  })
+
+  it('archives the old fixed-pair experiment before collecting evidence for the selector', async () => {
+    exchange.price = '102'
+    await startTrading(paper, '', false, factory)
+    const team = await agents(paper)
+    await query(
+      "UPDATE trading_agents SET selector_version='fixed-v1',created_at=now()-interval '8 days',round_trips=20,realized=$1",
+      [units('1').toString()],
+    )
+    expect(await paperCandidates('okx')).toHaveLength(0)
+    await tick()
+    const current = await agents(paper)
+    expect(current).toHaveLength(4)
+    expect(current.every((a) => a.selector_version === 'scout-v1' && a.round_trips === 0)).toBe(
+      true,
+    )
+    expect(current.every((a) => team.some((p) => p.id === a.parent_id))).toBe(true)
+    expect(await query("SELECT * FROM trading_agents WHERE status='archived'")).toHaveLength(4)
+    expect(await paperCandidates('okx')).toHaveLength(0)
+  })
+
+  it('keeps an uncertain submission on its original symbol and rejects malformed database symbols', async () => {
+    exchange.symbols = ['PEPE-USDT', 'SOL-USDT']
+    exchange.loseRequest = true
+    const demo = scope('okx', 'demo')
+    await startTrading(demo, '', false, factory)
+    await tick()
+    const order = await pendingOrder(demo)
+    await idleAssignments()
+    exchange.symbols = ['BTC-USDT', 'ETH-USDT']
+    await expireScan()
+    await tick()
+    expect((await agents(demo))[0]!.symbol).toBe(order!.symbol)
+    expect(exchange.placed).toHaveLength(1)
+    await expect(
+      query("UPDATE trading_agents SET symbol='PEPE-USDT&foo=x' WHERE id=$1", [order!.agent_id]),
+    ).rejects.toThrow()
   })
 })

@@ -5,6 +5,7 @@ import { TRADING_POLICY as P } from '../policy'
 import { abs, BPS, ceilDiv, SCALE, units } from './decimal'
 import { exchangeCatalog } from './catalog'
 import type { Balances, TradingExchange, TradingMode, TradingScope, TradingSymbol } from './types'
+import { assertSymbol } from './universe'
 
 export class OrderRejected extends Error {
   constructor() {
@@ -53,11 +54,20 @@ export function emptyBalances(): Balances {
   }
 }
 export function setBalance(b: Balances, coin: string, total: string, available: string) {
-  if (!(coin in b)) return
   const t = units(total),
     a = units(available)
   if (t < 0n || a < 0n || a > t) throw new Error('TRADING_BALANCE_INVALID')
-  b[coin as keyof Balances] = { total: t, available: a }
+  // Never ignore foreign holdings, even when the asset cannot be selected for trading.
+  if (!/^[A-Za-z0-9_]{1,40}$/.test(coin)) {
+    if (t || a) throw new Error('TRADING_BALANCE_INVALID')
+    return
+  }
+  Object.defineProperty(b, coin, {
+    value: { total: t, available: a },
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
 }
 export function feeBps(rate: bigint) {
   const n = Number(ceilDiv(abs(rate) * BPS, SCALE))
@@ -65,7 +75,7 @@ export function feeBps(rate: bigint) {
   return n
 }
 export function compactSymbol(symbol: TradingSymbol) {
-  if (!P.symbols.includes(symbol)) throw new Error('TRADING_SYMBOL_FORBIDDEN')
+  assertSymbol(symbol)
   return symbol.replace('-', '')
 }
 export function checkClock(stamp: number) {

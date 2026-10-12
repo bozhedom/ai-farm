@@ -2,7 +2,7 @@ export const exchanges = ['okx', 'bybit', 'binance', 'bitget'] as const
 export type TradingExchange = (typeof exchanges)[number]
 export type TradingScope = { exchange: TradingExchange; mode: TradingMode }
 export type TradingMode = 'paper' | 'demo' | 'live'
-export type TradingSymbol = 'BTC-USDT' | 'ETH-USDT'
+export type TradingSymbol = `${string}-USDT`
 export type Side = 'buy' | 'sell'
 export type StrategyKind = 'reversion' | 'trend' | 'breakout'
 export type StrategyParams = { lookback: number; entryBps: number; takeProfitBps: number }
@@ -21,7 +21,23 @@ export type Book = {
 }
 export type Candle = { at: number; close: bigint }
 export type Market = { instrument: Instrument; book: Book; candles: Candle[] }
-export type Balances = Record<'USDT' | 'BTC' | 'ETH', { total: bigint; available: bigint }>
+export type Balances = Record<string, { total: bigint; available: bigint }> & {
+  USDT: { total: bigint; available: bigint }
+}
+export type MarketListing = {
+  symbol: TradingSymbol
+  active: boolean
+  restricted: boolean
+  listedAt: number | null
+  at: number
+  bid: bigint
+  ask: bigint
+  last: bigint
+  open: bigint
+  high: bigint
+  low: bigint
+  turnover: bigint
+}
 export type Account = {
   identity: string
   balances: Balances
@@ -43,8 +59,9 @@ export type OrderResult = OrderRequest & {
   quoteFee: bigint
 }
 export interface TradingVenue {
+  discover(): Promise<MarketListing[]>
   market(symbol: TradingSymbol): Promise<Market>
-  account(): Promise<Account>
+  account(symbols: readonly TradingSymbol[]): Promise<Account>
   pending(): Promise<{ clientId: string }[]>
   place(order: OrderRequest): Promise<void>
   order(order: OrderRequest): Promise<OrderResult | null>
@@ -95,6 +112,9 @@ export type AgentRow = {
   last_order_at: Date | null
   created_at: Date
   last_signal: string
+  selector_version: string
+  assigned_at: Date
+  position_opened_at: Date | null
 }
 export type OrderRow = {
   exchange: TradingExchange

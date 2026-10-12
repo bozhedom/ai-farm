@@ -1,3 +1,4 @@
+import { SCOUT_POLICY } from '../../core/policy'
 import { units } from '../../core/trading/decimal'
 import type { AgentRow, Market, TradingSymbol } from '../../core/trading/types'
 
@@ -47,6 +48,9 @@ export function agent(override: Partial<AgentRow> = {}): AgentRow {
     last_order_at: null,
     created_at: new Date(),
     last_signal: 'WAITING_MARKET',
+    selector_version: SCOUT_POLICY.version,
+    assigned_at: new Date(),
+    position_opened_at: null,
     ...override,
   }
 }

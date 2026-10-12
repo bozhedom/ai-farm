@@ -53,8 +53,11 @@ export async function tradingOverview(mode: TradingMode): Promise<TradingOvervie
         workerAlive: !!p.heartbeat && Date.now() - p.heartbeat.getTime() < 90_000,
         fresh:
           !p.check_error &&
-          prices.length === P.symbols.length &&
-          prices.every((m) => Date.now() - m.at.getTime() < 90_000),
+          !!p.checked_at &&
+          Date.now() - p.checked_at.getTime() < 90_000 &&
+          own.every((a) =>
+            prices.some((m) => m.symbol === a.symbol && Date.now() - m.at.getTime() < 90_000),
+          ),
         capital: decimal(BigInt(p.capital)),
         equity: decimal(equity),
         pnl: decimal(profit),

@@ -437,11 +437,14 @@ describe('account admission', () => {
     it(`${exchange}: verifies account scope, fees and exact balances`, async () => {
       configure()
       const venue = new adapters[exchange]('live', accountTransport(exchange)),
-        a = await venue.account()
+        a = await venue.account(['PEPE-USDT', 'SOL-USDT'])
       expect(a.balances.USDT.total).toBe(units('100.000000000000000001'))
-      expect(a.feeBps).toEqual({ 'BTC-USDT': 10, 'ETH-USDT': 10 })
+      expect(a.feeBps).toEqual({ 'PEPE-USDT': 10, 'SOL-USDT': 10 })
       const demoTransport = accountTransport(exchange),
-        demo = await new adapters[exchange]('demo', demoTransport).account()
+        demo = await new adapters[exchange]('demo', demoTransport).account([
+          'PEPE-USDT',
+          'SOL-USDT',
+        ])
       expect(demo.identity).not.toBe(a.identity)
       expect(
         demoTransport.mock.calls.some(([url]) => /query-api|apiRestrictions/.test(String(url))),
@@ -455,7 +458,10 @@ describe('account admission', () => {
         ...(exchange === 'bybit' ? [] : [['token', 'TRADING_FEE_TOKEN_ENABLED']]),
       ] as const)
         await expect(
-          new adapters[exchange]('live', accountTransport(exchange, problem)).account(),
+          new adapters[exchange]('live', accountTransport(exchange, problem)).account([
+            'PEPE-USDT',
+            'SOL-USDT',
+          ]),
         ).rejects.toThrow(reason)
     })
   }

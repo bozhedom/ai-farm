@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { z } from 'zod'
-import { TRADING_POLICY as P } from '../policy'
+import { listing } from './universe'
 import { decimal, units } from './decimal'
 import {
   allowPlace,
@@ -80,6 +80,68 @@ export class BitgetVenue implements TradingVenue {
     if (privateCall) checkClock(r.requestTime)
     return r.data
   }
+  async discover() {
+    const instruments = z
+      .array(
+        z.object({
+          symbol: str,
+          baseCoin: str,
+          quoteCoin: str,
+          status: str,
+          launchTime: str.optional(),
+          symbolType: str.optional(),
+          isReality: str.optional(),
+          isRwa: str.optional(),
+          areaSymbol: str.optional(),
+        }),
+      )
+      .parse(await this.request('/api/v3/market/instruments', { category: 'SPOT' }))
+    const at = Date.now()
+    const rows = z
+      .array(z.object({ symbol: str }).passthrough())
+      .parse(await this.request('/api/v3/market/tickers', { category: 'SPOT' }))
+    const tickers = new Map(rows.map((r) => [r.symbol, r]))
+    const schema = z.object({
+      bid1Price: str,
+      ask1Price: str,
+      lastPrice: str,
+      openPrice24h: str,
+      highPrice24h: str,
+      lowPrice24h: str,
+      turnover24h: str,
+      ts: str,
+    })
+    return instruments.flatMap((ins) => {
+      const parsed = schema.safeParse(tickers.get(ins.symbol))
+      const t = parsed.success ? parsed.data : null
+      return listing(
+        ins.baseCoin,
+        ins.quoteCoin,
+        ins.symbol,
+        {
+          active: ins.status === 'online',
+          listedAt: ins.launchTime,
+          restricted:
+            ins.isReality === 'yes' ||
+            ins.isRwa === 'YES' ||
+            ins.areaSymbol === 'YES' ||
+            (!!ins.symbolType && ins.symbolType !== 'crypto'),
+        },
+        t
+          ? {
+              at: Math.min(at, Number(t.ts)),
+              bid: t.bid1Price,
+              ask: t.ask1Price,
+              last: t.lastPrice,
+              open: t.openPrice24h,
+              high: t.highPrice24h,
+              low: t.lowPrice24h,
+              turnover: t.turnover24h,
+            }
+          : undefined,
+      )
+    })
+  }
   async market(symbol: TradingSymbol): Promise<Market> {
     const code = compactSymbol(symbol),
       params = { category: 'SPOT', symbol: code }
@@ -127,7 +189,7 @@ export class BitgetVenue implements TradingVenue {
       candles,
     }
   }
-  async account(): Promise<Account> {
+  async account(symbols: readonly TradingSymbol[]): Promise<Account> {
     const info = z
       .object({ userId: str.min(1), ips: str, permType: str, permissions: z.array(str) })
       .parse(await this.request('/api/v3/account/info', {}, undefined, true))
@@ -185,7 +247,7 @@ export class BitgetVenue implements TradingVenue {
       setBalance(balances, b.coin, b.balance, b.available)
     }
     const fees = {} as Account['feeBps']
-    for (const symbol of P.symbols) {
+    for (const symbol of new Set(symbols)) {
       const r = z
         .object({ takerFeeRate: str })
         .parse(

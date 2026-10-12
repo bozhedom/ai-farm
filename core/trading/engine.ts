@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { query, transaction, type Connection } from '../db'
 import { config } from '../config'
-import { TRADING_POLICY as P } from '../policy'
+import { TRADING_POLICY as P, SCOUT_POLICY as S } from '../policy'
+import { admitted, refreshScout, scoutFresh, scoutState } from './scout'
+import { baseAsset } from './universe'
+import { rotateAgents, recordAssignment, pickSymbol } from './rotation'
 import { BPS, abs, cost, decimal, fee, max, proceeds, ratioBps, units } from './decimal'
 import { applyFill, markAgent, paperFill, riskReason } from './accounting'
 import { eligible, fitness, mutate, signal, sizeOrder, validateMarket } from './strategy'
@@ -21,6 +24,7 @@ import {
   portfolio,
   requestFor,
   seedAgents,
+  seedPlan,
   withTradingLock,
 } from './store'
 import type {
@@ -60,28 +64,45 @@ async function halt(s: TradingScope, reason: string, db: Connection) {
   }
 }
 
-async function loadMarkets(s: TradingScope, venue: TradingVenue, db: Connection) {
+async function loadMarkets(
+  s: TradingScope,
+  venue: TradingVenue,
+  symbols: TradingSymbol[],
+  db: Connection,
+) {
   const { mode } = s
   const markets = {} as Record<TradingSymbol, Market>
-  for (const symbol of P.symbols) {
-    const market = await venue.market(symbol)
-    validateMarket(market)
-    markets[symbol] = market
-    await query(
-      `INSERT INTO trading_markets(mode,symbol,at,bid,ask,exchange) VALUES ($1,$2,$3,$4,$5,$6)
+  const failures: string[] = []
+  for (const symbol of new Set(symbols)) {
+    try {
+      const market = await venue.market(symbol)
+      validateMarket(market)
+      if (market.instrument.symbol !== symbol) throw new Error('TRADING_INSTRUMENT_INVALID')
+      markets[symbol] = market
+      await query(
+        `INSERT INTO trading_markets(mode,symbol,at,bid,ask,exchange) VALUES ($1,$2,$3,$4,$5,$6)
       ON CONFLICT(exchange,mode,symbol) DO UPDATE SET at=excluded.at,bid=excluded.bid,ask=excluded.ask`,
-      [
-        mode,
-        symbol,
-        new Date(market.book.at),
-        market.book.bids[0]![0].toString(),
-        market.book.asks[0]![0].toString(),
-        s.exchange,
-      ],
-      db,
-    )
+        [
+          mode,
+          symbol,
+          new Date(market.book.at),
+          market.book.bids[0]![0].toString(),
+          market.book.asks[0]![0].toString(),
+          s.exchange,
+        ],
+        db,
+      )
+    } catch (error) {
+      failures.push(safeTradingError(error))
+      await query(
+        "UPDATE trading_agents SET last_signal=$4 WHERE exchange=$1 AND mode=$2 AND symbol=$3 AND status='active'",
+        [s.exchange, s.mode, symbol, safeTradingError(error)],
+        db,
+      )
+    }
   }
-  for (const symbol of P.symbols) validateMarket(markets[symbol])
+  if (symbols.length && !Object.keys(markets).length)
+    throw new Error(failures[0] || 'TRADING_STALE_MARKET')
   return markets
 }
 
@@ -96,22 +117,26 @@ async function reconcileAccount(
   if ((await venue.pending()).length) throw new Error('TRADING_EXTERNAL_ORDERS')
   const team = await agents(p, db)
   if (!p.account_identity) {
-    if (account.balances.BTC.total || account.balances.ETH.total)
+    if (Object.entries(account.balances).some(([ccy, b]) => ccy !== 'USDT' && b.total !== 0n))
       throw new Error('TRADING_INITIAL_ASSETS')
     if (account.balances.USDT.available < BigInt(p.capital))
       throw new Error('TRADING_INSUFFICIENT_FUNDS')
     return
   }
-  const expected = { USDT: BigInt(p.quote_offset), BTC: 0n, ETH: 0n }
+  const expected: Record<string, bigint> & { USDT: bigint } = Object.assign(Object.create(null), {
+    USDT: BigInt(p.quote_offset),
+  })
   for (const agent of team) {
     expected.USDT += BigInt(agent.cash)
-    expected[agent.symbol === 'BTC-USDT' ? 'BTC' : 'ETH'] += BigInt(agent.base)
+    const ccy = baseAsset(agent.symbol)
+    expected[ccy] = (expected[ccy] || 0n) + BigInt(agent.base)
   }
-  for (const ccy of ['USDT', 'BTC', 'ETH'] as const) {
+  for (const ccy of new Set([...Object.keys(expected), ...Object.keys(account.balances)])) {
+    const actual = account.balances[ccy] || { total: 0n, available: 0n }
     const tolerance = units(ccy === 'USDT' ? '0.000001' : '0.000000000001')
     if (
-      abs(account.balances[ccy].total - expected[ccy]) > tolerance ||
-      account.balances[ccy].total - account.balances[ccy].available > tolerance
+      abs(actual.total - (expected[ccy] || 0n)) > tolerance ||
+      actual.total - actual.available > tolerance
     )
       throw new Error('TRADING_BALANCE_DRIFT')
   }
@@ -134,7 +159,7 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
     if (!agent) throw new Error('TRADING_AGENT_NOT_FOUND')
     const fill = applyFill(agent, result, minQty)
     await query(
-      `UPDATE trading_agents SET cash=$2,base=$3,basis=$4,realized=$5,fees=$6,round_trips=$7 WHERE id=$1`,
+      `UPDATE trading_agents SET cash=$2,base=$3,basis=$4,realized=$5,fees=$6,round_trips=$7,position_opened_at=CASE WHEN $3::numeric=0 THEN NULL WHEN base=0 AND $3::numeric>0 THEN now() ELSE position_opened_at END WHERE id=$1`,
       [
         agent.id,
         fill.cash.toString(),
@@ -215,6 +240,7 @@ async function submit(
   db: Connection,
 ) {
   const market = markets[request.symbol]
+  validateMarket(market)
   const id = randomUUID()
   // The transaction reserves the only unresolved-order slot and fences concurrent owner stops.
   const row = await atomic(db, async () => {
@@ -225,8 +251,15 @@ async function submit(
     validateMarket(market)
     const team = await agents(p, db)
     const fresh = team.find((a) => a.id === agent.id)
-    if (!fresh || fresh.status !== 'active') return null
+    if (
+      !fresh ||
+      fresh.status !== 'active' ||
+      fresh.symbol !== request.symbol ||
+      market.instrument.symbol !== request.symbol
+    )
+      return null
     if (request.side === 'buy') {
+      if (!admitted(await scoutState(p, db), request.symbol)) return null
       const value = cost(request.qty, request.price)
       if (
         value + fee(value, P.maxFeeBps) > BigInt(fresh.cash) ||
@@ -242,8 +275,12 @@ async function submit(
       let invested = 0n,
         equity = 0n
       for (const member of team) {
-        validateMarket(markets[member.symbol])
-        const position = proceeds(BigInt(member.base), markets[member.symbol].book.bids[0]![0])
+        let position = 0n
+        if (BigInt(member.base)) {
+          const held = markets[member.symbol]
+          validateMarket(held)
+          position = proceeds(BigInt(member.base), held.book.bids[0]![0])
+        }
         invested += position
         equity += BigInt(member.cash) + position
       }
@@ -322,11 +359,12 @@ async function submit(
 
 async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db: Connection) {
   const team = await agents(p, db)
-  let equity = 0n,
+  if (team.some((a) => BigInt(a.base) && !markets[a.symbol])) return false
+  let equity = team.length ? 0n : BigInt(p.capital),
     exposure = 0n,
-    cash = 0n
+    cash = team.length ? 0n : BigInt(p.capital)
   for (const a of team) {
-    const m = markAgent(a, markets[a.symbol].book.bids[0]![0])
+    const m = markAgent(a, markets[a.symbol]?.book.bids[0]![0] || 0n)
     equity += m.equity
     exposure += m.exposure
     cash += BigInt(a.cash)
@@ -366,6 +404,7 @@ async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db:
     )
     if (changed.length) await event(p, 'risk', reason, { equity: decimal(equity) }, db)
   }
+  return true
 }
 
 async function evolve(exchange: TradingExchange, db: Connection) {
@@ -375,7 +414,7 @@ async function evolve(exchange: TradingExchange, db: Connection) {
   const team = await agents(s, db)
   let reason = 'COLLECTING_DATA'
   const enough =
-    team.length === 4 &&
+    team.length >= 2 &&
     team.every(
       (a) =>
         Date.now() - a.created_at.getTime() >= P.minEvaluationDays * 86_400_000 &&
@@ -383,43 +422,60 @@ async function evolve(exchange: TradingExchange, db: Connection) {
     )
   if (enough) {
     const ranked = [...team].sort((a, b) => fitness(b) - fitness(a))
+    const leaderCount = Math.floor(team.length / 2)
     if (team.some((a) => BigInt(a.base))) reason = 'POSITIONS_OPEN'
     else if (
-      !eligible(ranked[0]!) ||
-      !eligible(ranked[1]!) ||
-      fitness(ranked[1]!) <= fitness(ranked[2]!)
+      ranked.slice(0, leaderCount).some((a) => !eligible(a)) ||
+      fitness(ranked[leaderCount - 1]!) <= fitness(ranked[leaderCount]!)
     )
       reason = 'NO_PROVEN_EDGE'
     else {
       const evolved = await atomic(db, async () => {
         const locked = await portfolio(s, db, true)
         if (locked.status !== 'running' || (await pendingOrder(s, db))) return false
+        const scout = await scoutState(s, db)
+        if (!scoutFresh(scout)) return false
+        const selected: TradingSymbol[] = []
+        for (let i = 0; i < team.length; i++) {
+          const parent = ranked[i % leaderCount]!
+          const symbol =
+            admitted(scout, parent.symbol) &&
+            selected.filter((s) => s === parent.symbol).length < S.maxAgentsPerSymbol
+              ? parent.symbol
+              : pickSymbol(parent.kind, scout!.coins, selected)
+          if (!symbol) return false
+          selected.push(symbol)
+        }
         const capital = team.reduce((s, a) => s + BigInt(a.cash), 0n)
         await query(
           "UPDATE trading_agents SET status='archived',archived_at=now() WHERE mode='paper' AND exchange=$1 AND status='active'",
           [exchange],
           db,
         )
-        for (let i = 0; i < 4; i++) {
-          const parent = ranked[i % 2]!
-          const amount = capital / 4n + (i === 0 ? capital % 4n : 0n)
-          const params = i < 2 ? parent.params : mutate(parent.params, p.generation + 1)
+        for (let i = 0; i < team.length; i++) {
+          const id = randomUUID()
+          const parent = ranked[i % leaderCount]!
+          const amount =
+            capital / BigInt(team.length) + (i === 0 ? capital % BigInt(team.length) : 0n)
+          const params = i < leaderCount ? parent.params : mutate(parent.params, p.generation + 1)
           await query(
-            `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak,exchange)
-            VALUES ($1,'paper',$2,$3,$4,$5,$6,$7,$8,$8,$8,$9)`,
+            `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak,exchange,selector_version)
+            VALUES ($1,'paper',$2,$3,$4,$5,$6,$7,$8,$8,$8,$9,$10)`,
             [
-              randomUUID(),
-              `${parent.name.split(' · ')[0]} · ${p.generation + 1}${i < 2 ? '' : 'м'}`,
-              parent.symbol,
+              id,
+              `${parent.name.split(' · ')[0]} · ${p.generation + 1}${i < leaderCount ? '' : 'м'}`,
+              selected[i],
               parent.kind,
               params,
               parent.id,
               p.generation + 1,
               amount.toString(),
               exchange,
+              S.version,
             ],
             db,
           )
+          await recordAssignment(s, id, selected[i]!, null, 'SCOUT_ASSIGNED', db)
         }
         await query(
           "UPDATE trading_portfolios SET generation=generation+1 WHERE mode='paper' AND exchange=$1",
@@ -430,7 +486,7 @@ async function evolve(exchange: TradingExchange, db: Connection) {
           s,
           'evolution',
           'LEADERS_CLONED',
-          { parents: ranked.slice(0, 2).map((a) => a.id), generation: p.generation + 1 },
+          { parents: ranked.slice(0, leaderCount).map((a) => a.id), generation: p.generation + 1 },
           db,
         )
         return true
@@ -470,16 +526,17 @@ async function promoteLive(exchange: TradingExchange, db: Connection) {
       const promoted = await atomic(db, async () => {
         const locked = await portfolio(s, db, true)
         if (locked.status !== 'running' || (await pendingOrder(s, db))) return false
+        const id = randomUUID()
         await query(
           "UPDATE trading_agents SET status='archived',archived_at=now() WHERE id=$1",
           [current.id],
           db,
         )
         await query(
-          `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak,exchange)
-          VALUES ($1,'live',$2,$3,$4,$5,$6,$7,$8,$8,$8,$9)`,
+          `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak,exchange,selector_version)
+          VALUES ($1,'live',$2,$3,$4,$5,$6,$7,$8,$8,$8,$9,$10)`,
           [
-            randomUUID(),
+            id,
             candidate.name,
             candidate.symbol,
             candidate.kind,
@@ -488,9 +545,11 @@ async function promoteLive(exchange: TradingExchange, db: Connection) {
             p.generation + 1,
             current.cash,
             exchange,
+            S.version,
           ],
           db,
         )
+        await recordAssignment(s, id, candidate.symbol, null, 'SCOUT_ASSIGNED', db)
         await query(
           "UPDATE trading_portfolios SET generation=generation+1 WHERE mode='live' AND exchange=$1",
           [exchange],
@@ -543,8 +602,23 @@ export async function tradingTick(
             )
             const venue = factory(s)
             if (!(await recover(s, venue, db))) return
+            const scout = await refreshScout(
+              s,
+              venue,
+              (await agents(s, db)).map((a) => a.symbol),
+              db,
+            )
+            if (p.status === 'running') {
+              if (mode !== 'live')
+                await atomic(db, async () => {
+                  if ((await portfolio(s, db, true)).status === 'running')
+                    await seedAgents(s, db, scout)
+                })
+              await rotateAgents(s, scout, db)
+            }
+            let account: Account | undefined
             if (mode !== 'paper') {
-              const account = await venue.account()
+              account = await venue.account((await agents(s, db)).map((a) => a.symbol))
               try {
                 await reconcileAccount(p, account, venue, db)
               } catch (e) {
@@ -552,13 +626,24 @@ export async function tradingTick(
                 throw e
               }
             }
-            const markets = await loadMarkets(s, venue, db)
+            const markets = await loadMarkets(
+              s,
+              venue,
+              (await agents(s, db)).map((a) => a.symbol),
+              db,
+            )
             await query(
               "UPDATE trading_portfolios SET checked_at=now(),check_error='' WHERE mode=$1 AND exchange=$2",
               [mode, exchange],
               db,
             )
-            await mark(p, markets, db)
+            const priced = await mark(p, markets, db)
+            if (!priced)
+              await query(
+                'UPDATE trading_portfolios SET check_error=$3 WHERE exchange=$1 AND mode=$2',
+                [exchange, mode, 'TRADING_POSITION_UNPRICED'],
+                db,
+              )
             p = await portfolio(s, db)
             if (p.status !== 'running' && p.status !== 'paused') return
             if (mode === 'live' && p.status === 'running') await promoteLive(exchange, db)
@@ -568,11 +653,30 @@ export async function tradingTick(
             for (const agent of await agents(s, db)) {
               if (isStopping() || (await pendingOrder(s, db))) break
               const market = markets[agent.symbol]
+              if (!market) continue
               let decision = signal(
                 agent,
                 market,
                 forceExit && BigInt(agent.base) >= market.instrument.minQty,
               )
+              if (BigInt(agent.base) && BigInt(agent.base) < market.instrument.minQty)
+                decision = { side: null, reason: 'SCOUT_DUST_POSITION' }
+              if (
+                decision.reason === 'HOLDING_POSITION' &&
+                (mode !== 'live' || agent.selector_version === S.version) &&
+                agent.position_opened_at
+              ) {
+                const age = Date.now() - agent.position_opened_at.getTime()
+                if (age >= S.maxPositionMs) decision = { side: 'sell', reason: 'SCOUT_TIME_EXIT' }
+                else if (
+                  age >= S.stagnantPositionMs &&
+                  scoutFresh(scout) &&
+                  !admitted(scout, agent.symbol)
+                )
+                  decision = { side: 'sell', reason: 'SCOUT_STAGNANT_EXIT' }
+              }
+              if (!BigInt(agent.base) && (!scoutFresh(scout) || !admitted(scout, agent.symbol)))
+                decision = { side: null, reason: 'SCOUT_WAITING' }
               if (
                 mode === 'demo' &&
                 p.demo_probe &&
@@ -595,6 +699,14 @@ export async function tradingTick(
                 db,
               )
               if (!decision.side || (p.status === 'paused' && decision.side === 'buy')) continue
+              if (decision.side === 'buy' && (!priced || !admitted(scout, agent.symbol))) continue
+              if (
+                decision.side === 'buy' &&
+                mode !== 'paper' &&
+                (!Number.isSafeInteger(account?.feeBps[agent.symbol]) ||
+                  account!.feeBps[agent.symbol]! > P.maxFeeBps)
+              )
+                throw new Error('TRADING_FEE_UNKNOWN')
               const urgent =
                 decision.side === 'sell' && ['RISK_EXIT', 'POSITION_STOP'].includes(decision.reason)
               if (
@@ -610,6 +722,15 @@ export async function tradingTick(
                 randomUUID().replaceAll('-', ''),
               )
               if (request) await submit(p, agent, request, decision.reason, markets, venue, db)
+              else
+                await query(
+                  'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
+                  [
+                    agent.id,
+                    decision.side === 'sell' ? 'SCOUT_DUST_POSITION' : 'SCOUT_ORDER_TOO_SMALL',
+                  ],
+                  db,
+                )
             }
             if (mode === 'paper' && p.status === 'running') await evolve(exchange, db)
           })
@@ -633,11 +754,22 @@ export async function checkTrading(s: TradingScope, factory: VenueFactory = venu
     const venue = factory(s)
     try {
       const p = await portfolio(s, db)
+      const team = await agents(s, db)
+      const scout = await refreshScout(
+        s,
+        venue,
+        team.map((a) => a.symbol),
+        db,
+        true,
+      )
+      const symbols = (team.length ? team : seedPlan(s, scout)).map((a) => a.symbol)
       if (mode !== 'paper') {
         if (await pendingOrder(s, db)) throw new Error('TRADING_ORDER_UNKNOWN')
-        await reconcileAccount(p, await venue.account(), venue, db)
+        await reconcileAccount(p, await venue.account(symbols), venue, db)
       }
-      await loadMarkets(s, venue, db)
+      const markets = await loadMarkets(s, venue, symbols, db)
+      if (symbols.some((symbol) => !markets[symbol])) throw new Error('TRADING_STALE_MARKET')
+      if (!scoutFresh(scout)) throw new Error(scout?.error || 'TRADING_CATALOG_INVALID')
       await query(
         "UPDATE trading_portfolios SET checked_at=now(),check_error='' WHERE mode=$1 AND exchange=$2",
         [mode, exchange],
@@ -687,12 +819,26 @@ export async function startTrading(
     const venue = factory(s)
     if (p.status === 'running') return
     if (await pendingOrder(s, db)) throw new Error('TRADING_ORDER_UNKNOWN')
+    const teamBefore = await agents(s, db)
+    const scout = await refreshScout(
+      s,
+      venue,
+      teamBefore.map((a) => a.symbol),
+      db,
+      true,
+    )
+    if (!scoutFresh(scout)) throw new Error(scout?.error || 'TRADING_CATALOG_INVALID')
+    const symbols = (teamBefore.length ? teamBefore : seedPlan(s, scout, champion)).map(
+      (a) => a.symbol,
+    )
+    if (mode !== 'paper' && !symbols.length) throw new Error('TRADING_NO_CANDIDATES')
     let account: Account | undefined
     if (mode !== 'paper') {
-      account = await venue.account()
+      account = await venue.account(symbols)
       await reconcileAccount(p, account, venue, db)
     }
-    const markets = await loadMarkets(s, venue, db)
+    const markets = await loadMarkets(s, venue, symbols, db)
+    if (symbols.some((symbol) => !markets[symbol])) throw new Error('TRADING_STALE_MARKET')
     await atomic(db, async () => {
       const current = await portfolio(s, db, true)
       // A stop pressed while the external checks were running wins over this start request.
@@ -702,11 +848,11 @@ export async function startTrading(
         current.capital !== p.capital
       )
         throw new Error('TRADING_CONTROL_CHANGED')
-      await seedAgents(s, db, champion)
+      await seedAgents(s, db, scout, champion)
       const team = await agents(s, db)
       const equity = team.reduce(
-        (sum, a) => sum + markAgent(a, markets[a.symbol].book.bids[0]![0]).equity,
-        0n,
+        (sum, a) => sum + markAgent(a, markets[a.symbol]?.book.bids[0]![0] || 0n).equity,
+        team.length ? 0n : BigInt(p.capital),
       )
       if (riskReason(equity, BigInt(current.peak), BigInt(current.day_equity)) === 'DRAWDOWN_LIMIT')
         throw new Error('TRADING_DRAWDOWN_LOCKED')
@@ -790,7 +936,12 @@ export async function resolveMissingOrder(
       throw new Error('TRADING_REVIEW_NOT_READY')
     const venue = factory(s)
     if (await venue.order(requestFor(row))) throw new Error('TRADING_ORDER_EXISTS')
-    await reconcileAccount(p, await venue.account(), venue, db)
+    await reconcileAccount(
+      p,
+      await venue.account((await agents(s, db)).map((a) => a.symbol)),
+      venue,
+      db,
+    )
     await atomic(db, async () => {
       await query(
         "UPDATE trading_orders SET status='rejected',reason='OWNER_VERIFIED_ABSENT',settled_at=now() WHERE id=$1",

@@ -5,6 +5,41 @@ import type {
   StrategyKind,
   StrategyParams,
 } from '../trading/types'
+import type { ScoutCoin } from '../trading/universe'
+
+export type TradingMarketView = {
+  exchange: TradingExchange
+  mode: TradingMode
+  scannedAt: string | null
+  attemptedAt: string | null
+  fresh: boolean
+  error: string
+  total: number
+  ready: number
+  screened: number
+  matches: number
+  page: number
+  pageSize: number
+  coins: ScoutCoin[]
+  active: { name: string; symbol: string; holding: boolean; since: string }[]
+  assignments: {
+    id: string
+    name: string
+    symbol: string
+    previous: string | null
+    reason: string
+    at: string
+  }[]
+  limits: {
+    scanMinutes: number
+    idleHours: number
+    holdHours: number
+    bookDepthUsdt: number
+    dailyTurnover: number
+    maxSpreadBps: number
+    candidates: number
+  }
+}
 
 export type TradingView = {
   exchange: TradingExchange

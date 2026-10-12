@@ -1,4 +1,6 @@
 import { createHash, createHmac } from 'node:crypto'
+import { assertSymbol, listing } from './universe'
+import { setBalance } from './wire'
 import { z } from 'zod'
 import { config } from '../config'
 import { TRADING_POLICY as P } from '../policy'
@@ -146,8 +148,59 @@ export class OkxVenue implements TradingVenue {
     return parsed.data
   }
 
+  async discover() {
+    const instruments = z
+      .array(
+        z.object({
+          instId: text,
+          baseCcy: text,
+          quoteCcy: text,
+          instType: text,
+          state: text,
+          listTime: text.optional(),
+        }),
+      )
+      .parse(await this.request('/api/v5/public/instruments?instType=SPOT'))
+    const rows = z
+      .array(z.object({ instId: text }).passthrough())
+      .parse(await this.request('/api/v5/market/tickers?instType=SPOT'))
+    const tickers = new Map(rows.map((r) => [r.instId, r]))
+    const schema = z.object({
+      ts: text,
+      bidPx: text,
+      askPx: text,
+      last: text,
+      open24h: text,
+      high24h: text,
+      low24h: text,
+      volCcy24h: text,
+    })
+    return instruments.flatMap((ins) => {
+      const parsed = schema.safeParse(tickers.get(ins.instId))
+      const t = parsed.success ? parsed.data : null
+      return listing(
+        ins.baseCcy,
+        ins.quoteCcy,
+        ins.instId,
+        { active: ins.state === 'live' && ins.instType === 'SPOT', listedAt: ins.listTime },
+        t
+          ? {
+              at: Number(t.ts),
+              bid: t.bidPx,
+              ask: t.askPx,
+              last: t.last,
+              open: t.open24h,
+              high: t.high24h,
+              low: t.low24h,
+              turnover: t.volCcy24h,
+            }
+          : undefined,
+      )
+    })
+  }
+
   async market(symbol: TradingSymbol): Promise<Market> {
-    if (!P.symbols.includes(symbol)) throw new Error('TRADING_SYMBOL_FORBIDDEN')
+    assertSymbol(symbol)
     const ins = instrumentSchema.parse(
       (await this.request(`/api/v5/public/instruments?instType=SPOT&instId=${symbol}`))[0],
     )
@@ -180,7 +233,7 @@ export class OkxVenue implements TradingVenue {
     }
   }
 
-  async account(): Promise<Account> {
+  async account(symbols: readonly TradingSymbol[]): Promise<Account> {
     const clock = z.object({ ts: text }).parse((await this.request('/api/v5/public/time'))[0])
     if (!Number.isSafeInteger(Number(clock.ts)) || Math.abs(Date.now() - Number(clock.ts)) > 4000)
       throw new Error('TRADING_CLOCK_SKEW')
@@ -211,16 +264,11 @@ export class OkxVenue implements TradingVenue {
     }
     for (const d of account.details) {
       if (d.liab && units(d.liab) !== 0n) throw new Error('TRADING_DEBT_FORBIDDEN')
-      if (d.ccy in balances) {
-        const total = units(d.cashBal),
-          available = units(d.availBal)
-        if (total < 0n || available < 0n || available > total)
-          throw new Error('TRADING_BALANCE_INVALID')
-        balances[d.ccy as keyof Balances] = { total, available }
-      }
+      setBalance(balances, d.ccy, d.cashBal, d.availBal)
     }
+    for (const symbol of symbols) assertSymbol(symbol)
     const feeBps = {} as Account['feeBps']
-    for (const symbol of P.symbols) {
+    for (const symbol of new Set(symbols)) {
       const rate = z
         .object({ taker: text.optional(), feeGroup: z.array(z.object({ taker: text })).optional() })
         .parse(
@@ -252,6 +300,7 @@ export class OkxVenue implements TradingVenue {
   }
 
   async place(order: OrderRequest) {
+    assertSymbol(order.symbol)
     if (this.mode === 'live' && !config().TRADING_LIVE_ENABLED)
       throw new Error('TRADING_LIVE_DISABLED')
     try {

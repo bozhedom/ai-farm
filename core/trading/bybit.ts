@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { z } from 'zod'
 import { config } from '../config'
-import { TRADING_POLICY as P } from '../policy'
+import { listing } from './universe'
 import { decimal, units } from './decimal'
 import {
   allowPlace,
@@ -85,6 +85,62 @@ export class BybitVenue implements TradingVenue {
     if (result.retCode !== 0) throw new ExchangeError(String(result.retCode))
     return result.result
   }
+  async discover() {
+    // Spot returns the complete list; cursor/limit are not supported for this category.
+    const instruments = z
+      .array(
+        z.object({
+          symbol: str,
+          baseCoin: str,
+          quoteCoin: str,
+          status: str,
+          stTag: str.optional(),
+          symbolType: str.optional(),
+        }),
+      )
+      .parse(
+        list.parse(await this.request('/v5/market/instruments-info', { category: 'spot' })).list,
+      )
+    const at = Date.now()
+    const rows = z
+      .array(z.object({ symbol: str }).passthrough())
+      .parse(list.parse(await this.request('/v5/market/tickers', { category: 'spot' })).list)
+    const tickers = new Map(rows.map((r) => [r.symbol, r]))
+    const schema = z.object({
+      bid1Price: str,
+      ask1Price: str,
+      lastPrice: str,
+      prevPrice24h: str,
+      highPrice24h: str,
+      lowPrice24h: str,
+      turnover24h: str,
+    })
+    return instruments.flatMap((ins) => {
+      const parsed = schema.safeParse(tickers.get(ins.symbol))
+      const t = parsed.success ? parsed.data : null
+      return listing(
+        ins.baseCoin,
+        ins.quoteCoin,
+        ins.symbol,
+        {
+          active: ins.status === 'Trading',
+          restricted: ins.stTag === '1' || ['xstocks', 'adventure'].includes(ins.symbolType || ''),
+        },
+        t
+          ? {
+              at,
+              bid: t.bid1Price,
+              ask: t.ask1Price,
+              last: t.lastPrice,
+              open: t.prevPrice24h,
+              high: t.highPrice24h,
+              low: t.lowPrice24h,
+              turnover: t.turnover24h,
+            }
+          : undefined,
+      )
+    })
+  }
   async market(symbol: TradingSymbol): Promise<Market> {
     const code = compactSymbol(symbol)
     const result = list.parse(
@@ -140,7 +196,7 @@ export class BybitVenue implements TradingVenue {
       candles,
     }
   }
-  async account(): Promise<Account> {
+  async account(symbols: readonly TradingSymbol[]): Promise<Account> {
     const c = keys('bybit', this.mode)
     const time = z.object({ timeSecond: str }).parse(await this.request('/v5/market/time'))
     checkClock(Number(time.timeSecond) * 1000)
@@ -230,7 +286,7 @@ export class BybitVenue implements TradingVenue {
       )
     }
     const fees = {} as Account['feeBps']
-    for (const symbol of P.symbols) {
+    for (const symbol of new Set(symbols)) {
       const r = z
         .object({ symbol: str, takerFeeRate: str })
         .parse(

@@ -2,7 +2,7 @@ import { createVenue } from '../core/trading/venues'
 import { exchanges, type TradingExchange } from '../core/trading/types'
 import { validateMarket } from '../core/trading/strategy'
 import { decimal } from '../core/trading/decimal'
-import { TRADING_POLICY } from '../core/policy'
+import { screen } from '../core/trading/universe'
 import { safeTradingError } from '../core/trading/engine'
 import { pool } from '../core/db'
 
@@ -16,7 +16,16 @@ try {
     exchange: exchange as TradingExchange,
     mode: mode as 'paper' | 'demo' | 'live',
   })
-  for (const symbol of TRADING_POLICY.symbols) {
+  const listings = await venue.discover()
+  const candidates = listings
+    .map((row) => screen(row))
+    .filter((c) => c.reason === 'SCOUT_ON_RADAR')
+    .sort((a, b) => b.score - a.score)
+  const symbols = candidates.slice(0, 2).map((c) => c.symbol)
+  console.log(
+    `${exchange}/${mode}: ${listings.length} USDT spot pairs, ${candidates.length} passed broad screening`,
+  )
+  for (const symbol of symbols) {
     const m = await venue.market(symbol)
     validateMarket(m)
     console.log(
@@ -24,7 +33,7 @@ try {
     )
   }
   if (mode !== 'paper') {
-    await venue.account()
+    await venue.account(symbols)
     if ((await venue.pending()).length) throw new Error('TRADING_EXTERNAL_ORDERS')
     console.log(`${mode}: credentials, permissions, account mode, balance format and fees OK`)
   }

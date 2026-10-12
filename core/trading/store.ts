@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { pool, query, transaction, type Connection } from '../db'
-import { TRADING_POLICY as P } from '../policy'
+import { TRADING_POLICY as P, SCOUT_POLICY as S } from '../policy'
+import { scoutFresh, type ScoutRow } from './scout'
+import { pickSymbol, recordAssignment } from './rotation'
 import { units } from './decimal'
 import { eligible, fitness, seeds } from './strategy'
 import { markAgent } from './accounting'
@@ -149,28 +151,49 @@ export async function event(
     db,
   )
 }
-export async function seedAgents(s: TradingScope, db: Connection, champion?: AgentRow) {
+export function seedPlan(s: TradingScope, scout: ScoutRow | undefined, champion?: AgentRow) {
+  if (!scoutFresh(scout)) return []
+  const choices = s.mode === 'paper' ? seeds : [champion || seeds[0]!]
+  const occupied: AgentRow['symbol'][] = []
+  return choices.flatMap((seed) => {
+    const symbol = pickSymbol(seed.kind, scout!.coins, occupied)
+    if (!symbol) return []
+    occupied.push(symbol)
+    return [{ ...seed, symbol }]
+  })
+}
+export async function seedAgents(
+  s: TradingScope,
+  db: Connection,
+  scout: ScoutRow | undefined,
+  champion?: AgentRow,
+) {
   if ((await agents(s, db)).length) return
   if (champion && champion.exchange !== s.exchange) throw new Error('TRADING_EXCHANGE_MISMATCH')
-  const choices = s.mode === 'paper' ? seeds : [champion || seeds[0]!]
+  const choices = seedPlan(s, scout, champion)
+  if (!choices.length) return
   const p = await portfolio(s, db)
   const capital = BigInt(p.capital) / BigInt(choices.length)
-  for (const seed of choices)
+  for (const [i, seed] of choices.entries()) {
+    const id = randomUUID()
     await query(
-      `INSERT INTO trading_agents(id,exchange,mode,name,symbol,kind,params,generation,initial_cash,cash,peak,parent_id) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$8,$8,$9)`,
+      `INSERT INTO trading_agents(id,exchange,mode,name,symbol,kind,params,generation,initial_cash,cash,peak,parent_id,selector_version) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$8,$8,$9,$10)`,
       [
-        randomUUID(),
+        id,
         s.exchange,
         s.mode,
         seed.name,
         seed.symbol,
         seed.kind,
         seed.params,
-        capital.toString(),
+        (capital + (i === 0 ? BigInt(p.capital) % BigInt(choices.length) : 0n)).toString(),
         champion?.id || null,
+        S.version,
       ],
       db,
     )
+    await recordAssignment(s, id, seed.symbol, null, 'SCOUT_ASSIGNED', db)
+  }
 }
 
 /** Initial funding plan only. Once activated, balances and risk history are immutable inputs. */

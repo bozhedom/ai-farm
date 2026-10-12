@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { TRADING_POLICY as P } from '../policy'
+import { TRADING_POLICY as P, SCOUT_POLICY as S } from '../policy'
+import { assertSymbol } from './universe'
 import { BPS, SCALE, cost, fee, floorStep, min, proceeds, ratioBps, units } from './decimal'
 import type { AgentRow, Market, OrderRequest, StrategyKind, StrategyParams } from './types'
 
@@ -13,40 +14,39 @@ export const paramsSchema = z
 
 export const seeds: {
   name: string
-  symbol: AgentRow['symbol']
   kind: StrategyKind
   params: StrategyParams
 }[] = [
   {
     name: 'Прилив',
-    symbol: 'BTC-USDT',
     kind: 'reversion',
     params: { lookback: 60, entryBps: 60, takeProfitBps: 100 },
   },
   {
     name: 'Вектор',
-    symbol: 'BTC-USDT',
     kind: 'trend',
     params: { lookback: 90, entryBps: 40, takeProfitBps: 150 },
   },
   {
     name: 'Импульс',
-    symbol: 'ETH-USDT',
     kind: 'breakout',
     params: { lookback: 60, entryBps: 35, takeProfitBps: 150 },
   },
   {
     name: 'Баланс',
-    symbol: 'ETH-USDT',
     kind: 'reversion',
     params: { lookback: 90, entryBps: 80, takeProfitBps: 120 },
   },
 ]
 
-export function validateMarket(market: Market, now = Date.now()) {
+export function validateMarket(
+  market: Market | undefined,
+  now = Date.now(),
+): asserts market is Market {
+  if (!market) throw new Error('TRADING_STALE_MARKET')
   const { book, instrument, candles } = market
-  if (!P.symbols.includes(instrument.symbol) || book.symbol !== instrument.symbol)
-    throw new Error('TRADING_SYMBOL_FORBIDDEN')
+  assertSymbol(instrument.symbol)
+  if (book.symbol !== instrument.symbol) throw new Error('TRADING_SYMBOL_FORBIDDEN')
   if (
     instrument.lot <= 0n ||
     instrument.minQty < instrument.lot ||
@@ -150,6 +150,7 @@ export function sizeOrder(
 export function eligible(agent: AgentRow, now = Date.now()) {
   return (
     now - new Date(agent.created_at).getTime() >= P.minEvaluationDays * 86_400_000 &&
+    agent.selector_version === S.version &&
     agent.round_trips >= P.minRoundTrips &&
     agent.max_drawdown_bps <= P.maxAgentDrawdownBps &&
     BigInt(agent.realized) > 0n

@@ -23,8 +23,7 @@ export const POLICY = Object.freeze({
 
 /** Fixed trading safeguards; the owner chooses each account's initial allocation separately. */
 export const TRADING_POLICY = Object.freeze({
-  version: 'spot-v3',
-  symbols: ['BTC-USDT', 'ETH-USDT'] as const,
+  version: 'spot-v4',
   defaultCapitalUsdt: 100,
   minLiveCapitalUsdt: 20,
   orderUsdt: 10,
@@ -45,6 +44,28 @@ export const TRADING_POLICY = Object.freeze({
   minRoundTrips: 20,
   maxAgentDrawdownBps: 800,
   promotionGapBps: 50,
+})
+export const SCOUT_POLICY = Object.freeze({
+  version: 'scout-v1',
+  scanMs: 5 * 60_000,
+  retryMs: 60_000,
+  freshMs: 10 * 60_000,
+  tickerMaxAgeMs: 60_000,
+  minListingAgeMs: 24 * 60 * 60_000,
+  minTurnoverUsdt: 1_000_000,
+  minRangeBps: 150,
+  maxRangeBps: 3000,
+  maxChangeBps: 2000,
+  minMovementBps: 100,
+  maxRecentMovementBps: 1500,
+  maxMinuteMoveBps: 500,
+  depthOrderMultiplier: 10,
+  maxCandidates: 12,
+  minAssignmentMs: 2 * 60 * 60_000,
+  idleRotationMs: 6 * 60 * 60_000,
+  maxPositionMs: 24 * 60 * 60_000,
+  stagnantPositionMs: 6 * 60 * 60_000,
+  maxAgentsPerSymbol: 2,
 })
 export const templates = serviceTemplates
 export type Template = ServiceTemplate

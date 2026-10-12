@@ -205,17 +205,19 @@ describe('OKX wire contract', () => {
       throw new Error('UNEXPECTED_PATH')
     })
     const venue = new OkxVenue('live', transport)
-    expect((await venue.account()).balances.USDT.available).toBe(units('100'))
+    expect((await venue.account(['BTC-USDT', 'ETH-USDT'])).balances.USDT.available).toBe(
+      units('100'),
+    )
     account.perm = 'read_only,trade,withdraw'
-    await expect(venue.account()).rejects.toThrow('TRADING_KEY_PERMISSIONS')
+    await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_KEY_PERMISSIONS')
     account.perm = 'read_only,trade'
     account.ip = ''
-    await expect(venue.account()).rejects.toThrow('TRADING_IP_REQUIRED')
+    await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_IP_REQUIRED')
     account.ip = '203.0.113.1'
     account.acctLv = '4'
-    await expect(venue.account()).rejects.toThrow('TRADING_ACCOUNT_MODE')
+    await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_ACCOUNT_MODE')
     account.acctLv = '1'
     balance.details[0]!.liab = '1'
-    await expect(venue.account()).rejects.toThrow('TRADING_DEBT_FORBIDDEN')
+    await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_DEBT_FORBIDDEN')
   })
 })
