@@ -126,6 +126,20 @@ describe('spot accounting and risk', () => {
     expect(riskReason(units('90'), units('100'), units('91'))).toBe('DRAWDOWN_LIMIT')
     expect(riskReason(units('98.000001'), units('100'), units('100'))).toBe('')
   })
+
+  it('applies the fee ceiling to combined quote and base charges', () => {
+    const m = market(),
+      a = agent(),
+      order = sizeOrder(a, m, 'buy', 'combinedfees')!
+    const fill = paperFill(order, m.book, m.instrument.lot)
+    expect(() =>
+      applyFill(
+        a,
+        { ...fill, baseFee: -fill.filledQty / 400n, quoteFee: -fill.quote / 400n },
+        m.instrument.minQty,
+      ),
+    ).toThrow('TRADING_FEE_TOO_HIGH')
+  })
 })
 
 describe('spot hypotheses', () => {
@@ -139,6 +153,10 @@ describe('spot hypotheses', () => {
       'TRADING_BOOK_INVALID',
     )
     expect(() => validateMarket(market('BTC-USDT', '1', '1'))).toThrow('TRADING_SPREAD_TOO_WIDE')
+    const wide = market()
+    wide.book.bids[0]![0] = units('100')
+    wide.book.asks[0]![0] = units('100.20001')
+    expect(() => validateMarket(wide)).toThrow('TRADING_SPREAD_TOO_WIDE')
     m.candles.splice(10, 1)
     expect(() => validateMarket(m)).toThrow('TRADING_CANDLES_INVALID')
   })

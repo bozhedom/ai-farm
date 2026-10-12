@@ -140,7 +140,18 @@ export class OkxVenue implements TradingVenue {
       throw new Error('TRADING_RESPONSE_INVALID')
     }
     // Never propagate remote messages: they can contain account details or request headers.
-    if (parsed.code !== '0') throw new ExchangeError(parsed.code)
+    if (parsed.code !== '0') {
+      const rejected = z.object({ sCode: text }).safeParse(parsed.data[0])
+      if (
+        path === '/api/v5/trade/order' &&
+        parsed.code === '1' &&
+        parsed.data.length === 1 &&
+        rejected.success &&
+        ['51000', '51008', '51020', '51121'].includes(rejected.data.sCode)
+      )
+        throw new OrderRejected()
+      throw new ExchangeError(parsed.code)
+    }
     return parsed.data
   }
 

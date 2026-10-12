@@ -6,7 +6,7 @@ import { decimal, max, ratioBps } from './decimal'
 import { markAgent } from './accounting'
 import { hasCredentials } from './okx'
 import { eligible } from './strategy'
-import { agents, ensurePortfolios, portfolio } from './store'
+import { agents, ensurePortfolios, paperCandidates, portfolio } from './store'
 import type { AgentRow, OrderRow, TradingMode, TradingSymbol } from './types'
 
 export async function tradingView(mode: TradingMode): Promise<TradingView> {
@@ -47,9 +47,10 @@ export async function tradingView(mode: TradingMode): Promise<TradingView> {
     const price = markets.find((m) => m.symbol === a.symbol)?.bid
     exposure += price ? markAgent(a, BigInt(price)).exposure : BigInt(a.basis)
   }
-  if (!current.length) cash = BigInt(p.capital)
+  // A configured budget is not evidence of money in an unconnected exchange account.
+  if (!current.length && mode === 'paper') cash = BigInt(p.capital)
   const equity = cash + exposure
-  const paper = await agents('paper')
+  const paper = await paperCandidates()
   const demo = await portfolio('demo')
   const demoAgents = await agents('demo')
   const connection =
@@ -69,11 +70,13 @@ export async function tradingView(mode: TradingMode): Promise<TradingView> {
       equity: decimal(equity),
       cash: decimal(cash),
       exposure: decimal(exposure),
-      pnl: decimal(equity - BigInt(p.capital)),
+      pnl: p.started_at ? decimal(equity - BigInt(p.capital)) : '0',
       realized: decimal(BigInt(lifetime!.realized)),
       fees: decimal(BigInt(lifetime!.fees)),
-      drawdownBps: ratioBps(max(0n, BigInt(p.peak) - equity), BigInt(p.peak)),
-      dailyLossBps: ratioBps(max(0n, BigInt(p.day_equity) - equity), BigInt(p.day_equity)),
+      drawdownBps: p.started_at ? ratioBps(max(0n, BigInt(p.peak) - equity), BigInt(p.peak)) : 0,
+      dailyLossBps: p.started_at
+        ? ratioBps(max(0n, BigInt(p.day_equity) - equity), BigInt(p.day_equity))
+        : 0,
       roundTrips: lifetime!.trips,
     },
     limits: {
@@ -89,7 +92,7 @@ export async function tradingView(mode: TradingMode): Promise<TradingView> {
     readiness: {
       keys: hasCredentials(mode),
       liveEnabled: config().TRADING_LIVE_ENABLED,
-      paperQualified: paper.some((a) => eligible(a)),
+      paperQualified: paper.length > 0,
       demoVerified:
         demoAgents.some((a) => a.round_trips > 0) &&
         !demo.check_error &&

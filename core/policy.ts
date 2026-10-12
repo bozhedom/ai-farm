@@ -43,6 +43,7 @@ export const TRADING_POLICY = Object.freeze({
   minEvaluationDays: 7,
   minRoundTrips: 20,
   maxAgentDrawdownBps: 800,
+  promotionGapBps: 50,
 })
 export const templates = serviceTemplates
 export type Template = ServiceTemplate

@@ -5,7 +5,7 @@ import { TRADING_POLICY as P } from '../policy'
 import { BPS, abs, cost, decimal, fee, max, proceeds, ratioBps, units } from './decimal'
 import { applyFill, markAgent, paperFill, riskReason } from './accounting'
 import { eligible, fitness, mutate, signal, sizeOrder, validateMarket } from './strategy'
-import { hasCredentials, OkxVenue, OrderRejected } from './okx'
+import { OkxVenue, OrderRejected } from './okx'
 import {
   agents,
   atomic,
@@ -13,6 +13,7 @@ import {
   event,
   modes,
   pendingOrder,
+  paperCandidates,
   portfolio,
   requestFor,
   seedAgents,
@@ -71,6 +72,7 @@ async function loadMarkets(mode: TradingMode, venue: TradingVenue, db: Connectio
       db,
     )
   }
+  for (const symbol of P.symbols) validateMarket(markets[symbol])
   return markets
 }
 
@@ -283,6 +285,7 @@ async function submit(
     }
     if (p.mode === 'live' && !config().TRADING_LIVE_ENABLED)
       throw new Error('TRADING_LIVE_DISABLED')
+    validateMarket(market)
     await query("UPDATE trading_orders SET status='submitted' WHERE id=$1", [row.id], db)
     return true
   })
@@ -344,13 +347,13 @@ async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db:
     db,
   )
   const reason = riskReason(equity, peak, dayEquity)
-  if (reason && p.status === 'running') {
-    await query(
-      "UPDATE trading_portfolios SET status='paused',reason=$2 WHERE mode=$1 AND status='running'",
+  if (reason && (p.status === 'running' || p.status === 'paused')) {
+    const changed = await query(
+      "UPDATE trading_portfolios SET status='paused',reason=$2 WHERE mode=$1 AND status IN ('running','paused') AND (status <> 'paused' OR reason <> $2) RETURNING mode",
       [p.mode, reason],
       db,
     )
-    await event(p.mode, 'risk', reason, { equity: decimal(equity) }, db)
+    if (changed.length) await event(p.mode, 'risk', reason, { equity: decimal(equity) }, db)
   }
 }
 
@@ -376,9 +379,9 @@ async function evolve(db: Connection) {
     )
       reason = 'NO_PROVEN_EDGE'
     else {
-      await atomic(db, async () => {
+      const evolved = await atomic(db, async () => {
         const locked = await portfolio('paper', db, true)
-        if (locked.status !== 'running' || (await pendingOrder('paper', db))) return
+        if (locked.status !== 'running' || (await pendingOrder('paper', db))) return false
         const capital = team.reduce((s, a) => s + BigInt(a.cash), 0n)
         await query(
           "UPDATE trading_agents SET status='archived',archived_at=now() WHERE mode='paper' AND status='active'",
@@ -417,12 +420,81 @@ async function evolve(db: Connection) {
           { parents: ranked.slice(0, 2).map((a) => a.id), generation: p.generation + 1 },
           db,
         )
+        return true
       })
-      reason = 'LEADERS_CLONED'
+      if (evolved) reason = 'LEADERS_CLONED'
     }
   }
   await query(
     "UPDATE trading_portfolios SET evolution_at=now(),evolution_reason=$1 WHERE mode='paper'",
+    [reason],
+    db,
+  )
+}
+
+/** Reallocate the live slot only while completely in cash, preserving the account risk history. */
+async function promoteLive(db: Connection) {
+  const p = await portfolio('live', db)
+  if (p.evolution_at && Date.now() - p.evolution_at.getTime() < 86_400_000) return
+  const [current] = await agents('live', db)
+  const candidate = (await paperCandidates(db))[0]
+  let reason = 'NO_PROVEN_EDGE'
+  if (current && BigInt(current.base)) reason = 'POSITIONS_OPEN'
+  else if (current && candidate && current.parent_id !== candidate.id) {
+    const [parent] = await query<AgentRow>(
+      'SELECT * FROM trading_agents WHERE id=$1',
+      [current.parent_id],
+      db,
+    )
+    const same =
+      current.symbol === candidate.symbol &&
+      current.kind === candidate.kind &&
+      current.params.lookback === candidate.params.lookback &&
+      current.params.entryBps === candidate.params.entryBps &&
+      current.params.takeProfitBps === candidate.params.takeProfitBps
+    if (!same && parent && fitness(candidate) >= fitness(parent) + P.promotionGapBps) {
+      const promoted = await atomic(db, async () => {
+        const locked = await portfolio('live', db, true)
+        if (locked.status !== 'running' || (await pendingOrder('live', db))) return false
+        await query(
+          "UPDATE trading_agents SET status='archived',archived_at=now() WHERE id=$1",
+          [current.id],
+          db,
+        )
+        await query(
+          `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak)
+          VALUES ($1,'live',$2,$3,$4,$5,$6,$7,$8,$8,$8)`,
+          [
+            randomUUID(),
+            candidate.name,
+            candidate.symbol,
+            candidate.kind,
+            candidate.params,
+            candidate.id,
+            p.generation + 1,
+            current.cash,
+          ],
+          db,
+        )
+        await query(
+          "UPDATE trading_portfolios SET generation=generation+1 WHERE mode='live'",
+          [],
+          db,
+        )
+        await event(
+          'live',
+          'evolution',
+          'LIVE_LEADER_PROMOTED',
+          { parent: candidate.id, previous: current.id },
+          db,
+        )
+        return true
+      })
+      if (promoted) reason = 'LIVE_LEADER_PROMOTED'
+    }
+  }
+  await query(
+    "UPDATE trading_portfolios SET evolution_at=now(),evolution_reason=$1 WHERE mode='live'",
     [reason],
     db,
   )
@@ -458,6 +530,7 @@ export async function tradingTick(factory: VenueFactory = venues, isStopping = (
         await mark(p, markets, db)
         p = await portfolio(mode, db)
         if (p.status !== 'running' && p.status !== 'paused') return
+        if (mode === 'live' && p.status === 'running') await promoteLive(db)
         const forceExit =
           ['DAILY_LOSS_LIMIT', 'DRAWDOWN_LIMIT', 'OWNER_EXIT'].includes(p.reason) || p.demo_probe
         for (const agent of await agents(mode, db)) {
@@ -557,8 +630,7 @@ export async function startTrading(
         Date.now() - demo.checked_at.getTime() > 600_000
       )
         throw new Error('TRADING_DEMO_REQUIRED')
-      const paper = await agents('paper', db)
-      champion = paper.filter((a) => eligible(a)).sort((a, b) => fitness(b) - fitness(a))[0]
+      champion = (await paperCandidates(db))[0]
       if (!champion) throw new Error('TRADING_PAPER_REQUIRED')
     }
     const venue = factory(mode)

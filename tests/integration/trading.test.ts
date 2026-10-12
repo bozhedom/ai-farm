@@ -9,8 +9,16 @@ import {
   resolveMissingOrder,
   startTrading,
   tradingTick,
+  stopAllTrading,
 } from '../../core/trading/engine'
-import { agents, ensurePortfolios, pendingOrder, portfolio } from '../../core/trading/store'
+import {
+  agents,
+  ensurePortfolios,
+  paperCandidates,
+  pendingOrder,
+  portfolio,
+} from '../../core/trading/store'
+import { tradingView } from '../../core/trading/view'
 import type {
   Account,
   OrderRequest,
@@ -88,6 +96,52 @@ beforeEach(async () => {
 afterAll(() => pool.end())
 
 describe('durable trading lifecycle', () => {
+  it('does not report a planned budget as funds on an unconnected exchange', async () => {
+    expect((await tradingView('live')).metrics).toMatchObject({
+      capital: '100',
+      cash: '0',
+      equity: '0',
+      pnl: '0',
+      drawdownBps: 0,
+    })
+    expect((await tradingView('paper')).metrics).toMatchObject({
+      capital: '100',
+      cash: '100',
+      equity: '100',
+      pnl: '0',
+    })
+  })
+
+  it('stops every portfolio without waiting for exchange access', async () => {
+    await startTrading('paper', '', false, factory)
+    await startTrading('demo', '', false, factory)
+    await stopAllTrading()
+    await tick()
+    expect(exchange.placed).toHaveLength(0)
+    for (const mode of ['paper', 'demo', 'live'] as const)
+      expect(await portfolio(mode)).toMatchObject({ status: 'stopped', reason: 'OWNER_STOP' })
+  })
+
+  it('does not use past realized profit to hide losses in an open paper position', async () => {
+    await startTrading('paper', '', false, factory)
+    const [a] = await agents('paper')
+    await query(
+      "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3,base=$4,basis=$5 WHERE id=$1",
+      [
+        a!.id,
+        units('1').toString(),
+        units('15').toString(),
+        units('0.09').toString(),
+        units('11').toString(),
+      ],
+    )
+    expect(await paperCandidates()).toHaveLength(0)
+    await query('UPDATE trading_agents SET cash=$2,base=0,basis=0 WHERE id=$1', [
+      a!.id,
+      units('26').toString(),
+    ])
+    expect(await paperCandidates()).toHaveLength(1)
+  })
   it('starts paper with four agents, executes signals and keeps test profit out of revenue', async () => {
     await startTrading('paper', '', false, factory)
     await tick()
@@ -242,6 +296,24 @@ describe('durable trading lifecycle', () => {
     )
   })
 
+  it('keeps portfolio loss protection active while the owner has paused new entries', async () => {
+    await startTrading('paper', '', false, factory)
+    await tick()
+    await controlTrading('paper', 'pause')
+    // An earlier daily mark was higher; individual positions have not reached their stop.
+    await query("UPDATE trading_portfolios SET day_equity=$1 WHERE mode='paper'", [
+      units('103').toString(),
+    ])
+    await tick()
+    expect(await portfolio('paper')).toMatchObject({ status: 'paused', reason: 'DAILY_LOSS_LIMIT' })
+    expect((await agents('paper')).every((a) => BigInt(a.base) === 0n)).toBe(true)
+    expect(
+      await query("SELECT * FROM trading_orders WHERE side='sell' AND reason='RISK_EXIT'"),
+    ).toHaveLength(2)
+    await tick()
+    expect(await query("SELECT * FROM trading_events WHERE kind='risk'")).toHaveLength(1)
+  })
+
   it('requires independent live opt-in, a demo round trip and mature profitable paper evidence', async () => {
     await expect(startTrading('live', 'ТОРГОВАТЬ 100 USDT', false, factory)).rejects.toThrow(
       'TRADING_LIVE_DISABLED',
@@ -269,6 +341,42 @@ describe('durable trading lifecycle', () => {
     expect(await agents('live')).toHaveLength(0)
   })
 
+  it('starts one live agent only after all gates pass, with an independent account ledger', async () => {
+    await startTrading('demo', '', true, factory)
+    await tick()
+    await tick()
+    await tick()
+    await tick()
+    await startTrading('paper', '', false, factory)
+    const proven = (await agents('paper')).find((a) => a.kind === 'reversion')!
+    await query(
+      "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3 WHERE id=$1",
+      [proven.id, units('1').toString(), units('26').toString()],
+    )
+    const live = new Exchange()
+    live.identity = 'live-test-account'
+    const separate = (mode: string) => (mode === 'live' ? live : exchange)
+    const c = config()
+    c.TRADING_LIVE_ENABLED = true
+    try {
+      await startTrading('live', 'ТОРГОВАТЬ 100 USDT', false, separate)
+      const [a] = await agents('live')
+      expect(a).toMatchObject({
+        parent_id: proven.id,
+        cash: units('100').toString(),
+        round_trips: 0,
+      })
+      await tradingTick(separate)
+      expect(live.placed).toHaveLength(1)
+      expect(exchange.placed).toHaveLength(2)
+      await query('UPDATE trading_portfolios SET last_tick=NULL')
+      await tradingTick(separate)
+      expect((await agents('live'))[0]!.cash).toBe(live.balances.USDT.total.toString())
+    } finally {
+      c.TRADING_LIVE_ENABLED = false
+    }
+  })
+
   it('archives a complete paper generation, clones the two leaders and preserves the capital', async () => {
     await startTrading('paper', '', false, factory)
     exchange.price = '102'
@@ -290,5 +398,67 @@ describe('durable trading lifecycle', () => {
     await tick()
     expect(await query('SELECT * FROM trading_agents')).toHaveLength(8)
     expect(await portfolio('paper')).toMatchObject({ generation: 2 })
+    expect(await paperCandidates()).toHaveLength(4)
+  })
+
+  it('promotes a stronger paper leader into the flat live account without resetting losses or limits', async () => {
+    await startTrading('demo', '', true, factory)
+    await tick()
+    await tick()
+    await tick()
+    await tick()
+    exchange.reference = '100'
+    await startTrading('paper', '', false, factory)
+    const [first, better] = (await agents('paper')).filter((a) => a.kind === 'reversion')
+    await query(
+      "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3 WHERE id=$1",
+      [first!.id, units('1').toString(), units('26').toString()],
+    )
+    const live = new Exchange()
+    live.identity = 'live-promotion-account'
+    live.reference = '100'
+    const separate = (mode: string) => (mode === 'live' ? live : exchange)
+    const c = config()
+    c.TRADING_LIVE_ENABLED = true
+    try {
+      await startTrading('live', 'ТОРГОВАТЬ 100 USDT', false, separate)
+      const [original] = await agents('live')
+      await query('UPDATE trading_agents SET cash=$2,realized=$3 WHERE id=$1', [
+        original!.id,
+        units('99').toString(),
+        units('-1').toString(),
+      ])
+      live.balances.USDT = { total: units('99'), available: units('99') }
+      await query(
+        "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3 WHERE id=$1",
+        [better!.id, units('2').toString(), units('27').toString()],
+      )
+      await query('UPDATE trading_portfolios SET last_tick=NULL')
+      await tradingTick(separate)
+      const [next] = await agents('live')
+      expect(next).toMatchObject({
+        parent_id: better!.id,
+        cash: units('99').toString(),
+        generation: 2,
+        realized: '0',
+      })
+      expect(next!.id).not.toBe(original!.id)
+      expect(await portfolio('live')).toMatchObject({
+        capital: units('100').toString(),
+        peak: units('100').toString(),
+        day_equity: units('100').toString(),
+      })
+      expect((await tradingView('live')).metrics).toMatchObject({
+        equity: '99',
+        pnl: '-1',
+        realized: '-1',
+      })
+      expect(
+        await query("SELECT * FROM trading_agents WHERE mode='live' AND status='archived'"),
+      ).toHaveLength(1)
+      expect(live.placed).toHaveLength(0)
+    } finally {
+      c.TRADING_LIVE_ENABLED = false
+    }
   })
 })

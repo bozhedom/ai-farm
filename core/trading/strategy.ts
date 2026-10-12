@@ -68,7 +68,7 @@ export function validateMarket(market: Market, now = Date.now()) {
     }
   }
   if (book.bids[0]![0] >= book.asks[0]![0]) throw new Error('TRADING_BOOK_INVALID')
-  if (ratioBps(book.asks[0]![0] - book.bids[0]![0], book.bids[0]![0]) > P.maxSpreadBps)
+  if ((book.asks[0]![0] - book.bids[0]![0]) * BPS > book.bids[0]![0] * BigInt(P.maxSpreadBps))
     throw new Error('TRADING_SPREAD_TOO_WIDE')
   const last = candles.at(-1)
   if (!last || now - last.at > 150_000 || last.at + 60_000 > now)

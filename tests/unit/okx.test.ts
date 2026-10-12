@@ -95,7 +95,7 @@ describe('OKX wire contract', () => {
     )
     expect(transport).toHaveBeenCalledTimes(2)
     transport.mockResolvedValue(
-      response([{ sCode: '51008', clOrdId: request.clientId, ordId: '' }]),
+      response([{ sCode: '51008', clOrdId: request.clientId, ordId: '' }], '1'),
     )
     await expect(new OkxVenue('demo', transport).place(request)).rejects.toThrow(
       'TRADING_ORDER_REJECTED',

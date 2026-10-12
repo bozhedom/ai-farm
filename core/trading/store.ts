@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { pool, query, type Connection } from '../db'
 import { TRADING_POLICY as P } from '../policy'
 import { units } from './decimal'
-import { seeds } from './strategy'
+import { eligible, fitness, seeds } from './strategy'
+import { markAgent } from './accounting'
 import type { AgentRow, OrderRequest, OrderRow, PortfolioRow, TradingMode } from './types'
 
 export const modes: TradingMode[] = ['paper', 'demo', 'live']
@@ -81,6 +82,30 @@ export async function pendingOrder(mode: TradingMode, db: Connection = pool) {
       db,
     )
   )[0]
+}
+
+/** A finished parent remains admissible immediately after paper evolution archives it. */
+export async function paperCandidates(db: Connection = pool) {
+  const p = await portfolio('paper', db)
+  if (p.check_error || !p.checked_at || Date.now() - p.checked_at.getTime() > 600_000) return []
+  const candidates = await query<AgentRow>(
+    "SELECT * FROM trading_agents WHERE mode='paper' AND generation >= $1",
+    [Math.max(1, p.generation - 1)],
+    db,
+  )
+  const prices = await query<{ symbol: string; bid: string; at: Date }>(
+    "SELECT * FROM trading_markets WHERE mode='paper'",
+    [],
+    db,
+  )
+  return candidates
+    .filter((a) => {
+      if (!eligible(a)) return false
+      const price = prices.find((m) => m.symbol === a.symbol)
+      if (!price || Date.now() - price.at.getTime() > 90_000) return false
+      return markAgent(a, BigInt(price.bid)).equity > BigInt(a.initial_cash)
+    })
+    .sort((a, b) => fitness(b) - fitness(a))
 }
 export function requestFor(row: OrderRow): OrderRequest {
   return {

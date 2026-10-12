@@ -55,6 +55,7 @@ export function applyFill(agent: AgentRow, result: OrderResult, minQty: bigint) 
   let realized = BigInt(agent.realized),
     roundTrips = agent.round_trips
   const feeValue = -quoteFee - (filledQty ? (baseFee * quote) / filledQty : 0n)
+  if (feeValue > fee(quote, P.maxFeeBps)) throw new Error('TRADING_FEE_TOO_HIGH')
   if (side === 'buy') {
     cash -= quote - quoteFee
     base += filledQty + baseFee
