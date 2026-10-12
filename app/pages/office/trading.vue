@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { TradingView } from '../../../core/contracts/trading'
-import type { TradingMode } from '../../../core/trading/types'
+import type { TradingView, TradingOverview } from '../../../core/contracts/trading'
+import { exchanges, type TradingMode, type TradingExchange } from '../../../core/trading/types'
+import { exchangeCatalog } from '../../../core/trading/catalog'
 import { officeFetch, useOfficeResource } from '~/composables/office/resource'
 import { officeApi } from '~/composables/office/actions'
 import {
@@ -15,6 +16,8 @@ import {
 
 useHead({ title: 'Торговая ферма', bodyAttrs: { class: 'trading-body' } })
 const mode = ref<TradingMode>('paper')
+const exchange = ref<TradingExchange>('okx')
+const venue = computed(() => exchangeCatalog[exchange.value])
 const section = ref('overview')
 const tabs = [
   { id: 'overview', label: 'Обзор', icon: 'home' },
@@ -28,10 +31,43 @@ const {
   pending,
   refresh,
 } = useOfficeResource<TradingView>(
-  () => `trading:${mode.value}`,
-  () => officeFetch(`/api/trading?mode=${mode.value}`),
+  () => `trading:${exchange.value}:${mode.value}`,
+  () => officeFetch(`/api/trading?exchange=${exchange.value}&mode=${mode.value}`),
   { interval: 5000 },
 )
+const {
+  data: overview,
+  status: overviewStatus,
+  refresh: refreshOverview,
+} = useOfficeResource<TradingOverview>(
+  () => `trading-overview:${mode.value}`,
+  () => officeFetch(`/api/trading/overview?mode=${mode.value}`),
+  { interval: 5000 },
+)
+const amounts = ref<Record<TradingExchange, number>>({ okx: 100, bybit: 0, binance: 0, bitget: 0 })
+const allocationDirty = ref(false)
+watch(overview, (value) => {
+  if (value && !allocationDirty.value)
+    for (const c of value.connections) amounts.value[c.exchange] = Number(c.liveAllocation)
+})
+const allocationTotal = computed(() =>
+  exchanges.reduce((sum, e) => sum + Number(amounts.value[e]), 0),
+)
+const allocationValid = computed(
+  () =>
+    exchanges.every(
+      (e) =>
+        Number.isInteger(amounts.value[e]) && (amounts.value[e] === 0 || amounts.value[e] >= 20),
+    ) && allocationTotal.value <= 100,
+)
+const envExample = computed(() => {
+  const prefix = `${exchange.value.toUpperCase()}_${mode.value === 'demo' ? 'DEMO' : 'LIVE'}`
+  return [
+    `${prefix}_API_KEY=…`,
+    `${prefix}_SECRET=…`,
+    ...(venue.value.passphrase ? [`${prefix}_PASSPHRASE=…`] : []),
+  ].join('\n')
+})
 const busy = ref(''),
   error = ref(''),
   notice = ref(''),
@@ -59,7 +95,8 @@ const startReady = computed(
     !v.value.unresolvedClientId &&
     (mode.value === 'paper' || v.value.readiness.keys) &&
     (mode.value !== 'live' ||
-      (v.value.readiness.liveEnabled &&
+      (v.value.readiness.allocated &&
+        v.value.readiness.liveEnabled &&
         v.value.readiness.paperQualified &&
         v.value.readiness.demoVerified)),
 )
@@ -95,6 +132,11 @@ const checklist = computed(() =>
         ...(mode.value === 'live'
           ? [
               {
+                label: 'Выделен бюджет',
+                ok: v.value.readiness.allocated,
+                detail: `Для ${venue.value.name} выделено ${v.value.metrics.capital} USDT. Минимум 20 USDT.`,
+              },
+              {
                 label: 'Допуск на сервере',
                 ok: v.value.readiness.liveEnabled,
                 detail: 'TRADING_LIVE_ENABLED=true после проверок.',
@@ -120,13 +162,13 @@ const confirmAction = ref<'start' | 'flatten' | 'resolve'>('start'),
   confirmation = ref('')
 const confirmPhrase = computed(() =>
   confirmAction.value === 'start'
-    ? 'ТОРГОВАТЬ 100 USDT'
+    ? v.value?.liveConfirmation || ''
     : confirmAction.value === 'resolve'
       ? 'ПРОВЕРЕНО НА БИРЖЕ'
       : '',
 )
 
-watch([mode, section], () => {
+watch([exchange, mode, section], () => {
   error.value = ''
   notice.value = ''
   confirmation.value = ''
@@ -141,6 +183,7 @@ async function act(action: string) {
       method: 'POST',
       timeout: 90_000,
       body: {
+        exchange: exchange.value,
         mode: selectedMode,
         action,
         confirmation: confirmation.value,
@@ -157,7 +200,7 @@ async function act(action: string) {
             : 'Изменение сохранено.'
     dialog.value?.close()
     confirmation.value = ''
-    await refresh()
+    await Promise.all([refresh(), refreshOverview()])
   } catch (e) {
     const err = e as { data?: { statusMessage?: string }; status?: number }
     error.value =
@@ -167,6 +210,52 @@ async function act(action: string) {
   } finally {
     busy.value = ''
   }
+}
+async function saveAllocation() {
+  busy.value = 'allocation'
+  error.value = ''
+  notice.value = ''
+  try {
+    await officeFetch('/api/trading/allocation', {
+      method: 'POST',
+      body: { amounts: amounts.value },
+    })
+    allocationDirty.value = false
+    await Promise.all([refresh(), refreshOverview()])
+    notice.value = 'Распределение сохранено. Пополните выбранные торговые счета самостоятельно.'
+  } catch (e) {
+    error.value = tradingReason(
+      (e as { data?: { statusMessage?: string } }).data?.statusMessage ||
+        'TRADING_NETWORK_UNAVAILABLE',
+    )
+  } finally {
+    busy.value = ''
+  }
+}
+async function startAllPaper() {
+  busy.value = 'paper_all'
+  error.value = ''
+  notice.value = ''
+  const results = await Promise.allSettled(
+    exchanges.map((exchange) =>
+      officeFetch('/api/trading/control', {
+        method: 'POST',
+        timeout: 90_000,
+        body: { exchange, mode: 'paper', action: 'start' },
+      }),
+    ),
+  )
+  const failures = results.flatMap((r, i) =>
+    r.status === 'rejected'
+      ? [
+          `${exchangeCatalog[exchanges[i]!].name}: ${tradingReason(r.reason?.data?.statusMessage || 'TRADING_NETWORK_UNAVAILABLE')}`,
+        ]
+      : [],
+  )
+  notice.value = `Бумажные портфели запущены: ${results.length - failures.length} из ${results.length}.`
+  error.value = failures.join(' ')
+  await Promise.all([refresh(), refreshOverview()])
+  busy.value = ''
 }
 function ask(action: 'start' | 'flatten' | 'resolve') {
   if (action === 'start' && mode.value !== 'live') {
@@ -187,6 +276,7 @@ function exportOrders() {
     [
       'time',
       'mode',
+      'exchange',
       'client_id',
       'symbol',
       'side',
@@ -199,6 +289,7 @@ function exportOrders() {
     ...v.value.orders.map((o) => [
       o.createdAt,
       mode.value,
+      exchange.value,
       o.clientId,
       o.symbol,
       o.side,
@@ -219,7 +310,7 @@ function exportOrders() {
   const url = URL.createObjectURL(blob),
     a = document.createElement('a')
   a.href = url
-  a.download = `ai-farm-${mode.value}-orders.csv`
+  a.download = `ai-farm-${exchange.value}-${mode.value}-orders.csv`
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
@@ -271,15 +362,15 @@ function exportOrders() {
           <span class="nav-caption">Сохранённая история</span
           ><NuxtLink to="/office"><OfficeIcon name="box" />Студия текстов</NuxtLink>
           <p>Прежние продукты и заказы сохранены отдельно.</p>
-          <a href="https://www.okx.com/docs-v5/en/" target="_blank" rel="noopener noreferrer"
-            >API OKX <OfficeIcon name="external"
+          <a :href="venue.docs" target="_blank" rel="noopener noreferrer"
+            >API {{ venue.name }} <OfficeIcon name="external"
           /></a>
         </div>
       </aside>
       <main id="trading-main" class="trading-main">
         <div class="workspace-heading">
           <div>
-            <p class="t-eyebrow">OKX / СПОТ / USDT</p>
+            <p class="t-eyebrow">ЕДИНЫЙ КАБИНЕТ / СПОТ / USDT</p>
             <h1>
               {{
                 tabs.find((t) => t.id === section)?.label === 'Обзор'
@@ -287,7 +378,7 @@ function exportOrders() {
                   : tabs.find((t) => t.id === section)?.label
               }}
             </h1>
-            <p class="t-muted">Стратегии соревнуются. Риск ограничивает сервер.</p>
+            <p class="t-muted">Четыре биржи. Отдельные портфели. Общее управление.</p>
           </div>
           <span class="version-label">BTC + ETH <OfficeIcon name="check" /></span>
         </div>
@@ -305,6 +396,80 @@ function exportOrders() {
             ><small>{{ m.detail }}</small>
           </button>
         </div>
+        <section v-if="overview" class="exchange-hub" aria-label="Биржевые подключения">
+          <div class="hub-heading">
+            <div>
+              <span class="t-eyebrow">{{
+                mode === 'live' ? 'РЕАЛЬНЫЕ ПОРТФЕЛИ' : 'ВИРТУАЛЬНЫЕ ПОРТФЕЛИ'
+              }}</span>
+              <p>
+                <strong>{{ usdt(overview.equity) }} USDT</strong
+                ><span class="t-muted">всего · результат {{ usdt(overview.pnl, 4) }} USDT</span>
+              </p>
+            </div>
+            <button
+              v-if="mode === 'paper'"
+              class="t-button"
+              :disabled="!!busy || overviewStatus.offline"
+              @click="startAllPaper"
+            >
+              {{ busy === 'paper_all' ? 'Проверяем биржи…' : 'Запустить все на бумаге' }}
+            </button>
+            <button v-else-if="mode === 'live'" class="text-button" @click="section = 'connection'">
+              Бюджет {{ overview.allocated }} / {{ overview.capitalLimit }} USDT
+            </button>
+          </div>
+          <div class="exchange-picker" role="group" aria-label="Выбор биржи">
+            <button
+              v-for="c in overview.connections"
+              :key="c.exchange"
+              type="button"
+              class="exchange-card"
+              :class="{ selected: exchange === c.exchange }"
+              :aria-pressed="exchange === c.exchange"
+              :disabled="!!busy"
+              @click="exchange = c.exchange"
+            >
+              <span class="exchange-card-heading"
+                ><strong>{{ exchangeCatalog[c.exchange].name }}</strong
+                ><i
+                  :class="{
+                    'is-alive': c.status === 'running' && c.fresh,
+                    'is-error': !!c.error && c.error.startsWith('TRADING_'),
+                  }"
+              /></span>
+              <span class="exchange-card-value">{{ usdt(c.equity) }} <small>USDT</small></span>
+              <span class="exchange-card-state"
+                >{{
+                  c.error.startsWith('TRADING_')
+                    ? 'Нужна проверка'
+                    : !c.keys
+                      ? 'Нужны ключи'
+                      : c.status === 'running'
+                        ? c.fresh
+                          ? 'Работает'
+                          : 'Ждёт котировки'
+                        : c.status === 'paused'
+                          ? 'Пауза'
+                          : c.status === 'stopped'
+                            ? 'Остановлен'
+                            : 'Готов к запуску'
+                }}
+                · {{ c.activeAgents }} аг.</span
+              >
+            </button>
+          </div>
+          <p class="fine-print">
+            {{
+              mode === 'live'
+                ? 'Бюджет распределяется между биржами. Переводы выполняет владелец; лимит не означает наличие средств на счетах.'
+                : 'По 100 виртуальных USDT на биржу. Результаты этого режима не входят в реальный капитал.'
+            }}
+          </p>
+        </section>
+        <p v-if="overviewStatus.offline" class="trading-notice is-error" role="status">
+          Сводка бирж временно недоступна. Показаны последние полученные данные.
+        </p>
         <p v-if="error" class="trading-notice is-error" role="alert">{{ error }}</p>
         <p v-if="notice" class="trading-notice" role="status">{{ notice }}</p>
         <p v-if="status.offline" class="trading-notice is-error" role="status">
@@ -319,6 +484,10 @@ function exportOrders() {
         </div>
         <template v-else>
           <div class="portfolio-bar">
+            <strong class="selected-venue"
+              >{{ venue.name }}
+              <small>{{ mode === 'demo' ? venue.demoName : currentMode.label }}</small></strong
+            >
             <span class="status-pill" :class="v.status"><i />{{ stateLabel }}</span
             ><span>{{ mode === 'live' ? 'Реальный счёт' : 'Тестовый результат, не доход' }}</span
             ><span class="portfolio-timestamp">{{
@@ -399,14 +568,20 @@ function exportOrders() {
                     :disabled="!Number(v.metrics.exposure) || !!busy"
                     @click="ask('flatten')"
                   >
-                    Закрыть позиции
+                    Закрыть позиции</button
+                  ><button
+                    class="t-button t-quiet"
+                    :disabled="!!busy || v.status === 'stopped' || v.status === 'idle'"
+                    @click="act('stop')"
+                  >
+                    Стоп {{ venue.name }}
                   </button>
                 </div>
                 <p class="fine-print">
                   {{
                     mode === 'paper'
                       ? 'Можно начать без аккаунта. Виртуальные 100 USDT распределяются между четырьмя агентами.'
-                      : 'Деньги остаются на вашем аккаунте OKX. Приложение не выполняет ввод и вывод.'
+                      : `Деньги остаются на вашем аккаунте ${venue.name}. Приложение не выполняет ввод и вывод.`
                   }}
                 </p>
               </section>
@@ -507,7 +682,7 @@ function exportOrders() {
                 </div>
                 <p v-if="!v.markets.length" class="empty-copy">
                   Проверьте связь или запустите портфель: здесь появятся реальные цены из стакана
-                  OKX.
+                  {{ venue.name }}.
                 </p>
               </section>
               <section class="t-panel">
@@ -697,7 +872,7 @@ function exportOrders() {
               <div v-if="v.unresolvedClientId" class="review-box">
                 <h3>Нужна проверка ордера</h3>
                 <p>
-                  Проверьте историю OKX по ID <code>{{ v.unresolvedClientId }}</code
+                  Проверьте историю {{ venue.name }} по ID <code>{{ v.unresolvedClientId }}</code
                   >. Приложение продолжает искать исполнение. Подтверждайте отсутствие только после
                   проверки на бирже.
                 </p>
@@ -728,6 +903,52 @@ function exportOrders() {
           </template>
 
           <div v-if="section === 'connection'" class="connection-grid">
+            <section v-if="overview" class="t-panel funding-panel">
+              <div class="panel-heading">
+                <h2>Распределение реального бюджета</h2>
+                <span class="t-muted">До 100 USDT на все биржи</span>
+              </div>
+              <p class="fine-print">
+                Укажите 0 для отключённой биржи или от 20 USDT для торговли. После первого реального
+                запуска её бюджет фиксируется вместе с историей риска.
+              </p>
+              <form @submit.prevent="saveAllocation">
+                <div class="funding-fields">
+                  <label v-for="c in overview.connections" :key="c.exchange"
+                    >{{ exchangeCatalog[c.exchange].name
+                    }}<span
+                      ><input
+                        v-model.number="amounts[c.exchange]"
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="1"
+                        required
+                        :disabled="!c.allocationEditable || !!busy"
+                        @input="allocationDirty = true"
+                      />
+                      USDT</span
+                    ><small v-if="!c.allocationEditable">Бюджет зафиксирован</small></label
+                  >
+                </div>
+                <div class="funding-actions">
+                  <span :class="{ 'is-negative': !allocationValid }"
+                    >Распределено {{ allocationTotal }} / 100 USDT</span
+                  ><button
+                    class="t-button"
+                    :disabled="
+                      !allocationDirty || !allocationValid || !!busy || overviewStatus.offline
+                    "
+                  >
+                    Сохранить распределение
+                  </button>
+                </div>
+              </form>
+              <p class="fine-print">
+                Сохранение бюджета не запускает торговлю и не переводит деньги. Лимиты убытка и
+                просадки действуют отдельно для каждого портфеля.
+              </p>
+            </section>
             <section class="t-panel">
               <div class="panel-heading">
                 <h2>Готовность: {{ currentMode.label }}</h2>
@@ -775,12 +996,12 @@ function exportOrders() {
             </section>
             <section class="t-panel setup-guide">
               <h2>
-                {{ mode === 'paper' ? 'Как начать без аккаунта' : 'Подключение аккаунта OKX' }}
+                {{ mode === 'paper' ? 'Как начать без аккаунта' : `Подключение ${venue.name}` }}
               </h2>
               <template v-if="mode === 'paper'"
                 ><p>
                   Откройте «Обзор» и запустите портфель. Нужны работающий обработчик и доступ к
-                  публичному API OKX.
+                  публичному API {{ venue.name }}.
                 </p>
                 <p>
                   Четыре агента получат по 25 виртуальных USDT. Они будут принимать решения по
@@ -796,35 +1017,39 @@ function exportOrders() {
               ><template v-else
                 ><ol>
                   <li>
-                    Создайте отдельный аккаунт или субаккаунт OKX для приложения. Не торгуйте на нём
-                    вручную.
+                    Создайте отдельный аккаунт или субаккаунт {{ venue.name }} для приложения.
+                    {{ venue.account }}. Не торгуйте на нём вручную.
                   </li>
                   <li>
-                    Создайте {{ mode === 'demo' ? 'ключ Demo Trading' : 'реальный API-ключ' }} с
-                    чтением и торговлей, без вывода. Для реального ключа укажите IP сервера.
+                    Создайте
+                    {{ mode === 'demo' ? `ключ ${venue.demoName}` : 'реальный API-ключ' }} с чтением
+                    и торговлей, без вывода. Для реального ключа укажите IP сервера.
                   </li>
                   <li>
-                    На торговом счёте нужны 100 {{ mode === 'demo' ? 'тестовых ' : '' }}USDT. Перед
-                    первым запуском BTC и ETH должны быть равны нулю.
+                    На торговом счёте нужны {{ v.metrics.capital }}
+                    {{ mode === 'demo' ? 'тестовых ' : '' }}USDT. Перед первым запуском BTC и ETH
+                    должны быть равны нулю.
                   </li>
                   <li>
-                    Запишите три значения в окружение сервера и пересоздайте web и worker. Секреты
-                    вводятся на сервере.
+                    Запишите ключи в окружение сервера и пересоздайте web и worker. Секреты вводятся
+                    на сервере.
                   </li>
                 </ol>
-                <pre
-                  class="env-example"
-                ><code>{{ mode==='demo'?'OKX_DEMO_API_KEY=…\nOKX_DEMO_SECRET=…\nOKX_DEMO_PASSPHRASE=…':'OKX_LIVE_API_KEY=…\nOKX_LIVE_SECRET=…\nOKX_LIVE_PASSPHRASE=…\nTRADING_LIVE_ENABLED=true' }}</code></pre>
+                <pre class="env-example"><code>{{envExample}}</code></pre>
                 <p>
                   Хост API должен соответствовать региону регистрации. Подробная инструкция
                   находится в <code>docs/21-trading.md</code> проекта.
                 </p>
                 <a
                   class="text-button"
-                  href="https://www.okx.com/account/my-api"
+                  :href="
+                    mode === 'demo' && exchange === 'binance'
+                      ? 'https://testnet.binance.vision/'
+                      : venue.apiUrl
+                  "
                   target="_blank"
                   rel="noopener noreferrer"
-                  >Открыть управление API OKX <OfficeIcon name="external" /></a
+                  >Открыть API {{ venue.name }} <OfficeIcon name="external" /></a
               ></template>
             </section>
           </div>
@@ -849,7 +1074,7 @@ function exportOrders() {
         <p>
           {{
             confirmAction === 'start'
-              ? 'Разрешаете приложению торговать до 100 USDT на вашем счёте OKX. Прибыль не гарантирована. Лимиты ограничивают действия, но не исключают потерю капитала.'
+              ? `Разрешаете приложению торговать в пределах ${v?.metrics.capital} USDT на счёте ${venue.name}. Прибыль не гарантирована. Лимиты ограничивают действия, но не исключают потерю капитала.`
               : confirmAction === 'flatten'
                 ? 'Покупки прекратятся. Обработчик начнёт продавать имеющиеся активы по ограниченной цене. Полное исполнение зависит от рынка; маленькие остатки могут сохраниться.'
                 : 'Подтвердите, что самостоятельно проверили историю ордеров и сделок на бирже. Сервер дополнительно проверит отсутствие ордера и совпадение баланса. История заявки сохранится.'
