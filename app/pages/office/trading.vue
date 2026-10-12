@@ -13,6 +13,7 @@ const venue = computed(() => exchangeCatalog[exchange.value || 'okx'])
 const section = ref('overview')
 const tabs = [
   { id: 'overview', label: 'Результат' },
+  { id: 'market', label: 'Рынок' },
   { id: 'agents', label: 'Стратегии' },
   { id: 'orders', label: 'История' },
   { id: 'connection', label: 'Подключение' },
@@ -423,6 +424,9 @@ async function allocationSaved() {
                   ><i />{{ state?.label || 'Проверяем состояние' }}</strong
                 >
                 <p>{{ activity }}</p>
+                <button class="market-shortcut" @click="section = 'market'">
+                  Как выбираются монеты
+                </button>
               </div>
               <button
                 v-if="v.status === 'running'"
@@ -573,6 +577,14 @@ async function allocationSaved() {
               </div>
             </details>
           </div>
+          <TradingMarket
+            v-else-if="section === 'market'"
+            :key="`${exchange}:${mode}`"
+            :view="v"
+            :busy="!!busy"
+            :offline="offline"
+            @check="act('check')"
+          />
           <TradingStrategies
             v-else-if="section === 'agents'"
             :key="`${exchange}:${mode}`"
