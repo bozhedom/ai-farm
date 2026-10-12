@@ -20,6 +20,30 @@ export const POLICY = Object.freeze({
   maxIdeasPerDay: 24,
   maxLeadDraftsPerDay: 12,
 })
+
+/** Owner-authorized spot trading. These ceilings cannot be changed by agents or the UI. */
+export const TRADING_POLICY = Object.freeze({
+  version: 'spot-v1',
+  symbols: ['BTC-USDT', 'ETH-USDT'] as const,
+  capitalUsdt: 100,
+  orderUsdt: 10,
+  minOrderUsdt: 5,
+  maxExposureBps: 5000,
+  dailyLossBps: 200,
+  drawdownBps: 1000,
+  positionStopBps: 300,
+  maxSpreadBps: 20,
+  slippageBps: 10,
+  maxFeeBps: 25,
+  paperFeeBps: 10,
+  maxOrdersPerDay: 40,
+  cooldownMs: 5 * 60_000,
+  tickMs: 15_000,
+  bookMaxAgeMs: 10_000,
+  minEvaluationDays: 7,
+  minRoundTrips: 20,
+  maxAgentDrawdownBps: 800,
+})
 export const templates = serviceTemplates
 export type Template = ServiceTemplate
 export const templateSchema = z.enum(templates)

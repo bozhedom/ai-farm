@@ -11,6 +11,7 @@
     "build": "nuxt build",
     "start": "node .output/server/index.mjs",
     "worker": "tsx --env-file=.env worker/index.ts",
+    "trading:check": "tsx --env-file=.env scripts/trading-check.ts",
     "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
     "setup": "node scripts/setup.mjs",
     "typecheck": "nuxt typecheck && tsc --project tsconfig.core.json --noEmit",

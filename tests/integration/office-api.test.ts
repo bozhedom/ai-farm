@@ -30,6 +30,8 @@ import dashboard from '../../server/api/dashboard.get'
 import control from '../../server/api/control.post'
 import opportunities from '../../server/api/opportunities/index.get'
 import catalog from '../../server/api/public/catalog.get'
+import trading from '../../server/api/trading/index.get'
+import tradingControl from '../../server/api/trading/control.post'
 import { applyMigrations, resetDatabase } from './helpers/db'
 
 const origin = 'http://localhost:3210'
@@ -37,6 +39,7 @@ let server: Server
 let base = ''
 
 const gets: [string, EventHandler][] = [
+  ['/api/trading', trading],
   ['/api/office/overview', overview],
   ['/api/office/ideas', ideas],
   ['/api/office/ideas/:id', idea],
@@ -53,6 +56,7 @@ const gets: [string, EventHandler][] = [
   ['/api/public/catalog', catalog],
 ]
 const posts: [string, EventHandler][] = [
+  ['/api/trading/control', tradingControl],
   ['/api/office/ideas/:id', ideaUpdate],
   ['/api/office/agents/evolve', evolve],
   ['/api/office/products/:id/visibility', visibility],

@@ -38,6 +38,7 @@ Object.assign(process.env, {
   SEARCH_PROVIDER: 'demo',
   PAYMENT_MODE: 'sandbox',
   AUTONOMY_ENABLED: 'true',
+  WORKSPACE_MODE: 'studio',
   POLL_INTERVAL_MS: '250',
   APP_ORIGIN: 'http://localhost:3210',
   SECURE_COOKIE: 'false',

@@ -69,6 +69,19 @@ const schema = z.object({
   IDEA_PRODUCTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(2),
   AUTONOMY_ENABLED: flag.default(true),
   POLL_INTERVAL_MS: positive(5000),
+  // Separate credentials: a demo request can never fall back to a real account.
+  TRADING_LIVE_ENABLED: flag.default(false),
+  // The previous text-services experiment remains available with its preserved history.
+  WORKSPACE_MODE: z.enum(['trading', 'studio']).default('trading'),
+  OKX_API_HOST: z
+    .enum(['openapi.okx.com', 'www.okx.com', 'us.okx.com', 'eea.okx.com'])
+    .default('openapi.okx.com'),
+  OKX_DEMO_API_KEY: z.string().default(''),
+  OKX_DEMO_SECRET: z.string().default(''),
+  OKX_DEMO_PASSPHRASE: z.string().default(''),
+  OKX_LIVE_API_KEY: z.string().default(''),
+  OKX_LIVE_SECRET: z.string().default(''),
+  OKX_LIVE_PASSPHRASE: z.string().default(''),
 })
 
 export type Config = z.infer<typeof schema>
