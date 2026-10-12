@@ -47,7 +47,12 @@ export function validateMarket(market: Market, now = Date.now()) {
   const { book, instrument, candles } = market
   if (!P.symbols.includes(instrument.symbol) || book.symbol !== instrument.symbol)
     throw new Error('TRADING_SYMBOL_FORBIDDEN')
-  if (instrument.lot <= 0n || instrument.minQty < instrument.lot || instrument.tick <= 0n)
+  if (
+    instrument.lot <= 0n ||
+    instrument.minQty < instrument.lot ||
+    instrument.tick <= 0n ||
+    (instrument.minNotional !== undefined && instrument.minNotional < 0n)
+  )
     throw new Error('TRADING_INSTRUMENT_INVALID')
   if (!Number.isSafeInteger(book.at) || now - book.at > P.bookMaxAgeMs || book.at - now > 2000)
     throw new Error('TRADING_STALE_MARKET')
@@ -133,7 +138,11 @@ export function sizeOrder(
     side === 'buy'
       ? floorStep((((budget * BPS) / (BPS + BigInt(P.maxFeeBps))) * SCALE) / price, lot)
       : floorStep(BigInt(agent.base), lot)
-  if (qty < minQty || (side === 'buy' && cost(qty, price) < units(String(P.minOrderUsdt))))
+  if (
+    qty < minQty ||
+    proceeds(qty, price) < (market.instrument.minNotional || 0n) ||
+    (side === 'buy' && cost(qty, price) < units(String(P.minOrderUsdt)))
+  )
     return null
   return { clientId, symbol, side, qty, price }
 }

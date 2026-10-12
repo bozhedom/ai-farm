@@ -1,13 +1,18 @@
 import { defineEventHandler, getQuery } from 'h3'
 import { z } from 'zod'
+import { exchanges } from '../../../core/trading/types'
 import { tradingView } from '../../../core/trading/view'
 import { respond } from '../../utils/api'
 
 export default defineEventHandler((event) =>
   respond(async () => {
-    const { mode } = z
-      .object({ mode: z.enum(['paper', 'demo', 'live']).default('paper') })
+    const input = z
+      .object({
+        exchange: z.enum(exchanges).default('okx'),
+        mode: z.enum(['paper', 'demo', 'live']).default('paper'),
+      })
+      .strict()
       .parse(getQuery(event))
-    return tradingView(mode)
+    return tradingView(input)
   }),
 )

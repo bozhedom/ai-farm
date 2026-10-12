@@ -54,17 +54,8 @@ const fillSchema = z.object({
   side: z.enum(['buy', 'sell']),
 })
 
-/** A definitive rejection is different from a timeout or a lost response. */
-export class OrderRejected extends Error {
-  constructor() {
-    super('TRADING_ORDER_REJECTED')
-  }
-}
-class ExchangeError extends Error {
-  constructor(readonly code: string) {
-    super('TRADING_EXCHANGE_ERROR')
-  }
-}
+export { OrderRejected } from './wire'
+import { OrderRejected, ExchangeError } from './wire'
 
 export function signature(
   secret: string,

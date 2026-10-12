@@ -34,6 +34,14 @@ describe('spot accounting and risk', () => {
     expect(booked.base).toBe(order.qty)
   })
 
+  it('respects exchange minimum notional for both entries and exits', () => {
+    const m = market()
+    m.instrument.minNotional = units('10')
+    expect(sizeOrder(agent(), m, 'buy', 'min')).toBeNull()
+    expect(sizeOrder(agent({ base: units('0.01').toString() }), m, 'sell', 'dust')).toBeNull()
+    expect(sizeOrder(agent({ base: units('0.2').toString() }), m, 'sell', 'exit')).not.toBeNull()
+  })
+
   it('walks depth and books partial IOC cancellation exactly once at settlement', () => {
     const m = market()
     m.book.asks[0]![1] = units('0.01')

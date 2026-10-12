@@ -82,6 +82,30 @@ const schema = z.object({
   OKX_LIVE_API_KEY: z.string().default(''),
   OKX_LIVE_SECRET: z.string().default(''),
   OKX_LIVE_PASSPHRASE: z.string().default(''),
+  BYBIT_API_HOST: z
+    .enum([
+      'api.bybit.com',
+      'api.bybit.tr',
+      'api.bybit.kz',
+      'api.bybit.ae',
+      'api.bybitgeorgia.ge',
+      'api.bybit.id',
+    ])
+    .default('api.bybit.com'),
+  BYBIT_DEMO_API_KEY: z.string().default(''),
+  BYBIT_DEMO_SECRET: z.string().default(''),
+  BYBIT_LIVE_API_KEY: z.string().default(''),
+  BYBIT_LIVE_SECRET: z.string().default(''),
+  BINANCE_DEMO_API_KEY: z.string().default(''),
+  BINANCE_DEMO_SECRET: z.string().default(''),
+  BINANCE_LIVE_API_KEY: z.string().default(''),
+  BINANCE_LIVE_SECRET: z.string().default(''),
+  BITGET_DEMO_API_KEY: z.string().default(''),
+  BITGET_DEMO_SECRET: z.string().default(''),
+  BITGET_DEMO_PASSPHRASE: z.string().default(''),
+  BITGET_LIVE_API_KEY: z.string().default(''),
+  BITGET_LIVE_SECRET: z.string().default(''),
+  BITGET_LIVE_PASSPHRASE: z.string().default(''),
 })
 
 export type Config = z.infer<typeof schema>

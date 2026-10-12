@@ -1,4 +1,5 @@
-import { OkxVenue } from '../core/trading/okx'
+import { createVenue } from '../core/trading/venues'
+import { exchanges, type TradingExchange } from '../core/trading/types'
 import { validateMarket } from '../core/trading/strategy'
 import { decimal } from '../core/trading/decimal'
 import { TRADING_POLICY } from '../core/policy'
@@ -7,14 +8,19 @@ import { pool } from '../core/db'
 
 // Read-only connection check. This command never initializes a portfolio or submits an order.
 const mode = process.argv[2] || 'paper'
+const exchange = process.argv[3] || 'okx'
+if (!exchanges.includes(exchange as TradingExchange)) throw new Error('EXPECTED_SUPPORTED_EXCHANGE')
 if (!['paper', 'demo', 'live'].includes(mode)) throw new Error('EXPECTED_PAPER_DEMO_OR_LIVE')
 try {
-  const venue = new OkxVenue(mode as 'paper' | 'demo' | 'live')
+  const venue = createVenue({
+    exchange: exchange as TradingExchange,
+    mode: mode as 'paper' | 'demo' | 'live',
+  })
   for (const symbol of TRADING_POLICY.symbols) {
     const m = await venue.market(symbol)
     validateMarket(m)
     console.log(
-      `${symbol}: bid ${decimal(m.book.bids[0]![0])}, ask ${decimal(m.book.asks[0]![0])}; ${m.candles.length} closed candles; market OK`,
+      `${exchange}/${mode} ${symbol}: bid ${decimal(m.book.bids[0]![0])}, ask ${decimal(m.book.asks[0]![0])}; ${m.candles.length} closed candles; market OK`,
     )
   }
   if (mode !== 'paper') {

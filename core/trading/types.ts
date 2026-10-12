@@ -1,3 +1,6 @@
+export const exchanges = ['okx', 'bybit', 'binance', 'bitget'] as const
+export type TradingExchange = (typeof exchanges)[number]
+export type TradingScope = { exchange: TradingExchange; mode: TradingMode }
 export type TradingMode = 'paper' | 'demo' | 'live'
 export type TradingSymbol = 'BTC-USDT' | 'ETH-USDT'
 export type Side = 'buy' | 'sell'
@@ -8,6 +11,7 @@ export type Instrument = {
   lot: bigint
   minQty: bigint
   tick: bigint
+  minNotional?: bigint
 }
 export type Book = {
   symbol: TradingSymbol
@@ -48,6 +52,7 @@ export interface TradingVenue {
 }
 
 export type PortfolioRow = {
+  exchange: TradingExchange
   mode: TradingMode
   status: 'idle' | 'running' | 'paused' | 'stopped'
   reason: string
@@ -68,6 +73,7 @@ export type PortfolioRow = {
   evolution_reason: string
 }
 export type AgentRow = {
+  exchange: TradingExchange
   id: string
   mode: TradingMode
   name: string
@@ -91,6 +97,7 @@ export type AgentRow = {
   last_signal: string
 }
 export type OrderRow = {
+  exchange: TradingExchange
   id: string
   mode: TradingMode
   agent_id: string

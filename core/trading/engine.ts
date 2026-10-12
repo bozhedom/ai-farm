@@ -5,9 +5,13 @@ import { TRADING_POLICY as P } from '../policy'
 import { BPS, abs, cost, decimal, fee, max, proceeds, ratioBps, units } from './decimal'
 import { applyFill, markAgent, paperFill, riskReason } from './accounting'
 import { eligible, fitness, mutate, signal, sizeOrder, validateMarket } from './strategy'
-import { OkxVenue, OrderRejected } from './okx'
+import { OrderRejected } from './wire'
+import { createVenue } from './venues'
+import { exchangeCatalog } from './catalog'
+import { exchanges, type TradingScope, type TradingExchange } from './types'
 import {
   agents,
+  scope,
   atomic,
   ensurePortfolios,
   event,
@@ -32,8 +36,10 @@ import type {
   TradingVenue,
 } from './types'
 
-export type VenueFactory = (mode: TradingMode) => TradingVenue
-const venues: VenueFactory = (mode) => new OkxVenue(mode)
+export type VenueFactory = (scope: TradingScope) => TradingVenue
+const venues: VenueFactory = createVenue
+export const liveConfirmation = (p: Pick<PortfolioRow, 'exchange' | 'capital'>) =>
+  `ТОРГОВАТЬ ${decimal(BigInt(p.capital))} USDT НА ${exchangeCatalog[p.exchange].name.toUpperCase()}`
 
 export function safeTradingError(error: unknown) {
   return error instanceof Error && /^(TRADING_[A-Z_]+)$/.test(error.message)
@@ -41,33 +47,36 @@ export function safeTradingError(error: unknown) {
     : 'TRADING_RESPONSE_INVALID'
 }
 
-async function halt(mode: TradingMode, reason: string, db: Connection) {
-  const p = await portfolio(mode, db)
+async function halt(s: TradingScope, reason: string, db: Connection) {
+  const { mode } = s
+  const p = await portfolio(s, db)
   if (p.status !== 'stopped' || p.reason !== reason) {
     await query(
-      "UPDATE trading_portfolios SET status='stopped',reason=$2 WHERE mode=$1",
-      [mode, reason],
+      "UPDATE trading_portfolios SET status='stopped',reason=$2 WHERE mode=$1 AND exchange=$3",
+      [mode, reason, s.exchange],
       db,
     )
-    await event(mode, 'halt', reason, {}, db)
+    await event(s, 'halt', reason, {}, db)
   }
 }
 
-async function loadMarkets(mode: TradingMode, venue: TradingVenue, db: Connection) {
+async function loadMarkets(s: TradingScope, venue: TradingVenue, db: Connection) {
+  const { mode } = s
   const markets = {} as Record<TradingSymbol, Market>
   for (const symbol of P.symbols) {
     const market = await venue.market(symbol)
     validateMarket(market)
     markets[symbol] = market
     await query(
-      `INSERT INTO trading_markets(mode,symbol,at,bid,ask) VALUES ($1,$2,$3,$4,$5)
-      ON CONFLICT(mode,symbol) DO UPDATE SET at=excluded.at,bid=excluded.bid,ask=excluded.ask`,
+      `INSERT INTO trading_markets(mode,symbol,at,bid,ask,exchange) VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT(exchange,mode,symbol) DO UPDATE SET at=excluded.at,bid=excluded.bid,ask=excluded.ask`,
       [
         mode,
         symbol,
         new Date(market.book.at),
         market.book.bids[0]![0].toString(),
         market.book.asks[0]![0].toString(),
+        s.exchange,
       ],
       db,
     )
@@ -85,7 +94,7 @@ async function reconcileAccount(
   if (p.account_identity && p.account_identity !== account.identity)
     throw new Error('TRADING_ACCOUNT_CHANGED')
   if ((await venue.pending()).length) throw new Error('TRADING_EXTERNAL_ORDERS')
-  const team = await agents(p.mode, db)
+  const team = await agents(p, db)
   if (!p.account_identity) {
     if (account.balances.BTC.total || account.balances.ETH.total)
       throw new Error('TRADING_INITIAL_ASSETS')
@@ -151,7 +160,7 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
       db,
     )
     await event(
-      row.mode,
+      row,
       'order_settled',
       result.filledQty ? 'ORDER_FILLED' : 'ORDER_UNFILLED',
       {
@@ -167,8 +176,9 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
 }
 
 /** Resolve uncertain submissions by reading the exchange. Never re-send a submitted intent. */
-async function recover(mode: TradingMode, venue: TradingVenue, db: Connection) {
-  const row = await pendingOrder(mode, db)
+async function recover(s: TradingScope, venue: TradingVenue, db: Connection) {
+  const { mode } = s
+  const row = await pendingOrder(s, db)
   if (!row) return true
   if (row.status === 'prepared' || mode === 'paper') {
     await query(
@@ -176,13 +186,13 @@ async function recover(mode: TradingMode, venue: TradingVenue, db: Connection) {
       [row.id],
       db,
     )
-    await event(mode, 'recovery', 'NOT_SENT', { clientId: row.client_id }, db)
+    await event(s, 'recovery', 'NOT_SENT', { clientId: row.client_id }, db)
     return true
   }
   const result = await venue.order(requestFor(row))
   if (!result) {
     await query("UPDATE trading_orders SET status='unknown' WHERE id=$1", [row.id], db)
-    await halt(mode, 'TRADING_ORDER_UNKNOWN', db)
+    await halt(s, 'TRADING_ORDER_UNKNOWN', db)
     return false
   }
   if (result.state === 'live' || result.state === 'partially_filled') {
@@ -208,12 +218,12 @@ async function submit(
   const id = randomUUID()
   // The transaction reserves the only unresolved-order slot and fences concurrent owner stops.
   const row = await atomic(db, async () => {
-    const current = await portfolio(p.mode, db, true)
+    const current = await portfolio(p, db, true)
     if (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell'))
       return null
-    if (await pendingOrder(p.mode, db)) return null
+    if (await pendingOrder(p, db)) return null
     validateMarket(market)
-    const team = await agents(p.mode, db)
+    const team = await agents(p, db)
     const fresh = team.find((a) => a.id === agent.id)
     if (!fresh || fresh.status !== 'active') return null
     if (request.side === 'buy') {
@@ -224,8 +234,8 @@ async function submit(
       )
         throw new Error('TRADING_ORDER_LIMIT')
       const [today] = await query(
-        "SELECT count(*)::int AS count FROM trading_orders WHERE mode=$1 AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
-        [p.mode],
+        "SELECT count(*)::int AS count FROM trading_orders WHERE mode=$1 AND exchange=$2 AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+        [p.mode, p.exchange],
         db,
       )
       if (today!.count >= P.maxOrdersPerDay) return null
@@ -241,8 +251,8 @@ async function submit(
       if ((invested + value) * BPS > ceiling * BigInt(P.maxExposureBps)) return null
     } else if (request.qty > BigInt(fresh.base)) throw new Error('TRADING_ORDER_LIMIT')
     const [created] = await query<OrderRow>(
-      `INSERT INTO trading_orders(id,mode,agent_id,client_id,symbol,side,qty,price,status,reason)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'prepared',$9) RETURNING *`,
+      `INSERT INTO trading_orders(id,mode,agent_id,client_id,symbol,side,qty,price,status,reason,exchange)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'prepared',$9,$10) RETURNING *`,
       [
         id,
         p.mode,
@@ -253,6 +263,7 @@ async function submit(
         request.qty.toString(),
         request.price.toString(),
         reason,
+        p.exchange,
       ],
       db,
     )
@@ -274,7 +285,7 @@ async function submit(
     return
   }
   const dispatch = await atomic(db, async () => {
-    const current = await portfolio(p.mode, db, true)
+    const current = await portfolio(p, db, true)
     if (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell')) {
       await query(
         "UPDATE trading_orders SET status='canceled',reason='NOT_SENT',settled_at=now() WHERE id=$1",
@@ -299,18 +310,18 @@ async function submit(
         [row.id],
         db,
       )
-      await halt(p.mode, 'TRADING_ORDER_REJECTED', db)
+      await halt(p, 'TRADING_ORDER_REJECTED', db)
       return
     }
     await query("UPDATE trading_orders SET status='unknown' WHERE id=$1", [row.id], db)
-    await halt(p.mode, 'TRADING_ORDER_UNKNOWN', db)
+    await halt(p, 'TRADING_ORDER_UNKNOWN', db)
     return
   }
   // Settlement happens on the next tick, after the exchange has made its fills visible.
 }
 
 async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db: Connection) {
-  const team = await agents(p.mode, db)
+  const team = await agents(p, db)
   let equity = 0n,
     exposure = 0n,
     cash = 0n
@@ -329,38 +340,39 @@ async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db:
   const day = new Date().toISOString().slice(0, 10)
   // A day boundary uses the last mark before midnight so a gap/down move is not forgiven.
   const [previous] = await query(
-    'SELECT equity FROM trading_equity WHERE mode=$1 ORDER BY at DESC LIMIT 1',
-    [p.mode],
+    'SELECT equity FROM trading_equity WHERE mode=$1 AND exchange=$2 ORDER BY at DESC LIMIT 1',
+    [p.mode, p.exchange],
     db,
   )
   const dayEquity =
     p.risk_day === day ? BigInt(p.day_equity) : BigInt(previous?.equity || p.capital)
   const peak = max(BigInt(p.peak), equity)
   await query(
-    'UPDATE trading_portfolios SET peak=$2,day_equity=$3,risk_day=$4 WHERE mode=$1',
-    [p.mode, peak.toString(), dayEquity.toString(), day],
+    'UPDATE trading_portfolios SET peak=$2,day_equity=$3,risk_day=$4 WHERE mode=$1 AND exchange=$5',
+    [p.mode, peak.toString(), dayEquity.toString(), day, p.exchange],
     db,
   )
   await query(
-    'INSERT INTO trading_equity(mode,equity,cash,exposure) VALUES ($1,$2,$3,$4)',
-    [p.mode, equity.toString(), cash.toString(), exposure.toString()],
+    'INSERT INTO trading_equity(mode,equity,cash,exposure,exchange) VALUES ($1,$2,$3,$4,$5)',
+    [p.mode, equity.toString(), cash.toString(), exposure.toString(), p.exchange],
     db,
   )
   const reason = riskReason(equity, peak, dayEquity)
   if (reason && (p.status === 'running' || p.status === 'paused')) {
     const changed = await query(
-      "UPDATE trading_portfolios SET status='paused',reason=$2 WHERE mode=$1 AND status IN ('running','paused') AND (status <> 'paused' OR reason <> $2) RETURNING mode",
-      [p.mode, reason],
+      "UPDATE trading_portfolios SET status='paused',reason=$2 WHERE mode=$1 AND exchange=$3 AND status IN ('running','paused') AND (status <> 'paused' OR reason <> $2) RETURNING mode",
+      [p.mode, reason, p.exchange],
       db,
     )
-    if (changed.length) await event(p.mode, 'risk', reason, { equity: decimal(equity) }, db)
+    if (changed.length) await event(p, 'risk', reason, { equity: decimal(equity) }, db)
   }
 }
 
-async function evolve(db: Connection) {
-  const p = await portfolio('paper', db)
+async function evolve(exchange: TradingExchange, db: Connection) {
+  const s = scope(exchange, 'paper')
+  const p = await portfolio(s, db)
   if (p.evolution_at && Date.now() - p.evolution_at.getTime() < 86_400_000) return
-  const team = await agents('paper', db)
+  const team = await agents(s, db)
   let reason = 'COLLECTING_DATA'
   const enough =
     team.length === 4 &&
@@ -380,12 +392,12 @@ async function evolve(db: Connection) {
       reason = 'NO_PROVEN_EDGE'
     else {
       const evolved = await atomic(db, async () => {
-        const locked = await portfolio('paper', db, true)
-        if (locked.status !== 'running' || (await pendingOrder('paper', db))) return false
+        const locked = await portfolio(s, db, true)
+        if (locked.status !== 'running' || (await pendingOrder(s, db))) return false
         const capital = team.reduce((s, a) => s + BigInt(a.cash), 0n)
         await query(
-          "UPDATE trading_agents SET status='archived',archived_at=now() WHERE mode='paper' AND status='active'",
-          [],
+          "UPDATE trading_agents SET status='archived',archived_at=now() WHERE mode='paper' AND exchange=$1 AND status='active'",
+          [exchange],
           db,
         )
         for (let i = 0; i < 4; i++) {
@@ -393,8 +405,8 @@ async function evolve(db: Connection) {
           const amount = capital / 4n + (i === 0 ? capital % 4n : 0n)
           const params = i < 2 ? parent.params : mutate(parent.params, p.generation + 1)
           await query(
-            `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak)
-            VALUES ($1,'paper',$2,$3,$4,$5,$6,$7,$8,$8,$8)`,
+            `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak,exchange)
+            VALUES ($1,'paper',$2,$3,$4,$5,$6,$7,$8,$8,$8,$9)`,
             [
               randomUUID(),
               `${parent.name.split(' · ')[0]} · ${p.generation + 1}${i < 2 ? '' : 'м'}`,
@@ -404,17 +416,18 @@ async function evolve(db: Connection) {
               parent.id,
               p.generation + 1,
               amount.toString(),
+              exchange,
             ],
             db,
           )
         }
         await query(
-          "UPDATE trading_portfolios SET generation=generation+1 WHERE mode='paper'",
-          [],
+          "UPDATE trading_portfolios SET generation=generation+1 WHERE mode='paper' AND exchange=$1",
+          [exchange],
           db,
         )
         await event(
-          'paper',
+          s,
           'evolution',
           'LEADERS_CLONED',
           { parents: ranked.slice(0, 2).map((a) => a.id), generation: p.generation + 1 },
@@ -426,18 +439,19 @@ async function evolve(db: Connection) {
     }
   }
   await query(
-    "UPDATE trading_portfolios SET evolution_at=now(),evolution_reason=$1 WHERE mode='paper'",
-    [reason],
+    "UPDATE trading_portfolios SET evolution_at=now(),evolution_reason=$1 WHERE mode='paper' AND exchange=$2",
+    [reason, exchange],
     db,
   )
 }
 
 /** Reallocate the live slot only while completely in cash, preserving the account risk history. */
-async function promoteLive(db: Connection) {
-  const p = await portfolio('live', db)
+async function promoteLive(exchange: TradingExchange, db: Connection) {
+  const s = scope(exchange, 'live')
+  const p = await portfolio(s, db)
   if (p.evolution_at && Date.now() - p.evolution_at.getTime() < 86_400_000) return
-  const [current] = await agents('live', db)
-  const candidate = (await paperCandidates(db))[0]
+  const [current] = await agents(s, db)
+  const candidate = (await paperCandidates(exchange, db))[0]
   let reason = 'NO_PROVEN_EDGE'
   if (current && BigInt(current.base)) reason = 'POSITIONS_OPEN'
   else if (current && candidate && current.parent_id !== candidate.id) {
@@ -454,16 +468,16 @@ async function promoteLive(db: Connection) {
       current.params.takeProfitBps === candidate.params.takeProfitBps
     if (!same && parent && fitness(candidate) >= fitness(parent) + P.promotionGapBps) {
       const promoted = await atomic(db, async () => {
-        const locked = await portfolio('live', db, true)
-        if (locked.status !== 'running' || (await pendingOrder('live', db))) return false
+        const locked = await portfolio(s, db, true)
+        if (locked.status !== 'running' || (await pendingOrder(s, db))) return false
         await query(
           "UPDATE trading_agents SET status='archived',archived_at=now() WHERE id=$1",
           [current.id],
           db,
         )
         await query(
-          `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak)
-          VALUES ($1,'live',$2,$3,$4,$5,$6,$7,$8,$8,$8)`,
+          `INSERT INTO trading_agents(id,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak,exchange)
+          VALUES ($1,'live',$2,$3,$4,$5,$6,$7,$8,$8,$8,$9)`,
           [
             randomUUID(),
             candidate.name,
@@ -473,16 +487,17 @@ async function promoteLive(db: Connection) {
             candidate.id,
             p.generation + 1,
             current.cash,
+            exchange,
           ],
           db,
         )
         await query(
-          "UPDATE trading_portfolios SET generation=generation+1 WHERE mode='live'",
-          [],
+          "UPDATE trading_portfolios SET generation=generation+1 WHERE mode='live' AND exchange=$1",
+          [exchange],
           db,
         )
         await event(
-          'live',
+          s,
           'evolution',
           'LIVE_LEADER_PROMOTED',
           { parent: candidate.id, previous: current.id },
@@ -494,135 +509,171 @@ async function promoteLive(db: Connection) {
     }
   }
   await query(
-    "UPDATE trading_portfolios SET evolution_at=now(),evolution_reason=$1 WHERE mode='live'",
-    [reason],
+    "UPDATE trading_portfolios SET evolution_at=now(),evolution_reason=$1 WHERE mode='live' AND exchange=$2",
+    [reason, exchange],
     db,
   )
 }
 
-export async function tradingTick(factory: VenueFactory = venues, isStopping = () => false) {
+export async function tradingTick(
+  factory: VenueFactory = venues,
+  isStopping = () => false,
+  selected: readonly TradingExchange[] = exchanges,
+) {
   await ensurePortfolios()
-  for (const mode of modes) {
-    if (isStopping()) break
-    try {
-      await withTradingLock(mode, async (db) => {
-        let p = await portfolio(mode, db)
-        await query('UPDATE trading_portfolios SET heartbeat=now() WHERE mode=$1', [mode], db)
-        if (!p.started_at || (p.last_tick && Date.now() - p.last_tick.getTime() < P.tickMs)) return
-        await query('UPDATE trading_portfolios SET last_tick=now() WHERE mode=$1', [mode], db)
-        const venue = factory(mode)
-        if (!(await recover(mode, venue, db))) return
-        if (mode !== 'paper') {
-          const account = await venue.account()
-          try {
-            await reconcileAccount(p, account, venue, db)
-          } catch (e) {
-            await halt(mode, safeTradingError(e), db)
-            throw e
-          }
-        }
-        const markets = await loadMarkets(mode, venue, db)
-        await query(
-          "UPDATE trading_portfolios SET checked_at=now(),check_error='' WHERE mode=$1",
-          [mode],
-          db,
-        )
-        await mark(p, markets, db)
-        p = await portfolio(mode, db)
-        if (p.status !== 'running' && p.status !== 'paused') return
-        if (mode === 'live' && p.status === 'running') await promoteLive(db)
-        const forceExit =
-          ['DAILY_LOSS_LIMIT', 'DRAWDOWN_LIMIT', 'OWNER_EXIT'].includes(p.reason) || p.demo_probe
-        for (const agent of await agents(mode, db)) {
-          if (isStopping() || (await pendingOrder(mode, db))) break
-          const market = markets[agent.symbol]
-          let decision = signal(
-            agent,
-            market,
-            forceExit && BigInt(agent.base) >= market.instrument.minQty,
-          )
-          if (
-            mode === 'demo' &&
-            p.demo_probe &&
-            !agent.round_trips &&
-            BigInt(agent.base) < market.instrument.minQty
-          )
-            decision = { side: 'buy', reason: 'DEMO_PROBE' }
-          if (mode === 'demo' && p.demo_probe && agent.round_trips > 0) {
+  await Promise.all(
+    selected.map(async (exchange) => {
+      for (const mode of modes) {
+        const s = scope(exchange, mode)
+        if (isStopping()) break
+        try {
+          await withTradingLock(s, async (db) => {
+            let p = await portfolio(s, db)
             await query(
-              "UPDATE trading_portfolios SET status='paused',reason='DEMO_PROBE_COMPLETE',demo_probe=false WHERE mode='demo'",
-              [],
+              'UPDATE trading_portfolios SET heartbeat=now() WHERE mode=$1 AND exchange=$2',
+              [mode, exchange],
               db,
             )
-            await event(mode, 'demo', 'DEMO_PROBE_COMPLETE', {}, db)
-            break
-          }
+            if (!p.started_at || (p.last_tick && Date.now() - p.last_tick.getTime() < P.tickMs))
+              return
+            await query(
+              'UPDATE trading_portfolios SET last_tick=now() WHERE mode=$1 AND exchange=$2',
+              [mode, exchange],
+              db,
+            )
+            const venue = factory(s)
+            if (!(await recover(s, venue, db))) return
+            if (mode !== 'paper') {
+              const account = await venue.account()
+              try {
+                await reconcileAccount(p, account, venue, db)
+              } catch (e) {
+                await halt(s, safeTradingError(e), db)
+                throw e
+              }
+            }
+            const markets = await loadMarkets(s, venue, db)
+            await query(
+              "UPDATE trading_portfolios SET checked_at=now(),check_error='' WHERE mode=$1 AND exchange=$2",
+              [mode, exchange],
+              db,
+            )
+            await mark(p, markets, db)
+            p = await portfolio(s, db)
+            if (p.status !== 'running' && p.status !== 'paused') return
+            if (mode === 'live' && p.status === 'running') await promoteLive(exchange, db)
+            const forceExit =
+              ['DAILY_LOSS_LIMIT', 'DRAWDOWN_LIMIT', 'OWNER_EXIT'].includes(p.reason) ||
+              p.demo_probe
+            for (const agent of await agents(s, db)) {
+              if (isStopping() || (await pendingOrder(s, db))) break
+              const market = markets[agent.symbol]
+              let decision = signal(
+                agent,
+                market,
+                forceExit && BigInt(agent.base) >= market.instrument.minQty,
+              )
+              if (
+                mode === 'demo' &&
+                p.demo_probe &&
+                !agent.round_trips &&
+                BigInt(agent.base) < market.instrument.minQty
+              )
+                decision = { side: 'buy', reason: 'DEMO_PROBE' }
+              if (mode === 'demo' && p.demo_probe && agent.round_trips > 0) {
+                await query(
+                  "UPDATE trading_portfolios SET status='paused',reason='DEMO_PROBE_COMPLETE',demo_probe=false WHERE mode='demo' AND exchange=$1",
+                  [exchange],
+                  db,
+                )
+                await event(s, 'demo', 'DEMO_PROBE_COMPLETE', {}, db)
+                break
+              }
+              await query(
+                'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
+                [agent.id, decision.reason],
+                db,
+              )
+              if (!decision.side || (p.status === 'paused' && decision.side === 'buy')) continue
+              const urgent =
+                decision.side === 'sell' && ['RISK_EXIT', 'POSITION_STOP'].includes(decision.reason)
+              if (
+                !urgent &&
+                agent.last_order_at &&
+                Date.now() - agent.last_order_at.getTime() < P.cooldownMs
+              )
+                continue
+              const request = sizeOrder(
+                agent,
+                market,
+                decision.side,
+                randomUUID().replaceAll('-', ''),
+              )
+              if (request) await submit(p, agent, request, decision.reason, markets, venue, db)
+            }
+            if (mode === 'paper' && p.status === 'running') await evolve(exchange, db)
+          })
+        } catch (error) {
+          const reason = safeTradingError(error)
+          if (reason === 'TRADING_BUSY') continue
           await query(
-            'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
-            [agent.id, decision.reason],
-            db,
+            'UPDATE trading_portfolios SET check_error=$2 WHERE mode=$1 AND exchange=$3',
+            [mode, reason, s.exchange],
           )
-          if (!decision.side || (p.status === 'paused' && decision.side === 'buy')) continue
-          const urgent =
-            decision.side === 'sell' && ['RISK_EXIT', 'POSITION_STOP'].includes(decision.reason)
-          if (
-            !urgent &&
-            agent.last_order_at &&
-            Date.now() - agent.last_order_at.getTime() < P.cooldownMs
-          )
-            continue
-          const request = sizeOrder(agent, market, decision.side, randomUUID().replaceAll('-', ''))
-          if (request) await submit(p, agent, request, decision.reason, markets, venue, db)
         }
-        if (mode === 'paper' && p.status === 'running') await evolve(db)
-      })
-    } catch (error) {
-      const reason = safeTradingError(error)
-      if (reason === 'TRADING_BUSY') continue
-      await query('UPDATE trading_portfolios SET check_error=$2 WHERE mode=$1', [mode, reason])
-    }
-  }
+      }
+    }),
+  )
 }
 
-export async function checkTrading(mode: TradingMode, factory: VenueFactory = venues) {
+export async function checkTrading(s: TradingScope, factory: VenueFactory = venues) {
+  const { mode, exchange } = s
   await ensurePortfolios()
-  return withTradingLock(mode, async (db) => {
-    const venue = factory(mode)
+  return withTradingLock(s, async (db) => {
+    const venue = factory(s)
     try {
-      const p = await portfolio(mode, db)
+      const p = await portfolio(s, db)
       if (mode !== 'paper') {
-        if (await pendingOrder(mode, db)) throw new Error('TRADING_ORDER_UNKNOWN')
+        if (await pendingOrder(s, db)) throw new Error('TRADING_ORDER_UNKNOWN')
         await reconcileAccount(p, await venue.account(), venue, db)
       }
-      await loadMarkets(mode, venue, db)
+      await loadMarkets(s, venue, db)
       await query(
-        "UPDATE trading_portfolios SET checked_at=now(),check_error='' WHERE mode=$1",
-        [mode],
+        "UPDATE trading_portfolios SET checked_at=now(),check_error='' WHERE mode=$1 AND exchange=$2",
+        [mode, exchange],
         db,
       )
-      await event(mode, 'connection', 'CONNECTION_OK', {}, db)
+      await event(s, 'connection', 'CONNECTION_OK', {}, db)
     } catch (error) {
       const reason = safeTradingError(error)
-      await query('UPDATE trading_portfolios SET check_error=$2 WHERE mode=$1', [mode, reason], db)
+      await query(
+        'UPDATE trading_portfolios SET check_error=$2 WHERE mode=$1 AND exchange=$3',
+        [mode, reason, s.exchange],
+        db,
+      )
       throw new Error(reason)
     }
   })
 }
 
 export async function startTrading(
-  mode: TradingMode,
+  s: TradingScope,
   confirmation: string,
   demoProbe = false,
   factory: VenueFactory = venues,
 ) {
+  const { mode, exchange } = s
   await ensurePortfolios()
-  return withTradingLock(mode, async (db) => {
+  return withTradingLock(s, async (db) => {
+    const p = await portfolio(s, db)
+    if (mode === 'live' && BigInt(p.capital) < units(String(P.minLiveCapitalUsdt)))
+      throw new Error('TRADING_ALLOCATION_REQUIRED')
     let champion: AgentRow | undefined
     if (mode === 'live') {
       if (!config().TRADING_LIVE_ENABLED) throw new Error('TRADING_LIVE_DISABLED')
-      if (confirmation !== 'ТОРГОВАТЬ 100 USDT') throw new Error('TRADING_CONFIRMATION_REQUIRED')
-      const demo = await portfolio('demo', db)
-      const demoTeam = await agents('demo', db)
+      if (confirmation !== liveConfirmation(p)) throw new Error('TRADING_CONFIRMATION_REQUIRED')
+      const demo = await portfolio(scope(exchange, 'demo'), db)
+      const demoTeam = await agents(scope(exchange, 'demo'), db)
       if (
         !demoTeam.some((a) => a.round_trips > 0) ||
         demo.check_error ||
@@ -630,26 +681,29 @@ export async function startTrading(
         Date.now() - demo.checked_at.getTime() > 600_000
       )
         throw new Error('TRADING_DEMO_REQUIRED')
-      champion = (await paperCandidates(db))[0]
+      champion = (await paperCandidates(exchange, db))[0]
       if (!champion) throw new Error('TRADING_PAPER_REQUIRED')
     }
-    const venue = factory(mode)
-    const p = await portfolio(mode, db)
+    const venue = factory(s)
     if (p.status === 'running') return
-    if (await pendingOrder(mode, db)) throw new Error('TRADING_ORDER_UNKNOWN')
+    if (await pendingOrder(s, db)) throw new Error('TRADING_ORDER_UNKNOWN')
     let account: Account | undefined
     if (mode !== 'paper') {
       account = await venue.account()
       await reconcileAccount(p, account, venue, db)
     }
-    const markets = await loadMarkets(mode, venue, db)
+    const markets = await loadMarkets(s, venue, db)
     await atomic(db, async () => {
-      const current = await portfolio(mode, db, true)
+      const current = await portfolio(s, db, true)
       // A stop pressed while the external checks were running wins over this start request.
-      if (current.status !== p.status || current.reason !== p.reason)
+      if (
+        current.status !== p.status ||
+        current.reason !== p.reason ||
+        current.capital !== p.capital
+      )
         throw new Error('TRADING_CONTROL_CHANGED')
-      await seedAgents(mode, db, champion)
-      const team = await agents(mode, db)
+      await seedAgents(s, db, champion)
+      const team = await agents(s, db)
       const equity = team.reduce(
         (sum, a) => sum + markAgent(a, markets[a.symbol].book.bids[0]![0]).equity,
         0n,
@@ -663,17 +717,22 @@ export async function startTrading(
         throw new Error('TRADING_DAILY_LOCKED')
       if (account && !p.account_identity)
         await query(
-          'UPDATE trading_portfolios SET account_identity=$2,quote_offset=$3 WHERE mode=$1',
-          [mode, account.identity, (account.balances.USDT.total - BigInt(p.capital)).toString()],
+          'UPDATE trading_portfolios SET account_identity=$2,quote_offset=$3 WHERE mode=$1 AND exchange=$4',
+          [
+            mode,
+            account.identity,
+            (account.balances.USDT.total - BigInt(p.capital)).toString(),
+            exchange,
+          ],
           db,
         )
       await query(
-        "UPDATE trading_portfolios SET status='running',reason='',started_at=coalesce(started_at,now()),checked_at=now(),check_error='',last_tick=NULL,demo_probe=$2 WHERE mode=$1",
-        [mode, mode === 'demo' && demoProbe],
+        "UPDATE trading_portfolios SET status='running',reason='',started_at=coalesce(started_at,now()),checked_at=now(),check_error='',last_tick=NULL,demo_probe=$2 WHERE mode=$1 AND exchange=$3",
+        [mode, mode === 'demo' && demoProbe, exchange],
         db,
       )
       await event(
-        mode,
+        s,
         'start',
         mode === 'live' ? 'LIVE_AUTHORIZED' : 'STARTED',
         { policy: P.version, capital: decimal(BigInt(p.capital)) },
@@ -683,39 +742,44 @@ export async function startTrading(
   })
 }
 
-export async function controlTrading(mode: TradingMode, action: 'pause' | 'stop' | 'flatten') {
+export async function controlTrading(s: TradingScope, action: 'pause' | 'stop' | 'flatten') {
+  const { mode, exchange } = s
   await ensurePortfolios()
   const status = action === 'stop' ? 'stopped' : 'paused'
   const reason =
     action === 'stop' ? 'OWNER_STOP' : action === 'flatten' ? 'OWNER_EXIT' : 'OWNER_PAUSE'
   // This intentionally does not wait for the worker's session lock or a slow exchange.
-  await query('UPDATE trading_portfolios SET status=$2,reason=$3 WHERE mode=$1', [
+  await query('UPDATE trading_portfolios SET status=$2,reason=$3 WHERE mode=$1 AND exchange=$4', [
     mode,
     status,
     reason,
+    exchange,
   ])
-  await event(mode, action, reason)
+  await event(s, action, reason)
 }
 
 export async function stopAllTrading() {
   await ensurePortfolios()
   await transaction(async (db) => {
+    await query('SELECT mode FROM trading_portfolios ORDER BY exchange,mode FOR UPDATE', [], db)
     await query("UPDATE trading_portfolios SET status='stopped',reason='OWNER_STOP'", [], db)
-    for (const mode of modes) await event(mode, 'stop', 'OWNER_STOP', {}, db)
+    for (const exchange of exchanges)
+      for (const mode of modes) await event(scope(exchange, mode), 'stop', 'OWNER_STOP', {}, db)
   })
 }
 
 export async function resolveMissingOrder(
-  mode: TradingMode,
+  s: TradingScope,
   clientId: string,
   confirmation: string,
   factory: VenueFactory = venues,
 ) {
+  const { mode } = s
   if (mode === 'paper' || confirmation !== 'ПРОВЕРЕНО НА БИРЖЕ')
     throw new Error('TRADING_CONFIRMATION_REQUIRED')
-  return withTradingLock(mode, async (db) => {
-    const p = await portfolio(mode, db)
-    const row = await pendingOrder(mode, db)
+  return withTradingLock(s, async (db) => {
+    const p = await portfolio(s, db)
+    const row = await pendingOrder(s, db)
     if (
       p.status !== 'stopped' ||
       !row ||
@@ -724,7 +788,7 @@ export async function resolveMissingOrder(
       Date.now() - row.created_at.getTime() < 60_000
     )
       throw new Error('TRADING_REVIEW_NOT_READY')
-    const venue = factory(mode)
+    const venue = factory(s)
     if (await venue.order(requestFor(row))) throw new Error('TRADING_ORDER_EXISTS')
     await reconcileAccount(p, await venue.account(), venue, db)
     await atomic(db, async () => {
@@ -733,7 +797,7 @@ export async function resolveMissingOrder(
         [row.id],
         db,
       )
-      await event(mode, 'manual_review', 'OWNER_VERIFIED_ABSENT', { clientId }, db)
+      await event(s, 'manual_review', 'OWNER_VERIFIED_ABSENT', { clientId }, db)
     })
   })
 }

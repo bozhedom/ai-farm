@@ -4,40 +4,42 @@ import { TRADING_POLICY as P } from '../policy'
 import type { TradingView } from '../contracts/trading'
 import { decimal, max, ratioBps } from './decimal'
 import { markAgent } from './accounting'
-import { hasCredentials } from './okx'
+import { hasKeys } from './wire'
+import { liveConfirmation } from './engine'
 import { eligible } from './strategy'
-import { agents, ensurePortfolios, paperCandidates, portfolio } from './store'
-import type { AgentRow, OrderRow, TradingMode, TradingSymbol } from './types'
+import { agents, scope, ensurePortfolios, paperCandidates, portfolio } from './store'
+import type { AgentRow, OrderRow, TradingScope, TradingSymbol } from './types'
 
-export async function tradingView(mode: TradingMode): Promise<TradingView> {
+export async function tradingView(s: TradingScope): Promise<TradingView> {
+  const { mode, exchange } = s
   await ensurePortfolios()
-  const p = await portfolio(mode)
+  const p = await portfolio(s)
   const team = await query<AgentRow>(
-    'SELECT * FROM trading_agents WHERE mode=$1 ORDER BY generation DESC,created_at,id LIMIT 100',
-    [mode],
+    'SELECT * FROM trading_agents WHERE mode=$1 AND exchange=$2 ORDER BY generation DESC,created_at,id LIMIT 100',
+    [mode, exchange],
   )
   const markets = await query<{ symbol: TradingSymbol; bid: string; ask: string; at: Date }>(
-    'SELECT * FROM trading_markets WHERE mode=$1 ORDER BY symbol',
-    [mode],
+    'SELECT * FROM trading_markets WHERE mode=$1 AND exchange=$2 ORDER BY symbol',
+    [mode, exchange],
   )
   const orders = await query<OrderRow & { name: string }>(
     `SELECT o.*,a.name FROM trading_orders o JOIN trading_agents a ON a.id=o.agent_id
-    WHERE o.mode=$1 ORDER BY o.created_at DESC,o.id DESC LIMIT 50`,
-    [mode],
+    WHERE o.mode=$1 AND o.exchange=$2 ORDER BY o.created_at DESC,o.id DESC LIMIT 50`,
+    [mode, exchange],
   )
   const events = await query(
-    'SELECT * FROM trading_events WHERE mode=$1 ORDER BY id DESC LIMIT 40',
-    [mode],
+    'SELECT * FROM trading_events WHERE mode=$1 AND exchange=$2 ORDER BY id DESC LIMIT 40',
+    [mode, exchange],
   )
   const curve = await query(
     `SELECT DISTINCT ON (date_bin(interval '5 minutes',at,timestamptz '2000-01-01')) at,equity
-    FROM trading_equity WHERE mode=$1 AND at>now()-interval '24 hours'
+    FROM trading_equity WHERE mode=$1 AND exchange=$2 AND at>now()-interval '24 hours'
     ORDER BY date_bin(interval '5 minutes',at,timestamptz '2000-01-01') DESC,at DESC LIMIT 288`,
-    [mode],
+    [mode, exchange],
   )
   const [lifetime] = await query(
-    'SELECT coalesce(sum(realized),0) AS realized,coalesce(sum(fees),0) AS fees,coalesce(sum(round_trips),0)::int AS trips FROM trading_agents WHERE mode=$1',
-    [mode],
+    'SELECT coalesce(sum(realized),0) AS realized,coalesce(sum(fees),0) AS fees,coalesce(sum(round_trips),0)::int AS trips FROM trading_agents WHERE mode=$1 AND exchange=$2',
+    [mode, exchange],
   )
   const current = team.filter((a) => a.status === 'active')
   let cash = 0n,
@@ -50,13 +52,16 @@ export async function tradingView(mode: TradingMode): Promise<TradingView> {
   // A configured budget is not evidence of money in an unconnected exchange account.
   if (!current.length && mode === 'paper') cash = BigInt(p.capital)
   const equity = cash + exposure
-  const paper = await paperCandidates()
-  const demo = await portfolio('demo')
-  const demoAgents = await agents('demo')
+  const paper = await paperCandidates(exchange)
+  const demo = await portfolio(scope(exchange, 'demo'))
+  const demoAgents = await agents(scope(exchange, 'demo'))
   const connection =
     !p.check_error && !!p.checked_at && Date.now() - p.checked_at.getTime() < 90_000
   return {
     mode,
+    exchange,
+    liveConfirmation: liveConfirmation(p),
+    allocationEditable: !p.started_at && !p.account_identity,
     status: p.status,
     reason: p.reason,
     checkError: p.check_error,
@@ -90,7 +95,8 @@ export async function tradingView(mode: TradingMode): Promise<TradingView> {
       evaluationTrips: P.minRoundTrips,
     },
     readiness: {
-      keys: hasCredentials(mode),
+      allocated: BigInt(p.capital) >= BigInt(P.minLiveCapitalUsdt) * 10n ** 18n,
+      keys: hasKeys(s),
       liveEnabled: config().TRADING_LIVE_ENABLED,
       paperQualified: paper.length > 0,
       demoVerified:

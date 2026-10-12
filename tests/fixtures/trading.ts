@@ -27,6 +27,7 @@ export function agent(override: Partial<AgentRow> = {}): AgentRow {
   return {
     id: '00000000-0000-4000-8000-000000000001',
     mode: 'paper',
+    exchange: 'okx',
     name: 'Прилив',
     symbol: 'BTC-USDT',
     kind: 'reversion',

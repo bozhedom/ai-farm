@@ -1,6 +1,15 @@
-import type { TradingMode, TradingSymbol, StrategyKind, StrategyParams } from '../trading/types'
+import type {
+  TradingExchange,
+  TradingMode,
+  TradingSymbol,
+  StrategyKind,
+  StrategyParams,
+} from '../trading/types'
 
 export type TradingView = {
+  exchange: TradingExchange
+  liveConfirmation: string
+  allocationEditable: boolean
   mode: TradingMode
   status: 'idle' | 'running' | 'paused' | 'stopped'
   reason: string
@@ -33,6 +42,7 @@ export type TradingView = {
     evaluationTrips: number
   }
   readiness: {
+    allocated: boolean
     keys: boolean
     liveEnabled: boolean
     paperQualified: boolean
@@ -80,4 +90,28 @@ export type TradingView = {
   events: { id: string; kind: string; reason: string; at: string }[]
   equity: { at: string; value: string }[]
   unresolvedClientId: string | null
+}
+
+export type TradingOverview = {
+  mode: TradingMode
+  capitalLimit: number
+  minimumAllocation: number
+  allocated: string
+  unallocated: string
+  equity: string
+  pnl: string
+  connections: {
+    exchange: TradingExchange
+    status: TradingView['status']
+    keys: boolean
+    error: string
+    workerAlive: boolean
+    fresh: boolean
+    capital: string
+    equity: string
+    pnl: string
+    activeAgents: number
+    allocationEditable: boolean
+    liveAllocation: string
+  }[]
 }

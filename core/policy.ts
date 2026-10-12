@@ -23,9 +23,10 @@ export const POLICY = Object.freeze({
 
 /** Owner-authorized spot trading. These ceilings cannot be changed by agents or the UI. */
 export const TRADING_POLICY = Object.freeze({
-  version: 'spot-v1',
+  version: 'spot-v2',
   symbols: ['BTC-USDT', 'ETH-USDT'] as const,
   capitalUsdt: 100,
+  minLiveCapitalUsdt: 20,
   orderUsdt: 10,
   minOrderUsdt: 5,
   maxExposureBps: 5000,

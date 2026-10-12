@@ -7,12 +7,13 @@ import { localProviderReadiness } from '../core/providers/readiness'
 import { scheduleWork } from '../core/autonomy'
 import { setTimeout as pause } from 'node:timers/promises'
 import { tradingTick } from '../core/trading/engine'
+import { exchanges, type TradingExchange } from '../core/trading/types'
 
 let stopping = false
 let farmBusy = false
 let ordersBusy = false
 let paymentsBusy = false
-let tradingBusy = false
+const tradingBusy = new Set<TradingExchange>()
 let unavailableProviders = ''
 const running = new Set<Promise<void>>()
 const shutdown = new AbortController()
@@ -72,16 +73,17 @@ while (!stopping) {
         })
       running.add(paymentTask)
     }
-    if (!tradingBusy) {
-      tradingBusy = true
-      const tradingTask = tradingTick(undefined, isStopping)
-        .catch(() => console.error('TRADING_TICK_FAILED'))
-        .finally(() => {
-          tradingBusy = false
-          running.delete(tradingTask)
-        })
-      running.add(tradingTask)
-    }
+    for (const exchange of exchanges)
+      if (!tradingBusy.has(exchange)) {
+        tradingBusy.add(exchange)
+        const tradingTask = tradingTick(undefined, isStopping, [exchange])
+          .catch(() => console.error('TRADING_TICK_FAILED'))
+          .finally(() => {
+            tradingBusy.delete(exchange)
+            running.delete(tradingTask)
+          })
+        running.add(tradingTask)
+      }
     if (config().WORKSPACE_MODE === 'studio') await scheduleWork()
     if (stopping) break
     const ready = await localProviderReadiness()
