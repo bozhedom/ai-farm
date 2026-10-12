@@ -24,7 +24,7 @@ const checks = computed(() => {
     { label: 'Связь, баланс и права проверены', ok: v.readiness.connection },
     ...(v.mode === 'live'
       ? [
-          { label: 'Выделен бюджет от 20 USDT', ok: v.readiness.allocated },
+          { label: 'Выделен бюджет для торговли', ok: v.readiness.allocated },
           { label: 'Тестовая покупка и продажа прошли успешно', ok: v.readiness.demoVerified },
           { label: 'Есть прибыльная тренировочная стратегия', ok: v.readiness.paperQualified },
           { label: 'Реальная торговля разрешена на сервере', ok: v.readiness.liveEnabled },
@@ -40,7 +40,7 @@ const checks = computed(() => {
         <h2>В тренировке подключать ничего не нужно</h2>
         <p>
           Цены приходят напрямую с {{ venue.name }}. Четыре стратегии пробуют покупать и продавать
-          на виртуальные 100 USDT.
+          на виртуальный бюджет {{ view.metrics.capital }} USDT.
         </p>
         <p class="t-muted">
           Нажмите «Результат», чтобы запустить бота или посмотреть, как он работает. Для тестового и
@@ -138,7 +138,7 @@ const checks = computed(() => {
             <li>
               <strong>{{
                 view.mode === 'demo'
-                  ? '100 тестовых USDT'
+                  ? `${view.metrics.capital} тестовых USDT`
                   : `Выделенный бюджет: ${view.metrics.capital} USDT`
               }}</strong>
               <p>

@@ -1,7 +1,7 @@
 import { query, transaction } from '../db'
 import { TRADING_POLICY as P } from '../policy'
 import type { TradingOverview } from '../contracts/trading'
-import { decimal, units } from './decimal'
+import { decimal } from './decimal'
 import { markAgent } from './accounting'
 import { ensurePortfolios } from './store'
 import { hasKeys } from './wire'
@@ -68,10 +68,8 @@ export async function tradingOverview(mode: TradingMode): Promise<TradingOvervie
       .reduce((sum, p) => sum + BigInt(p.capital), 0n)
     return {
       mode,
-      capitalLimit: P.capitalUsdt,
       minimumAllocation: P.minLiveCapitalUsdt,
       allocated: decimal(allocated),
-      unallocated: decimal(units(String(P.capitalUsdt)) - allocated),
       equity: decimal(total),
       pnl: decimal(pnl),
       connections,

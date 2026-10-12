@@ -24,8 +24,7 @@ const reasons: Record<string, string> = {
   TRADING_RATE_LIMIT: 'Биржа ограничила частоту запросов. Повторим проверку в следующем цикле.',
   TRADING_FEE_TOKEN_ENABLED: 'Отключите оплату торговых комиссий в BNB / BGB в кабинете биржи.',
   TRADING_ALLOCATION_REQUIRED: 'Сначала выделите этой бирже от 20 USDT в настройках бюджета.',
-  TRADING_ALLOCATION_INVALID: 'Для каждой биржи укажите 0 или целое число от 20 до 100 USDT.',
-  TRADING_TOTAL_CAPITAL_LIMIT: 'Общий выделенный бюджет всех бирж не может превышать 100 USDT.',
+  TRADING_ALLOCATION_INVALID: 'Укажите для каждой биржи 0 или целую сумму от 20 USDT.',
   TRADING_ALLOCATION_LOCKED:
     'После первого реального запуска бюджет этого портфеля изменять нельзя.',
   ALLOCATION_UPDATED: 'Обновлено распределение реального бюджета',

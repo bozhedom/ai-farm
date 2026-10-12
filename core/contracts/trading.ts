@@ -94,10 +94,8 @@ export type TradingView = {
 
 export type TradingOverview = {
   mode: TradingMode
-  capitalLimit: number
   minimumAllocation: number
   allocated: string
-  unallocated: string
   equity: string
   pnl: string
   connections: {

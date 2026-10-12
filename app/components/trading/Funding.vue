@@ -18,14 +18,17 @@ watch(
   },
   { immediate: true },
 )
-const total = computed(() => exchanges.reduce((sum, e) => sum + Number(amounts.value[e]), 0))
-const valid = computed(
-  () =>
-    exchanges.every(
-      (e) =>
-        Number.isInteger(amounts.value[e]) &&
-        (amounts.value[e] === 0 || amounts.value[e] >= props.overview.minimumAllocation),
-    ) && total.value <= props.overview.capitalLimit,
+const total = computed(() =>
+  exchanges.every((e) => Number.isSafeInteger(amounts.value[e]) && amounts.value[e] >= 0)
+    ? exchanges.reduce((sum, e) => sum + BigInt(amounts.value[e]), 0n).toLocaleString('ru-RU')
+    : null,
+)
+const valid = computed(() =>
+  exchanges.every(
+    (e) =>
+      Number.isSafeInteger(amounts.value[e]) &&
+      (amounts.value[e] === 0 || amounts.value[e] >= props.overview.minimumAllocation),
+  ),
 )
 async function save() {
   if (props.disabled || saving.value || !valid.value) return
@@ -56,12 +59,13 @@ async function save() {
 <template>
   <details class="t-details funding">
     <summary>
-      Бюджет на биржи <span>{{ overview.allocated }} из {{ overview.capitalLimit }} USDT</span>
+      Бюджет на биржи <span>{{ overview.allocated }} USDT выделено</span>
     </summary>
     <form class="t-details-body t-stack" @submit.prevent="save">
       <p>
-        Выделите от {{ overview.minimumAllocation }} USDT каждой нужной бирже. Оставьте 0, если пока
-        не будете на ней торговать.
+        Выберите сумму для каждой биржи. Для текущих стратегий нужно от
+        {{ overview.minimumAllocation }} USDT на счёт. Оставьте 0, если пока не будете на нём
+        торговать.
       </p>
       <div class="funding-fields">
         <label v-for="c in overview.connections" :key="c.exchange"
@@ -71,7 +75,7 @@ async function save() {
               v-model.number="amounts[c.exchange]"
               type="number"
               min="0"
-              :max="overview.capitalLimit"
+              :max="Number.MAX_SAFE_INTEGER"
               step="1"
               required
               :disabled="!c.allocationEditable || disabled"
@@ -82,13 +86,12 @@ async function save() {
         >
       </div>
       <p v-if="!valid" class="t-negative" role="alert">
-        Укажите 0 или целую сумму от {{ overview.minimumAllocation }} USDT. Общий бюджет не больше
-        {{ overview.capitalLimit }} USDT.
+        Укажите 0 или целую сумму от {{ overview.minimumAllocation }} USDT.
       </p>
       <div class="t-actions">
         <button class="t-button t-primary" :disabled="!dirty || !valid || disabled">
           {{ saving ? 'Сохраняем…' : 'Сохранить бюджет' }}</button
-        ><span class="t-muted">Итого {{ total }} / {{ overview.capitalLimit }} USDT</span>
+        ><span v-if="total !== null" class="t-muted">Итого {{ total }} USDT</span>
       </div>
       <p class="t-muted">
         Это план распределения. Деньги вы вносите на биржи сами; сохранение не запускает торговлю.

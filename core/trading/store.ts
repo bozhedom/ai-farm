@@ -30,7 +30,7 @@ export async function ensurePortfolios(db: Connection = pool) {
     CROSS JOIN unnest($2::text[]) m
     CROSS JOIN LATERAL (SELECT CASE WHEN m='live' AND e<>'okx' THEN 0 ELSE $3::numeric END AS amount) allocation
     ON CONFLICT DO NOTHING`,
-    [exchanges, modes, units(String(P.capitalUsdt)).toString()],
+    [exchanges, modes, units(String(P.defaultCapitalUsdt)).toString()],
     db,
   )
 }
@@ -177,16 +177,9 @@ export async function seedAgents(s: TradingScope, db: Connection, champion?: Age
 export async function allocateLive(amounts: Record<TradingExchange, number>) {
   for (const exchange of exchanges) {
     const value = amounts[exchange]
-    if (
-      !Number.isSafeInteger(value) ||
-      value < 0 ||
-      value > P.capitalUsdt ||
-      (value > 0 && value < P.minLiveCapitalUsdt)
-    )
+    if (!Number.isSafeInteger(value) || value < 0 || (value > 0 && value < P.minLiveCapitalUsdt))
       throw new Error('TRADING_ALLOCATION_INVALID')
   }
-  if (exchanges.reduce((sum, e) => sum + amounts[e], 0) > P.capitalUsdt)
-    throw new Error('TRADING_TOTAL_CAPITAL_LIMIT')
   await ensurePortfolios()
   await transaction(async (db) => {
     const rows = await query<PortfolioRow>(

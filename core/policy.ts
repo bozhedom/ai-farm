@@ -21,11 +21,11 @@ export const POLICY = Object.freeze({
   maxLeadDraftsPerDay: 12,
 })
 
-/** Owner-authorized spot trading. These ceilings cannot be changed by agents or the UI. */
+/** Fixed trading safeguards; the owner chooses each account's initial allocation separately. */
 export const TRADING_POLICY = Object.freeze({
-  version: 'spot-v2',
+  version: 'spot-v3',
   symbols: ['BTC-USDT', 'ETH-USDT'] as const,
-  capitalUsdt: 100,
+  defaultCapitalUsdt: 100,
   minLiveCapitalUsdt: 20,
   orderUsdt: 10,
   minOrderUsdt: 5,

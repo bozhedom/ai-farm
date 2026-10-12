@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { pool, query } from '../../core/db'
 import { config } from '../../core/config'
-import { decimal, units } from '../../core/trading/decimal'
+import { cost, decimal, units } from '../../core/trading/decimal'
 import { paperFill } from '../../core/trading/accounting'
 import {
   controlTrading,
@@ -372,43 +372,64 @@ describe('durable trading lifecycle', () => {
     expect(await agents(scope('okx', 'live'))).toHaveLength(0)
   })
 
-  it('starts one live agent only after all gates pass, with an independent account ledger', async () => {
-    await startTrading(scope('okx', 'demo'), '', true, factory)
-    await tick()
-    await tick()
-    await tick()
-    await tick()
-    await startTrading(scope('okx', 'paper'), '', false, factory)
-    const proven = (await agents(scope('okx', 'paper'))).find((a) => a.kind === 'reversion')!
-    await query(
-      "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3 WHERE id=$1",
-      [proven.id, units('1').toString(), units('26').toString()],
-    )
-    const live = new Exchange()
-    live.identity = 'live-test-account'
-    const separate = (s: { mode: string }) => (s.mode === 'live' ? live : exchange)
-    const c = config()
-    c.TRADING_LIVE_ENABLED = true
-    try {
-      await startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 100 USDT НА OKX', false, separate)
-      const [a] = await agents(scope('okx', 'live'))
-      expect(a).toMatchObject({
-        parent_id: proven.id,
-        cash: units('100').toString(),
-        round_trips: 0,
-      })
-      await tradingTick(separate)
-      expect(live.placed).toHaveLength(1)
-      expect(exchange.placed).toHaveLength(2)
-      await query('UPDATE trading_portfolios SET last_tick=NULL')
-      await tradingTick(separate)
-      expect((await agents(scope('okx', 'live')))[0]!.cash).toBe(
-        live.balances.USDT.total.toString(),
+  it.each([20, 100, 1000])(
+    'starts one live agent with a %i USDT budget and an independent account ledger',
+    async (budget) => {
+      await allocateLive({ okx: budget, bybit: 0, binance: 0, bitget: 0 })
+      await startTrading(scope('okx', 'demo'), '', true, factory)
+      await tick()
+      await tick()
+      await tick()
+      await tick()
+      await startTrading(scope('okx', 'paper'), '', false, factory)
+      const proven = (await agents(scope('okx', 'paper'))).find((a) => a.kind === 'reversion')!
+      await query(
+        "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3 WHERE id=$1",
+        [proven.id, units('1').toString(), units('26').toString()],
       )
-    } finally {
-      c.TRADING_LIVE_ENABLED = false
-    }
-  })
+      const live = new Exchange()
+      live.identity = 'live-test-account'
+      const separate = (s: { mode: string }) => (s.mode === 'live' ? live : exchange)
+      const c = config()
+      c.TRADING_LIVE_ENABLED = true
+      try {
+        const confirmation = `ТОРГОВАТЬ ${budget} USDT НА OKX`
+        if (budget !== 100) {
+          await expect(
+            startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 100 USDT НА OKX', false, separate),
+          ).rejects.toThrow('TRADING_CONFIRMATION_REQUIRED')
+        }
+        live.balances.USDT = {
+          total: units(String(budget - 1)),
+          available: units(String(budget - 1)),
+        }
+        await expect(
+          startTrading(scope('okx', 'live'), confirmation, false, separate),
+        ).rejects.toThrow('TRADING_INSUFFICIENT_FUNDS')
+        expect(await agents(scope('okx', 'live'))).toHaveLength(0)
+        live.balances.USDT = { total: units(String(budget)), available: units(String(budget)) }
+        await startTrading(scope('okx', 'live'), confirmation, false, separate)
+        const [a] = await agents(scope('okx', 'live'))
+        expect(a).toMatchObject({
+          parent_id: proven.id,
+          initial_cash: units(String(budget)).toString(),
+          cash: units(String(budget)).toString(),
+          round_trips: 0,
+        })
+        await tradingTick(separate)
+        expect(live.placed).toHaveLength(1)
+        expect(cost(live.placed[0]!.qty, live.placed[0]!.price)).toBeLessThanOrEqual(units('10'))
+        expect(exchange.placed).toHaveLength(2)
+        await query('UPDATE trading_portfolios SET last_tick=NULL')
+        await tradingTick(separate)
+        expect((await agents(scope('okx', 'live')))[0]!.cash).toBe(
+          live.balances.USDT.total.toString(),
+        )
+      } finally {
+        c.TRADING_LIVE_ENABLED = false
+      }
+    },
+  )
 
   it('archives a complete paper generation, clones the two leaders and preserves the capital', async () => {
     await startTrading(scope('okx', 'paper'), '', false, factory)
@@ -627,10 +648,8 @@ describe('multiple independent exchanges', () => {
 
   it('allocates one total real budget atomically and preserves active risk history', async () => {
     expect((await tradingOverview('live')).allocated).toBe('100')
-    await allocateLive({ okx: 25, bybit: 25, binance: 25, bitget: 25 })
-    await expect(allocateLive({ okx: 100, bybit: 100, binance: 0, bitget: 0 })).rejects.toThrow(
-      'TRADING_TOTAL_CAPITAL_LIMIT',
-    )
+    await allocateLive({ okx: 500, bybit: 1500, binance: 0, bitget: 0 })
+    expect((await tradingOverview('live')).allocated).toBe('2000')
     await expect(allocateLive({ okx: 25, bybit: 10, binance: 0, bitget: 0 })).rejects.toThrow(
       'TRADING_ALLOCATION_INVALID',
     )
@@ -638,14 +657,14 @@ describe('multiple independent exchanges', () => {
       'TRADING_ALLOCATION_INVALID',
     )
     const plans = [
-      { okx: 50, bybit: 50, binance: 0, bitget: 0 },
-      { okx: 0, bybit: 0, binance: 50, bitget: 50 },
+      { okx: 50, bybit: 1500, binance: 0, bitget: 0 },
+      { okx: 0, bybit: 0, binance: 500, bitget: 1050 },
     ]
     await Promise.all(plans.map(allocateLive))
     const view = await tradingOverview('live')
-    expect(view.allocated).toBe('100')
-    expect(view.connections.map((c) => Number(c.liveAllocation))).toEqual(
-      expect.arrayContaining([0, 0, 50, 50]),
+    expect(view.allocated).toBe('1550')
+    expect(plans).toContainEqual(
+      Object.fromEntries(view.connections.map((c) => [c.exchange, Number(c.liveAllocation)])),
     )
     await allocateLive({ okx: 25, bybit: 25, binance: 25, bitget: 25 })
     await query(
@@ -662,6 +681,45 @@ describe('multiple independent exchanges', () => {
       peak: units('27').toString(),
       reason: 'DRAWDOWN_LIMIT',
     })
+  })
+
+  it('keeps large allocations exact without funding or starting other portfolios', async () => {
+    await allocateLive({
+      okx: Number.MAX_SAFE_INTEGER,
+      bybit: Number.MAX_SAFE_INTEGER,
+      binance: 20,
+      bitget: 21,
+    })
+    const view = await tradingOverview('live')
+    expect(view.allocated).toBe('18014398509482023')
+    expect(view.equity).toBe('0')
+    expect(await portfolio(scope('okx', 'live'))).toMatchObject({
+      capital: units('9007199254740991').toString(),
+      started_at: null,
+    })
+    for (const venue of exchanges) {
+      expect(await portfolio(scope(venue, 'paper'))).toMatchObject({
+        capital: units('100').toString(),
+      })
+      expect(await portfolio(scope(venue, 'demo'))).toMatchObject({
+        capital: units('100').toString(),
+      })
+    }
+    expect(await query('SELECT id FROM trading_agents')).toHaveLength(0)
+    expect(await query('SELECT id FROM trading_orders')).toHaveLength(0)
+    for (const invalid of [-1, 19, 20.5, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity]) {
+      await expect(allocateLive({ okx: invalid, bybit: 0, binance: 0, bitget: 0 })).rejects.toThrow(
+        'TRADING_ALLOCATION_INVALID',
+      )
+    }
+    for (const invalid of [-1n, units('9007199254740992')]) {
+      await expect(
+        query("UPDATE trading_portfolios SET capital=$1 WHERE exchange='okx' AND mode='live'", [
+          invalid.toString(),
+        ]),
+      ).rejects.toMatchObject({ code: '23514' })
+    }
+    expect((await tradingOverview('live')).allocated).toBe('18014398509482023')
   })
 
   it('requires paper evidence and a demo round trip on the same exchange', async () => {

@@ -5,7 +5,9 @@ import { exchanges } from '../../../core/trading/types'
 import { body, respond } from '../../utils/api'
 
 const schema = z
-  .object({ amounts: z.record(z.enum(exchanges), z.number().int().min(0).max(100)) })
+  .object({
+    amounts: z.record(z.enum(exchanges), z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)),
+  })
   .strict()
 export default defineEventHandler((event) =>
   respond(async () => {
