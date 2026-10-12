@@ -23,10 +23,10 @@ async function login() {
 </script>
 <template>
   <main class="login">
-    <form class="card card-raised login-card" @submit.prevent="login">
-      <span class="brand-mark big"><OfficeIcon name="leaf" /></span>
+    <form class="login-card" @submit.prevent="login">
+      <span class="login-brand">Ферма</span>
       <h1>Вход в кабинет</h1>
-      <p class="muted">Торговая ферма. Контроль капитала и стратегий.</p>
+      <p class="muted">Ваши биржи и результаты торговли.</p>
       <div class="field" :class="{ 'is-error': error }">
         <label for="password">Пароль</label>
         <div class="pass">
@@ -55,35 +55,39 @@ async function login() {
       <button class="btn btn-primary btn-lg btn-block" :disabled="busy || !password">
         {{ busy ? 'Входим' : 'Войти' }}
       </button>
-      <a class="small back" href="/storefront">Сохранённая витрина текстов</a>
+      <a class="small back" href="/storefront">Архив студии</a>
     </form>
   </main>
 </template>
 <style scoped>
 .login {
+  --brand: #4255a3;
+  --brand-hover: #334586;
+  --ink: #252b38;
+  --muted: #626a7a;
+  --line: #e1e4eb;
+  --surface: #fff;
+  --ring: 0 0 0 3px #4255a326;
+  color-scheme: light;
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: var(--s-6) var(--gutter);
-  background:
-    radial-gradient(circle at 20% 15%, var(--brand-soft), transparent 40%),
-    radial-gradient(circle at 85% 90%, var(--sun-soft), transparent 45%), var(--canvas);
+  background: #f7f8fa;
 }
 .login-card {
   width: min(400px, 100%);
   padding: var(--s-8);
   display: grid;
   gap: var(--s-4);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
-.brand-mark.big {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-}
-.brand-mark.big :deep(svg) {
-  width: 26px;
-  height: 26px;
-  stroke: #fff;
+.login-brand {
+  font: 700 18px var(--font-display);
+  color: var(--brand);
+  margin-bottom: 12px;
 }
 .login-card h1 {
   font-size: var(--text-2xl);

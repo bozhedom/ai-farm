@@ -1,7 +1,20 @@
 export const tradingModes = [
-  { id: 'paper', label: 'Бумага', detail: 'Рынок настоящий, капитал виртуальный' },
-  { id: 'demo', label: 'Демо / Testnet', detail: 'Проверка ордеров на тестовом счёте' },
-  { id: 'live', label: 'Реальные средства', detail: 'Торговля на выбранной бирже' },
+  {
+    id: 'paper',
+    label: 'Тренировка',
+    detail: 'Бот пробует стратегии по настоящим ценам. Деньги виртуальные, аккаунт биржи не нужен.',
+  },
+  {
+    id: 'demo',
+    label: 'Тест биржи',
+    detail:
+      'Проверяем покупки и продажи на тестовом счёте биржи. Настоящие деньги не используются.',
+  },
+  {
+    id: 'live',
+    label: 'Реальная торговля',
+    detail: 'Бот торгует деньгами на ваших биржевых счетах. Каждую биржу вы запускаете отдельно.',
+  },
 ] as const
 
 const reasons: Record<string, string> = {
@@ -10,7 +23,7 @@ const reasons: Record<string, string> = {
     'Доступ к API ограничен. Проверьте доступность биржи для аккаунта и адреса сервера.',
   TRADING_RATE_LIMIT: 'Биржа ограничила частоту запросов. Повторим проверку в следующем цикле.',
   TRADING_FEE_TOKEN_ENABLED: 'Отключите оплату торговых комиссий в BNB / BGB в кабинете биржи.',
-  TRADING_ALLOCATION_REQUIRED: 'Сначала выделите этой бирже от 20 USDT в разделе «Подключение».',
+  TRADING_ALLOCATION_REQUIRED: 'Сначала выделите этой бирже от 20 USDT в настройках бюджета.',
   TRADING_ALLOCATION_INVALID: 'Для каждой биржи укажите 0 или целое число от 20 до 100 USDT.',
   TRADING_TOTAL_CAPITAL_LIMIT: 'Общий выделенный бюджет всех бирж не может превышать 100 USDT.',
   TRADING_ALLOCATION_LOCKED:
@@ -19,7 +32,7 @@ const reasons: Record<string, string> = {
 
   TRADING_KEYS_REQUIRED: 'Добавьте ключ, секрет и парольную фразу выбранного счёта на сервере.',
   TRADING_LIVE_DISABLED:
-    'Реальная торговля выключена на сервере. После проверок включите TRADING_LIVE_ENABLED.',
+    'Реальная торговля ещё не разрешена. Инструкция для настройки сервера — в «Подключении».',
   TRADING_KEY_PERMISSIONS: 'Нужен ключ с чтением и торговлей, без права вывода средств.',
   TRADING_IP_REQUIRED: 'Привяжите реальный API-ключ к статическому IP сервера в кабинете биржи.',
   TRADING_ACCOUNT_MODE: 'Проверьте требуемый режим счёта в инструкции выбранной биржи.',
@@ -60,7 +73,7 @@ const reasons: Record<string, string> = {
   TRADING_SPREAD_TOO_WIDE: 'Разница покупки и продажи выше лимита. Ждём подходящих цен.',
   TRADING_BUSY: 'Сейчас идёт проверка или сверка ордера. Повторите через несколько секунд.',
   TRADING_PAPER_REQUIRED:
-    'Сначала нужен прибыльный бумажный агент: 7 дней, 20 закрытых позиций и просадка не выше 8%.',
+    'Сначала нужна прибыльная стратегия в тренировке: от 7 дней, 20 завершённых покупок с продажей и просадка не выше 8%.',
   TRADING_DEMO_REQUIRED:
     'Сначала завершите проверочный цикл на демо-счёте этой биржи и обновите проверку подключения.',
   TRADING_CONFIRMATION_REQUIRED: 'Введите подтверждение точно как показано в форме.',
@@ -89,14 +102,14 @@ const reasons: Record<string, string> = {
   LIVE_LEADER_PROMOTED:
     'Капитал передан более сильному бумажному агенту. История прежнего агента сохранена.',
   WAITING_MARKET: 'Ожидание котировок',
-  WARMING_UP: 'Накапливает свечи',
-  WAITING_SIGNAL: 'Ждёт сигнала стратегии',
-  HOLDING_POSITION: 'Контролирует позицию',
-  STRATEGY_ENTRY: 'Вход по стратегии',
+  WARMING_UP: 'Собирает историю цен',
+  WAITING_SIGNAL: 'Ждёт подходящую цену',
+  HOLDING_POSITION: 'Следит за купленной монетой',
+  STRATEGY_ENTRY: 'Покупка по условиям стратегии',
   POSITION_STOP: 'Защитный выход',
   TAKE_PROFIT: 'Фиксация прибыли',
   RISK_EXIT: 'Закрытие позиции',
-  ENTRIES_PAUSED: 'Входы на паузе',
+  ENTRIES_PAUSED: 'Новые покупки на паузе',
   DEMO_PROBE: 'Проверочная демо-сделка',
   STARTED: 'Портфель запущен',
   LIVE_AUTHORIZED: 'Владелец подтвердил реальную торговлю',
@@ -113,6 +126,29 @@ export const strategyName = {
   reversion: 'Возврат к средней',
   trend: 'Следование тренду',
   breakout: 'Пробой диапазона',
+}
+export const strategyDescription = {
+  reversion: 'Покупает после снижения цены и ждёт её возврата к средней.',
+  trend: 'Покупает, когда цена растёт устойчиво, и следит за разворотом.',
+  breakout: 'Покупает, когда цена выходит выше недавнего диапазона.',
+}
+
+export function connectionState(c: {
+  status: string
+  keys: boolean
+  error: string
+  workerAlive: boolean
+  fresh: boolean
+}) {
+  if (c.error.startsWith('TRADING_')) return { label: 'Нужна проверка', tone: 'warning' }
+  if (!c.keys) return { label: 'Не подключена', tone: 'muted' }
+  if (c.status === 'stopped') return { label: 'Остановлена', tone: 'muted' }
+  if (c.status === 'idle') return { label: 'Готова к запуску', tone: 'muted' }
+  if (!c.workerAlive) return { label: 'Бот не на связи', tone: 'warning' }
+  if (!c.fresh) return { label: 'Ждём свежие цены', tone: 'warning' }
+  return c.status === 'paused'
+    ? { label: 'Покупки на паузе', tone: 'muted' }
+    : { label: 'Работает', tone: 'good' }
 }
 export const orderStatus: Record<string, string> = {
   prepared: 'Подготовлен',

@@ -23,8 +23,6 @@ const chart = computed(() => {
     dots,
     path: dots.map((p) => `${p.x},${p.y}`).join(' '),
     baseline: y(principal),
-    low,
-    high,
   }
 })
 const selected = computed(() => (hover.value !== null ? chart.value?.dots[hover.value] : null))
@@ -42,8 +40,8 @@ function move(event: PointerEvent) {
   <figure class="equity-chart">
     <template v-if="chart">
       <div class="chart-caption">
-        <span>{{ selected ? shortTime(selected.at) : 'Стоимость портфеля' }}</span
-        ><strong>{{ usdt(selected?.value || points.at(-1)!.value, 4) }} USDT</strong>
+        <span>{{ selected ? shortTime(selected.at) : 'Как менялся баланс · последние сутки' }}</span
+        ><strong v-if="selected">{{ usdt(selected.value, 4) }} USDT</strong>
       </div>
       <svg
         viewBox="0 0 700 200"
@@ -70,18 +68,16 @@ function move(event: PointerEvent) {
       </svg>
       <figcaption>
         <span>{{ shortTime(points[0]!.at) }}</span
-        ><span>Пунктир: стартовые {{ usdt(capital) }} USDT</span
+        ><span>Пунктир: начальные {{ usdt(capital) }} USDT</span
         ><span>{{ shortTime(points.at(-1)!.at) }}</span>
       </figcaption>
     </template>
     <div v-else class="chart-empty">
-      <OfficeIcon name="report" /><strong>{{
-        points.length ? 'Первая оценка сохранена' : 'Здесь будет история капитала'
-      }}</strong
+      <strong>{{ points.length ? 'Первая точка уже есть' : 'Здесь будет график баланса' }}</strong
       ><span>{{
         points.length
           ? 'Следующая точка появится в течение пяти минут.'
-          : 'Запустите бумажный портфель. График строится только по измеренным результатам.'
+          : 'График появится после запуска. Бот сохраняет баланс каждые пять минут.'
       }}</span>
     </div>
   </figure>
@@ -102,6 +98,7 @@ function move(event: PointerEvent) {
   font-family: var(--font-mono);
   color: var(--t-ink);
   font-weight: 500;
+  white-space: nowrap;
 }
 svg {
   display: block;
@@ -114,7 +111,7 @@ svg {
   stroke-width: 0.7;
 }
 .baseline {
-  stroke: #8395a7;
+  stroke: var(--t-muted);
   stroke-dasharray: 4 5;
   stroke-width: 1;
 }
@@ -151,12 +148,6 @@ figcaption {
   text-align: center;
   color: var(--t-muted);
   padding: 24px;
-}
-.chart-empty :deep(svg) {
-  width: 30px;
-  height: 30px;
-  stroke: var(--t-blue);
-  margin-bottom: 4px;
 }
 .chart-empty strong {
   font-family: var(--font-display);
