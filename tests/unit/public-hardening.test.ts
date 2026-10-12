@@ -41,9 +41,16 @@ describe('raw request paths', () => {
   })
 
   it('lets search engines index only the storefront, services and terms', () => {
-    for (const path of ['/', '/terms', '/services/description'])
+    for (const path of ['/storefront', '/terms', '/services/description'])
       expect(indexablePage(path)).toBe(true)
-    for (const path of ['/order/abc', '/office', '/api/public/catalog', '/services/a/b'])
+    for (const path of [
+      '/',
+      '/order/abc',
+      '/office',
+      '/office/trading',
+      '/api/public/catalog',
+      '/services/a/b',
+    ])
       expect(indexablePage(path)).toBe(false)
   })
 })

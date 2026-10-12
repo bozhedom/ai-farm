@@ -13,7 +13,7 @@ async function login() {
   error.value = ''
   try {
     await officeApi.login(password.value)
-    await navigateTo('/office')
+    await navigateTo('/office/trading')
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
@@ -26,7 +26,7 @@ async function login() {
     <form class="card card-raised login-card" @submit.prevent="login">
       <span class="brand-mark big"><OfficeIcon name="leaf" /></span>
       <h1>Вход в кабинет</h1>
-      <p class="muted">Ваша ИИ-ферма идей и текстов</p>
+      <p class="muted">Торговая ферма. Контроль капитала и стратегий.</p>
       <div class="field" :class="{ 'is-error': error }">
         <label for="password">Пароль</label>
         <div class="pass">
@@ -55,7 +55,7 @@ async function login() {
       <button class="btn btn-primary btn-lg btn-block" :disabled="busy || !password">
         {{ busy ? 'Входим' : 'Войти' }}
       </button>
-      <a class="small back" href="/">На сайт</a>
+      <a class="small back" href="/storefront">Сохранённая витрина текстов</a>
     </form>
   </main>
 </template>

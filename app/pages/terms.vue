@@ -47,7 +47,7 @@ const { data } = await useFetch<Pick<PublicCatalog, 'notice' | 'seller' | 'payme
         <p v-if="data?.seller" class="muted">
           Продавец: {{ data.seller.name }}, {{ data.seller.contact }}
         </p>
-        <NuxtLink class="btn btn-primary" to="/">К услугам</NuxtLink>
+        <NuxtLink class="btn btn-primary" to="/storefront">К услугам</NuxtLink>
       </article>
     </div>
   </PublicShell>

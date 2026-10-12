@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 useHead({ htmlAttrs: { class: 'ds' } })
 // With exactly one order saved on this device, «Мой заказ» opens it; otherwise the list.
-const myOrder = ref('/#orders')
+const myOrder = ref('/storefront#orders')
 onMounted(() => {
   const saved = savedOrders()
   if (saved.length === 1) myOrder.value = `/order/${saved[0]!.token}`
@@ -21,7 +21,7 @@ onMounted(() => {
     <p v-if="props.notice" class="test-strip" role="note">{{ props.notice }}</p>
     <header class="site-head">
       <div class="container">
-        <NuxtLink class="brand" to="/">
+        <NuxtLink class="brand" to="/storefront">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" class="icon" style="stroke: #fff">
               <path
@@ -32,8 +32,10 @@ onMounted(() => {
           <span>AI Farm</span>
         </NuxtLink>
         <nav class="site-nav" aria-label="Разделы">
-          <NuxtLink to="/#catalog" :class="{ strong: props.active === 'catalog' }">Услуги</NuxtLink>
-          <NuxtLink to="/#how" class="hide-sm">Как это работает</NuxtLink>
+          <NuxtLink to="/storefront#catalog" :class="{ strong: props.active === 'catalog' }"
+            >Услуги</NuxtLink
+          >
+          <NuxtLink to="/storefront#how" class="hide-sm">Как это работает</NuxtLink>
           <NuxtLink :to="myOrder" :class="{ strong: props.active === 'order' }">Мой заказ</NuxtLink>
         </nav>
       </div>

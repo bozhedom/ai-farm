@@ -298,13 +298,13 @@ test.describe('office behaviour', () => {
     await page.screenshot({ path: join(shots, 'offline-1440.png') })
   })
 
-  test('login sends the password and opens the office', async ({ page }) => {
+  test('login sends the password and opens the trading office', async ({ page }) => {
     const posted = await stubOffice(page, fx)
     await page.goto('/office/login')
     await page.waitForLoadState('networkidle')
     await page.getByLabel('Пароль', { exact: true }).fill('owner-password')
     await page.getByRole('button', { name: 'Войти' }).click()
-    await expect(page).toHaveURL(/\/office$/)
+    await expect(page).toHaveURL(/\/office\/trading$/)
     expect(posted[0]).toEqual({ url: '/api/auth/login', body: { password: 'owner-password' } })
   })
 

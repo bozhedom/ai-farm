@@ -25,6 +25,7 @@ const items = computed<Item[]>(() => {
   const o = overview.value
   const orderAlerts = o?.needsOwner.filter((n) => /order|заказ/i.test(n.kind)).length || 0
   return [
+    { to: '/office/trading', label: 'Торговая ферма', icon: 'money' },
     { to: '/office', label: 'Главная', icon: 'home' },
     { to: '/office/ideas', label: 'Идеи', icon: 'idea', count: o?.totals.ideas },
     { to: '/office/agents', label: 'Агенты', icon: 'agents', count: o?.totals.activeAgents },
@@ -140,7 +141,9 @@ async function logout() {
           :aria-current="isActive('/office/settings') ? 'page' : undefined"
           ><OfficeIcon name="settings" />Настройки</NuxtLink
         >
-        <a href="/" target="_blank" rel="noopener"><OfficeIcon name="external" />Открыть сайт</a>
+        <a href="/storefront" target="_blank" rel="noopener"
+          ><OfficeIcon name="external" />Открыть сайт</a
+        >
         <button type="button" class="side-logout" :disabled="loggingOut" @click="logout">
           <OfficeIcon name="logout" />{{ loggingOut ? 'Выходим' : 'Выйти' }}
         </button>

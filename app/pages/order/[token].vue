@@ -141,7 +141,7 @@ onMounted(() => (mounted.value = true))
         <div v-if="missing" class="empty">
           <h3>Такого заказа нет</h3>
           <p>Проверьте ссылку: её нужно скопировать целиком.</p>
-          <NuxtLink class="btn btn-primary" to="/">Все услуги</NuxtLink>
+          <NuxtLink class="btn btn-primary" to="/storefront">Все услуги</NuxtLink>
         </div>
         <div v-else-if="!order" class="empty">
           <h3>Нет связи</h3>
@@ -250,7 +250,7 @@ onMounted(() => (mounted.value = true))
                 </a>
                 <PublicCopyButton :text="order.result.text" />
               </div>
-              <NuxtLink class="btn btn-ghost" to="/">Заказать ещё</NuxtLink>
+              <NuxtLink class="btn btn-ghost" to="/storefront">Заказать ещё</NuxtLink>
             </div>
           </section>
 

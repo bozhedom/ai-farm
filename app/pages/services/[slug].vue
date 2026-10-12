@@ -108,11 +108,11 @@ function useExample() {
         <div class="empty">
           <h3>Такой услуги нет</h3>
           <p>Возможно, её сняли с продажи. Посмотрите, что есть сейчас.</p>
-          <NuxtLink class="btn btn-primary" to="/">Все услуги</NuxtLink>
+          <NuxtLink class="btn btn-primary" to="/storefront">Все услуги</NuxtLink>
         </div>
       </div>
       <template v-else>
-        <p class="crumbs"><NuxtLink to="/">Услуги</NuxtLink> / {{ service.category }}</p>
+        <p class="crumbs"><NuxtLink to="/storefront">Услуги</NuxtLink> / {{ service.category }}</p>
         <div class="service">
           <div class="service-info">
             <h1>{{ service.name }}</h1>
