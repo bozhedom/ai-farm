@@ -56,24 +56,8 @@
   font-size: 13px;
   font-weight: 500;
 }
-.e-readiness {
-  display: grid;
-  gap: 22px;
-  margin-top: 28px;
-}
-.e-readiness h3,
-.e-requirements h3,
 .e-service-test h3 {
   margin-bottom: 8px;
-}
-.e-readiness p {
-  margin: 0;
-  color: var(--t-muted);
-}
-.e-assessment {
-  border-left: 3px solid var(--t-line);
-  padding-left: 16px;
-  margin: 24px 0;
 }
 .e-actions {
   display: flex;
@@ -86,17 +70,14 @@
   margin: 0;
 }
 .e-monitor,
-.e-service-test,
-.e-requirements {
+.e-service-test {
   border-top: 1px solid var(--t-line);
   padding-top: 24px;
   margin-top: 28px;
 }
-.e-requirements ul,
 .e-blockers {
   padding-left: 20px;
 }
-.e-requirements li + li,
 .e-blockers li + li {
   margin-top: 10px;
 }

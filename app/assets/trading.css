@@ -815,15 +815,6 @@
   margin-top: 5px;
   color: var(--t-muted);
 }
-.trading-workspace .env-example {
-  background: var(--t-canvas);
-  border: 1px solid var(--t-line);
-  padding: 16px;
-  border-radius: 7px;
-  font-size: 12px;
-  overflow-x: auto;
-  margin: 0;
-}
 .trading-workspace .trading-footer {
   display: flex;
   justify-content: space-between;
@@ -1319,9 +1310,6 @@
   font-size: 11px;
   color: var(--t-muted);
   white-space: nowrap;
-}
-.trading-workspace .market-methods a {
-  text-underline-offset: 3px;
 }
 @media (max-width: 650px) {
   .trading-workspace .market-counts {

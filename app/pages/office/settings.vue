@@ -312,9 +312,7 @@ onMounted(() => {
             <dd class="num">{{ rub(s.limits.monthlyKopecks) }}</dd>
           </div>
         </dl>
-        <p class="small muted">
-          Лимиты задаются в файле .env на сервере, чтобы модель не могла их поменять.
-        </p>
+        <p class="small muted">Лимиты расходов настраивает администратор.</p>
       </section>
 
       <section class="card rise" aria-labelledby="providers-title">

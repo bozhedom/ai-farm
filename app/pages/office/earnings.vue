@@ -48,9 +48,9 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
     await officeFetch('/api/earnings/control', { method: 'POST', body: { action } })
     notice.value =
       action === 'pause'
-        ? 'Расписание выключено. Начатый снимок может завершиться.'
+        ? 'Автообновление выключено. Текущая загрузка завершится.'
         : action === 'enable'
-          ? 'Мониторинг включён. Первый снимок появится после прохода обработчика.'
+          ? 'Автообновление включено. Загружаем данные.'
           : 'Обновление запрошено.'
     await refresh()
   } catch (e) {
@@ -81,7 +81,7 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
       <div class="page-heading">
         <div>
           <h1>Направления</h1>
-          <p class="t-muted">Что можно проверить сейчас и что нужно для настоящего запуска.</p>
+          <p class="t-muted">Торговля, рыночные данные и заказы.</p>
         </div>
       </div>
       <p v-if="status.offline" class="t-notice t-warning" role="alert">
@@ -113,30 +113,26 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
             <h2>{{ track.title }}</h2>
             <p>{{ track.summary }}</p>
           </header>
-          <div class="e-readiness">
-            <div>
-              <h3>Уже в приложении</h3>
-              <p>{{ track.available }}</p>
-            </div>
-            <div>
-              <h3>До реального запуска</h3>
-              <p>{{ track.remaining }}</p>
-            </div>
-          </div>
-          <p class="e-assessment">{{ track.assessment }}</p>
           <div v-if="['spot', 'bots'].includes(track.id)" class="e-actions">
-            <NuxtLink to="/office/trading" class="t-button t-primary">Открыть торговлю</NuxtLink>
+            <NuxtLink to="/office/trading" class="t-button t-primary">Мои биржи</NuxtLink>
+            <NuxtLink v-if="track.id === 'spot'" to="/office/manager" class="t-button"
+              >Менеджер торговли</NuxtLink
+            >
             <p v-if="track.id === 'bots'" class="t-muted">
-              Выберите биржу, затем «Стратегии» и набор «Сетка и DCA» в тренировке.
+              Откройте биржу в режиме «Тренировка», затем выберите «Стратегии» и набор «Сетка и
+              DCA».
             </p>
+          </div>
+          <div v-if="track.id === 'business'" class="e-actions">
+            <NuxtLink to="/office/products" class="t-button">Мои услуги</NuxtLink>
+            <NuxtLink to="/storefront" class="t-link">Витрина</NuxtLink>
           </div>
           <section v-if="monitored" class="e-monitor">
             <div class="section-heading">
               <div>
-                <h3>Открытые данные</h3>
+                <h3>Обновление данных</h3>
                 <p class="t-muted">
-                  Наблюдение без сделок и переводов. Обновление раз в
-                  {{ data?.monitor.intervalMinutes || 15 }} минут.
+                  Раз в {{ data?.monitor.intervalMinutes || 15 }} минут для всех источников.
                 </p>
               </div>
             </div>
@@ -148,21 +144,23 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                   :disabled="busy"
                   @click="control(data.monitor.enabled ? 'pause' : 'enable')"
                 >
-                  {{ data.monitor.enabled ? 'Выключить расписание' : 'Включить мониторинг' }}
+                  {{
+                    data.monitor.enabled ? 'Выключить автообновление' : 'Включить автообновление'
+                  }}
                 </button>
                 <button class="t-link" :disabled="busyMonitor" @click="control('refresh')">
                   {{
                     data.monitor.running
                       ? 'Получаем данные…'
                       : data.monitor.pending
-                        ? 'Ждём обработчик…'
-                        : 'Обновить снимок'
+                        ? 'Обновление в очереди…'
+                        : 'Обновить сейчас'
                   }}
                 </button>
               </div>
               <p v-if="!data.monitor.workerAlive" class="t-notice t-warning">
-                Обработчик сейчас не отвечает. Запрос сохранится, но для обновления нужно запустить
-                worker.
+                Обновление временно недоступно. Запрос сохранён и выполнится после восстановления
+                связи.
               </p>
               <p v-if="data.monitor.enabled && data.monitor.nextAt" class="e-caption">
                 Следующее обновление {{ shortTime(data.monitor.nextAt) }}.
@@ -174,7 +172,7 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
               <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
               <template v-if="track.id === 'arbitrage' && data.arbitrage">
                 <p class="e-caption">
-                  Снимок {{ shortTime(data.arbitrage.fetchedAt) }}. Доступны
+                  Обновлено {{ shortTime(data.arbitrage.fetchedAt) }}. Доступны
                   {{ data.arbitrage.sources.filter((s) => s.status === 'ok').length }} из 4 бирж.
                   Сопоставлено {{ data.arbitrage.pairsCompared }} пар.
                 </p>
@@ -182,25 +180,19 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                   v-if="Date.parse(data.arbitrage.expiresAt) <= Date.now()"
                   class="t-notice t-warning"
                 >
-                  Цены этого снимка устарели. Это история наблюдения, не предложение сделки.
-                </p>
-                <p class="t-muted">
-                  В расчёте на каждой стороне: комиссия {{ pct(data.arbitrage.feeBpsPerLeg) }} и
-                  проскальзывание {{ pct(data.arbitrage.slippageBpsPerLeg) }}. Фактические тарифы,
-                  глубина и идентичность токенов ещё не проверены. Переводы и ребалансировка не
-                  учтены.
+                  Цены устарели. Обновите данные перед сравнением.
                 </p>
                 <div v-if="data.arbitrage.items.length" class="e-table-wrap">
                   <table class="e-table">
                     <caption>
-                      Лучшие наблюдаемые разницы цен. Исполнение не подключено.
+                      Разница цен по последним котировкам
                     </caption>
                     <thead>
                       <tr>
                         <th>Монета</th>
                         <th>Купить / продать</th>
                         <th>Разница</th>
-                        <th>После допущений</th>
+                        <th>С учётом затрат</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -218,11 +210,27 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                     </tbody>
                   </table>
                 </div>
-                <p v-else class="t-empty">В этом снимке нет сопоставимых свежих пар.</p>
+                <p v-else class="t-empty">Нет свежих котировок для сравнения.</p>
+                <details class="t-details">
+                  <summary>Как рассчитана разница</summary>
+                  <div class="t-details-body">
+                    <p>
+                      На покупку и продажу заложены комиссия
+                      {{ pct(data.arbitrage.feeBpsPerLeg) }} и проскальзывание
+                      {{ pct(data.arbitrage.slippageBpsPerLeg) }}. Переводы между биржами и
+                      восстановление балансов не учтены.
+                    </p>
+                    <p>
+                      Расчёт ориентировочный: фактические тарифы, объём заявок и совпадение токенов
+                      на разных биржах не проверены. Положительная разница не означает доступную
+                      сделку.
+                    </p>
+                  </div>
+                </details>
               </template>
               <EarningsFeeds v-else-if="feeds.length" :feeds="feeds" />
               <p v-else class="t-empty">
-                Снимков пока нет. Включите мониторинг или запросите одно обновление.
+                Данных пока нет. Нажмите «Обновить сейчас» или включите автообновление.
               </p>
             </template>
             <p v-else class="t-notice t-warning">
@@ -231,23 +239,6 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
             </p>
           </section>
           <EarningsServices v-if="['services', 'business'].includes(track.id)" />
-          <section class="e-requirements">
-            <h3>Что нужно от заказчика</h3>
-            <ul>
-              <li v-for="item in track.needs" :key="item">{{ item }}</li>
-            </ul>
-            <p class="e-caption">
-              Доступы настраиваются локально или на сервере. Ключи и seed-фразы в переписку не
-              отправляются.
-            </p>
-          </section>
-          <a
-            :href="track.source.url"
-            :target="track.source.url.startsWith('https:') ? '_blank' : undefined"
-            rel="noopener noreferrer"
-            class="t-link"
-            >{{ track.source.title }}<OfficeIcon name="external"
-          /></a>
         </article>
       </div>
     </main>

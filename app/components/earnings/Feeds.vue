@@ -32,18 +32,18 @@ const number = (v: string | null, digits = 2) =>
         <span class="t-muted">Получено {{ shortTime(feed.fetchedAt) }}</span>
       </div>
       <p v-if="feed.status === 'unavailable'" class="t-notice t-warning" role="status">
-        Ответ источника недоступен или неполон.
+        Источник не ответил или вернул неполные данные.
         {{
           feed.items.length
-            ? 'Ниже проверенные строки или сохранённый снимок прошлого обновления.'
+            ? 'Показываем доступные данные. Проверьте время обновления.'
             : 'Повторим при следующем обновлении.'
         }}
       </p>
       <p v-else-if="Date.parse(feed.expiresAt) <= Date.now()" class="t-notice t-warning">
-        Этот снимок устарел. Обновите данные перед сравнением.
+        Данные устарели. Обновите их перед сравнением.
       </p>
       <p v-if="!feed.items.length && feed.status !== 'unavailable'" class="t-empty">
-        Подходящих записей в этом ответе нет.
+        Подходящих записей пока нет.
       </p>
       <ul v-else class="e-observations">
         <li
@@ -109,13 +109,12 @@ const number = (v: string | null, digits = 2) =>
         {{ expanded.includes(feed.id) ? 'Свернуть' : `Показать все (${feed.items.length})` }}
       </button>
       <p class="e-caption">
-        Просмотрено {{ feed.examined }} записей, пропущено {{ feed.skipped }}.
         {{
           feed.kind === 'funding'
             ? 'Положительный фандинг обычно платят владельцы длинных позиций коротким; знак и условия могут измениться.'
             : feed.kind === 'yield'
-              ? 'APY дан поставщиком. Это не прогноз вашего дохода и не оценка безопасности пула.'
-              : 'Цена исхода не является собственной оценкой вероятности агента.'
+              ? 'APY показывает оценку годовой доходности по данным источника и может измениться.'
+              : 'Цены исходов получены с площадки.'
         }}
       </p>
     </section>

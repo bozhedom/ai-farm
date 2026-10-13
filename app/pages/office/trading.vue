@@ -67,7 +67,8 @@ const activity = computed(() => {
     return mode.value === 'paper'
       ? 'Можно начинать. Бот сам выберет момент для покупки.'
       : 'Подключите счёт и пройдите проверку перед запуском.'
-  if (!v.value.workerAlive) return 'Бот не на связи. Проверьте, что сервер и обработчик запущены.'
+  if (!v.value.workerAlive)
+    return 'Бот не на связи. Если связь не восстановится, обратитесь к администратору.'
   if (state.value?.tone === 'warning')
     return 'Ждём свежие данные биржи. Пока новых сделок не будет.'
   return positionCount.value
@@ -454,7 +455,7 @@ async function allocationSaved() {
                 :disabled="!!busy"
                 @click="section = 'connection'"
               >
-                Что нужно для запуска
+                Подключить счёт
               </button>
             </section>
             <section class="t-panel result-panel" aria-label="Результат торговли">

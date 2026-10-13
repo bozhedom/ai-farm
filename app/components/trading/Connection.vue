@@ -9,14 +9,6 @@ const props = defineProps<{
 }>()
 defineEmits<{ action: [action: string]; start: []; overview: [] }>()
 const venue = computed(() => exchangeCatalog[props.view.exchange])
-const envExample = computed(() => {
-  const prefix = `${props.view.exchange.toUpperCase()}_${props.view.mode === 'demo' ? 'DEMO' : 'LIVE'}`
-  return [
-    `${prefix}_API_KEY=…`,
-    `${prefix}_SECRET=…`,
-    ...(venue.value.passphrase ? [`${prefix}_PASSPHRASE=…`] : []),
-  ].join('\n')
-})
 const checks = computed(() => {
   const v = props.view
   return [
@@ -27,7 +19,7 @@ const checks = computed(() => {
           { label: 'Выделен бюджет для торговли', ok: v.readiness.allocated },
           { label: 'Тестовая покупка и продажа прошли успешно', ok: v.readiness.demoVerified },
           { label: 'Есть прибыльная тренировочная стратегия', ok: v.readiness.paperQualified },
-          { label: 'Реальная торговля разрешена на сервере', ok: v.readiness.liveEnabled },
+          { label: 'Реальная торговля разрешена', ok: v.readiness.liveEnabled },
         ]
       : []),
   ]
@@ -37,7 +29,7 @@ const checks = computed(() => {
   <section class="t-stack connection-content">
     <template v-if="view.mode === 'paper'">
       <div class="t-panel t-stack">
-        <h2>В тренировке подключать ничего не нужно</h2>
+        <h2>Тренировка на ценах {{ venue.name }}</h2>
         <p>
           Цены приходят напрямую с {{ venue.name }}. Четыре стратегии пробуют покупать и продавать
           на виртуальный бюджет {{ view.metrics.capital }} USDT.
@@ -58,7 +50,7 @@ const checks = computed(() => {
             {{
               view.mode === 'demo'
                 ? `Подключите тестовый счёт ${venue.name}`
-                : `Подготовьте счёт ${venue.name}`
+                : `Подключение к ${venue.name}`
             }}
           </h2>
           <p class="t-muted">
@@ -70,20 +62,23 @@ const checks = computed(() => {
           </p>
         </div>
       </div>
-      <section class="t-panel t-stack" aria-label="Готовность к запуску">
-        <h3>Что уже готово</h3>
+      <section class="t-panel t-stack" aria-label="Состояние подключения">
+        <h3>Состояние подключения</h3>
+        <p v-if="!view.readiness.keys" class="t-muted">
+          Счёт не подключён. Обратитесь к администратору для настройки доступа к бирже.
+        </p>
         <ul class="connection-checks">
           <li v-for="check in checks" :key="check.label">
             <span class="check-mark" :class="{ ready: check.ok }" aria-hidden="true">{{
               check.ok ? '✓' : '·'
             }}</span
             ><span>{{ check.label }}</span
-            ><small>{{ check.ok ? 'Готово' : 'Нужно' }}</small>
+            ><small>{{ check.ok ? 'Готово' : 'Ожидает' }}</small>
           </li>
         </ul>
         <p v-if="view.mode === 'live' && view.readiness.paperOnlyCandidate" class="t-notice">
-          У сетки или DCA есть результаты для отбора, но эти семейства пока доступны только в
-          тренировке. Их допуск к реальным сделкам требует отдельной приёмки.
+          Сетка и DCA работают только в тренировке. Для реального счёта нужна другая стратегия с
+          подходящими результатами.
         </p>
         <div class="t-actions">
           <button
@@ -117,8 +112,8 @@ const checks = computed(() => {
         </p>
       </section>
       <slot />
-      <details class="t-details" :open="!view.readiness.keys">
-        <summary>Что подготовить владельцу счёта</summary>
+      <details class="t-details">
+        <summary>Параметры счёта</summary>
         <div class="t-details-body">
           <ol class="setup-steps">
             <li>
@@ -165,26 +160,6 @@ const checks = computed(() => {
             target="_blank"
             rel="noopener noreferrer"
             >Открыть настройки {{ venue.name }} <OfficeIcon name="external"
-          /></a>
-        </div>
-      </details>
-      <details class="t-details">
-        <summary>Настройка сервера для разработчика</summary>
-        <div class="t-details-body t-stack">
-          <p>
-            Запишите ключи в окружение сервера и пересоздайте web и worker. Секреты не вводятся в
-            этом кабинете и не передаются через чат.
-          </p>
-          <pre class="env-example"><code>{{ envExample }}</code></pre>
-          <p v-if="view.mode === 'live'">
-            После проверок включите <code>TRADING_LIVE_ENABLED=true</code>.
-          </p>
-          <p>
-            Хост API должен соответствовать региону аккаунта. Подробная инструкция:
-            <code>docs/21-trading.md</code> в проекте.
-          </p>
-          <a class="t-link" :href="venue.docs" target="_blank" rel="noopener noreferrer"
-            >Документация {{ venue.name }} <OfficeIcon name="external"
           /></a>
         </div>
       </details>

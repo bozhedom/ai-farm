@@ -85,7 +85,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
     })
     notice.value =
       action === 'enable'
-        ? 'Менеджер включён. Первый разбор начнётся, когда будут готовы модель и данные тренировки.'
+        ? 'Менеджер включён. Состояние первого разбора появится здесь.'
         : action === 'pause'
           ? 'Менеджер выключен. Уже торгующие агенты продолжают работать.'
           : 'Разбор запрошен. Сводка и новые задачи появятся на этой странице.'
@@ -120,7 +120,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
         <div>
           <h1>Менеджер торговли</h1>
           <p class="t-muted">
-            Разбирает результаты, ставит новые эксперименты и проверяет свои идеи на тренировке.
+            Подбирает стратегии, сравнивает результаты и ставит задачи в тренировке.
           </p>
         </div>
       </div>
@@ -176,16 +176,20 @@ async function control(action: 'enable' | 'pause' | 'review') {
             Следующий разбор {{ shortTime(data.state.nextReviewAt) }}.
           </p>
           <p v-if="data.state.demo" class="t-notice manager-demo">
-            Демонстрационный режим. Идеи подготовлены по тестовому сценарию, настоящая модель не
-            вызывается.
+            Демонстрационный режим: разборы по готовым примерам.
           </p>
           <p v-if="!data.state.workerAlive" class="t-notice t-warning">
-            Обработчик сейчас не отвечает. Для новых разборов и наблюдения нужно восстановить его
-            работу.
+            Связь потеряна. Новые разборы продолжатся после её восстановления.
           </p>
           <ul v-if="issues.length" class="manager-issues">
             <li v-for="issue in issues" :key="issue">{{ issue }}</li>
           </ul>
+          <NuxtLink
+            v-if="data.state.blocked.includes('MANAGER_SYSTEM_PAUSED')"
+            to="/office/settings"
+            class="t-link"
+            >Открыть настройки</NuxtLink
+          >
           <p v-if="notice" class="t-notice" role="status">{{ notice }}</p>
           <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
           <p class="manager-caption manager-scope">
@@ -238,8 +242,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
               <h3 :id="`manager-${board.exchange}`">{{ board.name }}</h3>
               <ManagerTask v-for="task in board.tasks" :key="task.id" :task="task" />
               <p v-if="!board.tasks.length" class="manager-no-task">
-                Экспериментов пока нет. Для новой задачи нужен свободный агент с историей тренировки
-                и подходящая гипотеза.
+                Задач пока нет. Они появятся после разбора результатов этой биржи.
               </p>
             </section>
           </div>
@@ -294,12 +297,11 @@ async function control(action: 'enable' | 'pause' | 'review') {
         </details>
 
         <details class="manager-help manager-details">
-          <summary>Как работает менеджер и где его границы</summary>
+          <summary>Как работает менеджер</summary>
           <p>
-            Модель выбирает стратегию и её параметры. Сервер проверяет предложение и создаёт
-            отдельный эксперимент, когда у выбранного агента нет открытой позиции и незавершённых
-            ордеров. Заменять можно только неприбыльных агентов с историей от 24 часов. Прибыльные
-            агенты продолжают накапливать результаты со своими настройками.
+            Менеджер предлагает новые настройки неприбыльным агентам с историей от 24 часов.
+            Изменения вступают в силу после закрытия позиций и завершения ордеров. Прибыльные агенты
+            продолжают работать со своими настройками.
           </p>
           <p>
             Менеджер не запускает торговлю и не снимает её риск-паузу. Счета «Тест биржи» и
@@ -314,8 +316,8 @@ async function control(action: 'enable' | 'pause' | 'review') {
           <p>
             Ранняя оценка появляется не раньше чем через {{ data.state.minEvaluationHours }} ч и
             после {{ data.state.minRoundTrips }} закрытых позиций. Наблюдение длится не более
-            {{ data.state.maxObservationDays }} дн. Положительный итог короткого эксперимента не
-            означает подтверждённую доходность или допуск к реальной торговле.
+            {{ data.state.maxObservationDays }} дн. Результаты тренировки не дают автоматического
+            допуска к реальной торговле.
           </p>
           <dl class="manager-facts">
             <div>
