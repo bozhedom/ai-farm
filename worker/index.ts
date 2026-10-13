@@ -8,11 +8,13 @@ import { scheduleWork } from '../core/autonomy'
 import { setTimeout as pause } from 'node:timers/promises'
 import { tradingTick } from '../core/trading/engine'
 import { exchanges, type TradingExchange } from '../core/trading/types'
+import { earningsTick } from '../core/earnings/monitor'
 
 let stopping = false
 let farmBusy = false
 let ordersBusy = false
 let paymentsBusy = false
+let earningsBusy = false
 const tradingBusy = new Set<TradingExchange>()
 let unavailableProviders = ''
 const running = new Set<Promise<void>>()
@@ -84,6 +86,17 @@ while (!stopping) {
           })
         running.add(tradingTask)
       }
+    if (!earningsBusy && !stopping) {
+      earningsBusy = true
+      const researchTask = earningsTick()
+        .then(() => {})
+        .catch(() => console.error('EARNINGS_MONITOR_FAILED'))
+        .finally(() => {
+          earningsBusy = false
+          running.delete(researchTask)
+        })
+      running.add(researchTask)
+    }
     if (config().WORKSPACE_MODE === 'studio') await scheduleWork()
     if (stopping) break
     const ready = await localProviderReadiness()

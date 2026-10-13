@@ -4,6 +4,35 @@ import { serviceTemplates, type ServiceTemplate } from './service-catalog'
 import { priceIds, priceKopecksFor } from './storefront'
 import { categoryById, isTaxonomyTopic, taxonomyCategories, taxonomyCategoryIds } from './taxonomy'
 
+/** Public observation only. No budget or order capability is attached to this monitor. */
+export const RESEARCH_POLICY = Object.freeze({
+  refreshMs: 15 * 60_000,
+  timeoutMs: 12_000,
+  maxItemsPerFeed: 20,
+  maxInputRows: 30_000,
+  responseBytes: 3 * 1024 * 1024,
+  defiResponseBytes: 20 * 1024 * 1024,
+  minFundingTurnoverUsd: '1000000',
+  maxAbsFundingRate: '0.05',
+  minPredictionLiquidityUsd: '10000',
+  minPoolTvlUsd: '1000000',
+  maxPoolApyPercent: '50',
+  sourceClockAheadMs: 120_000,
+  predictionMaxAgeMs: 24 * 60 * 60_000,
+  fundingMaxFutureMs: 25 * 60 * 60_000,
+  fundingTimeGraceMs: 60_000,
+})
+
+export const EARNINGS_POLICY = Object.freeze({
+  intervalMs: 15 * 60_000,
+  retryMs: 60_000,
+  leaseMs: 180_000,
+  quoteSkewMs: 15_000,
+  maxComparisons: 20,
+  feeBpsPerLeg: 25,
+  slippageBpsPerLeg: 10,
+})
+
 export const POLICY = Object.freeze({
   version: 'v3',
   maxProducts: 12,
