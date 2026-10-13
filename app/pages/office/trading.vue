@@ -590,6 +590,7 @@ async function allocationSaved() {
             :key="`${exchange}:${mode}`"
             :view="v"
             @overview="section = 'overview'"
+            @updated="refresh"
           />
           <TradingHistory
             v-else-if="section === 'orders'"

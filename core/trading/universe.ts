@@ -186,7 +186,7 @@ export function inspectCandidate(coin: ScoutCoin, market: Market) {
 export function rankedFor(kind: StrategyKind, coins: ScoutCoin[]) {
   const score = (c: ScoutCoin) =>
     c.score +
-    (kind === 'reversion'
+    (kind === 'reversion' || kind === 'grid'
       ? Math.max(0, 150 - Math.abs(c.trendBps))
       : Math.max(-200, Math.min(200, c.trendBps)))
   return coins

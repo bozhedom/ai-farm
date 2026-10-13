@@ -81,6 +81,10 @@ const checks = computed(() => {
             ><small>{{ check.ok ? 'Готово' : 'Нужно' }}</small>
           </li>
         </ul>
+        <p v-if="view.mode === 'live' && view.readiness.paperOnlyCandidate" class="t-notice">
+          У сетки или DCA есть результаты для отбора, но эти семейства пока доступны только в
+          тренировке. Их допуск к реальным сделкам требует отдельной приёмки.
+        </p>
         <div class="t-actions">
           <button
             class="t-button"

@@ -4,7 +4,8 @@ export type TradingScope = { exchange: TradingExchange; mode: TradingMode }
 export type TradingMode = 'paper' | 'demo' | 'live'
 export type TradingSymbol = `${string}-USDT`
 export type Side = 'buy' | 'sell'
-export type StrategyKind = 'reversion' | 'trend' | 'breakout'
+export type StrategyKind = 'reversion' | 'trend' | 'breakout' | 'grid' | 'dca'
+export type StrategyPreset = 'adaptive' | 'classic'
 export type StrategyParams = { lookback: number; entryBps: number; takeProfitBps: number }
 export type Instrument = {
   symbol: TradingSymbol
@@ -88,6 +89,8 @@ export type PortfolioRow = {
   generation: number
   evolution_at: Date | null
   evolution_reason: string
+  strategy_preset: StrategyPreset
+  strategy_preset_pending: boolean
 }
 export type AgentRow = {
   exchange: TradingExchange
@@ -115,6 +118,7 @@ export type AgentRow = {
   selector_version: string
   assigned_at: Date
   position_opened_at: Date | null
+  strategy_state?: unknown
 }
 export type OrderRow = {
   exchange: TradingExchange

@@ -8,6 +8,7 @@ import { rotateAgents, recordAssignment, pickSymbol } from './rotation'
 import { BPS, abs, cost, decimal, fee, max, proceeds, ratioBps, units } from './decimal'
 import { applyFill, markAgent, paperFill, riskReason } from './accounting'
 import { eligible, fitness, mutate, signal, sizeOrder, validateMarket } from './strategy'
+import { classicPlan, isClassic, settleClassic } from './classic'
 import { OrderRejected } from './wire'
 import { createVenue } from './venues'
 import { exchangeCatalog } from './catalog'
@@ -26,6 +27,7 @@ import {
   seedAgents,
   seedPlan,
   withTradingLock,
+  applyPaperStrategyPreset,
 } from './store'
 import type {
   Account,
@@ -159,7 +161,7 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
     if (!agent) throw new Error('TRADING_AGENT_NOT_FOUND')
     const fill = applyFill(agent, result, minQty)
     await query(
-      `UPDATE trading_agents SET cash=$2,base=$3,basis=$4,realized=$5,fees=$6,round_trips=$7,position_opened_at=CASE WHEN $3::numeric=0 THEN NULL WHEN base=0 AND $3::numeric>0 THEN now() ELSE position_opened_at END WHERE id=$1`,
+      `UPDATE trading_agents SET cash=$2,base=$3,basis=$4,realized=$5,fees=$6,round_trips=$7,strategy_state=$8,position_opened_at=CASE WHEN $3::numeric=0 THEN NULL WHEN base=0 AND $3::numeric>0 THEN now() ELSE position_opened_at END WHERE id=$1`,
       [
         agent.id,
         fill.cash.toString(),
@@ -168,6 +170,7 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
         fill.realized.toString(),
         fill.fees.toString(),
         fill.roundTrips,
+        isClassic(agent.kind) ? settleClassic(agent, result) : agent.strategy_state || {},
       ],
       db,
     )
@@ -259,6 +262,16 @@ async function submit(
     )
       return null
     if (request.side === 'buy') {
+      if (isClassic(fresh.kind)) {
+        if (p.mode !== 'paper') throw new Error('TRADING_CLASSIC_PAPER_ONLY')
+        const plan = classicPlan(fresh)
+        if (
+          BigInt(fresh.basis) + plan.budget > plan.ceiling ||
+          cost(request.qty, request.price) + fee(cost(request.qty, request.price), P.maxFeeBps) >
+            plan.budget
+        )
+          throw new Error('TRADING_ORDER_LIMIT')
+      }
       if (!admitted(await scoutState(p, db), request.symbol)) return null
       const value = cost(request.qty, request.price)
       if (
@@ -410,6 +423,7 @@ async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db:
 async function evolve(exchange: TradingExchange, db: Connection) {
   const s = scope(exchange, 'paper')
   const p = await portfolio(s, db)
+  if (p.strategy_preset_pending) return
   if (p.evolution_at && Date.now() - p.evolution_at.getTime() < 86_400_000) return
   const team = await agents(s, db)
   let reason = 'COLLECTING_DATA'
@@ -611,8 +625,10 @@ export async function tradingTick(
             if (p.status === 'running') {
               if (mode !== 'live')
                 await atomic(db, async () => {
-                  if ((await portfolio(s, db, true)).status === 'running')
+                  if ((await portfolio(s, db, true)).status === 'running') {
+                    await applyPaperStrategyPreset(s, db)
                     await seedAgents(s, db, scout)
+                  }
                 })
               await rotateAgents(s, scout, db)
             }
@@ -662,7 +678,8 @@ export async function tradingTick(
               if (BigInt(agent.base) && BigInt(agent.base) < market.instrument.minQty)
                 decision = { side: null, reason: 'SCOUT_DUST_POSITION' }
               if (
-                decision.reason === 'HOLDING_POSITION' &&
+                BigInt(agent.base) >= market.instrument.minQty &&
+                !['RISK_EXIT', 'POSITION_STOP'].includes(decision.reason) &&
                 (mode !== 'live' || agent.selector_version === S.version) &&
                 agent.position_opened_at
               ) {
@@ -720,6 +737,7 @@ export async function tradingTick(
                 market,
                 decision.side,
                 randomUUID().replaceAll('-', ''),
+                decision.maxQty,
               )
               if (request) await submit(p, agent, request, decision.reason, markets, venue, db)
               else

@@ -4,6 +4,7 @@ import type {
   TradingSymbol,
   StrategyKind,
   StrategyParams,
+  StrategyPreset,
 } from '../trading/types'
 import type { ScoutCoin } from '../trading/universe'
 
@@ -54,6 +55,7 @@ export type TradingView = {
   workerAlive: boolean
   generation: number
   evolutionReason: string
+  strategyPreset: { selected: StrategyPreset; pending: boolean; paperOnlyKinds: StrategyKind[] }
   metrics: {
     capital: string
     equity: string
@@ -81,6 +83,7 @@ export type TradingView = {
     keys: boolean
     liveEnabled: boolean
     paperQualified: boolean
+    paperOnlyCandidate: boolean
     demoVerified: boolean
     connection: boolean
   }

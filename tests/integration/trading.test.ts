@@ -20,6 +20,7 @@ import {
   paperCandidates,
   pendingOrder,
   portfolio,
+  configurePaperStrategies,
 } from '../../core/trading/store'
 import { tradingOverview } from '../../core/trading/overview'
 import { exchanges, type TradingScope, type TradingExchange } from '../../core/trading/types'
@@ -32,6 +33,7 @@ import type {
   TradingVenue,
 } from '../../core/trading/types'
 import { market } from '../fixtures/trading'
+import { classicState } from '../../core/trading/classic'
 import { applyMigrations, resetDatabase } from './helpers/db'
 
 class Exchange implements TradingVenue {
@@ -1013,5 +1015,182 @@ describe('dynamic coin selection', () => {
     await expect(
       query("UPDATE trading_agents SET symbol='PEPE-USDT&foo=x' WHERE id=$1", [order!.agent_id]),
     ).rejects.toThrow()
+  })
+})
+
+describe('classic strategy rollout and complete active balances', () => {
+  const paper = scope('okx', 'paper')
+
+  it('selects a paper preset without starting trading and persists bounded DCA fills', async () => {
+    await configurePaperStrategies('okx', 'classic')
+    expect(await portfolio(paper)).toMatchObject({ status: 'idle', strategy_preset: 'classic' })
+    expect(await agents(paper)).toHaveLength(0)
+    await startTrading(paper, '', false, factory)
+    expect((await agents(paper)).map((a) => a.kind).sort()).toEqual([
+      'dca',
+      'grid',
+      'reversion',
+      'trend',
+    ])
+    await tick()
+    const first = (await agents(paper)).find((a) => a.kind === 'dca')!
+    expect(classicState(first).entries).toBe(1)
+    expect(BigInt(first.basis)).toBeLessThanOrEqual(units('6.25'))
+    await query(
+      "UPDATE trading_agents SET last_order_at=NULL,strategy_state=jsonb_set(strategy_state,'{lastEntryAt}',to_jsonb($2::bigint)) WHERE id=$1",
+      [first.id, Date.now() - 31 * 60_000],
+    )
+    await tick()
+    const second = (await agents(paper)).find((a) => a.id === first.id)!
+    expect(classicState(second).entries).toBe(2)
+    expect(BigInt(second.basis)).toBeLessThanOrEqual(units('12.5'))
+    await noCooldown()
+    await tick()
+    expect(classicState((await agents(paper)).find((a) => a.id === first.id)!).entries).toBe(2)
+    expect(exchange.placed).toHaveLength(0)
+    expect((await tradingView(paper)).strategyPreset).toEqual({
+      selected: 'classic',
+      pending: false,
+      paperOnlyKinds: ['grid', 'dca'],
+    })
+  })
+
+  it('archives flat replacements while deferring held ones and preserves portfolio risk', async () => {
+    await startTrading(paper, '', false, factory)
+    const team = await agents(paper)
+    const held = team.find((a) => a.kind === 'breakout')!
+    await query('UPDATE trading_agents SET base=$2,basis=$3,cash=$4 WHERE id=$1', [
+      held.id,
+      units('0.1').toString(),
+      units('10').toString(),
+      units('15').toString(),
+    ])
+    await query(
+      "UPDATE trading_portfolios SET status='paused',reason='DAILY_LOSS_LIMIT',peak=$1 WHERE exchange='okx' AND mode='paper'",
+      [units('102').toString()],
+    )
+    await configurePaperStrategies('okx', 'classic')
+    let current = await agents(paper)
+    expect(current.find((a) => a.id === held.id)).toMatchObject({
+      kind: 'breakout',
+      base: units('0.1').toString(),
+    })
+    expect(await portfolio(paper)).toMatchObject({
+      status: 'paused',
+      reason: 'DAILY_LOSS_LIMIT',
+      peak: units('102').toString(),
+      strategy_preset_pending: true,
+    })
+    expect(current.reduce((sum, a) => sum + BigInt(a.cash) + BigInt(a.basis), 0n)).toBe(
+      units('100'),
+    )
+    await query('UPDATE trading_agents SET base=0,basis=0,cash=$2 WHERE id=$1', [
+      held.id,
+      units('25').toString(),
+    ])
+    await configurePaperStrategies('okx', 'classic')
+    current = await agents(paper)
+    expect(current.map((a) => a.kind).sort()).toEqual(['dca', 'grid', 'reversion', 'trend'])
+    expect(current.find((a) => a.parent_id === held.id)).toBeDefined()
+    expect(await portfolio(paper)).toMatchObject({
+      status: 'paused',
+      reason: 'DAILY_LOSS_LIMIT',
+      strategy_preset_pending: false,
+    })
+    expect(await query("SELECT * FROM trading_agents WHERE status='archived'")).toHaveLength(2)
+  })
+
+  it('keeps a qualified classic experiment paper-only in the selector and the database', async () => {
+    await configurePaperStrategies('okx', 'classic')
+    await startTrading(paper, '', false, factory)
+    const grid = (await agents(paper)).find((a) => a.kind === 'grid')!
+    await query(
+      "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3 WHERE id=$1",
+      [grid.id, units('1').toString(), units('26').toString()],
+    )
+    expect(await paperCandidates('okx')).toHaveLength(0)
+    expect((await tradingView(scope('okx', 'live'))).readiness).toMatchObject({
+      paperQualified: false,
+      paperOnlyCandidate: true,
+    })
+    await expect(
+      query("UPDATE trading_agents SET mode='demo' WHERE id=$1", [grid.id]),
+    ).rejects.toThrow()
+  })
+
+  it('keeps every active holding visible after more than one hundred archived experiments', async () => {
+    await startTrading(paper, '', false, factory)
+    await tick()
+    const before = await tradingView(paper)
+    const team = await agents(paper)
+    for (let i = 0; i < 105; i++) {
+      await query(
+        `INSERT INTO trading_agents(id,exchange,mode,name,symbol,kind,params,status,generation,initial_cash,cash,peak)
+        VALUES($1,'okx','paper','Archived','BTC-USDT','reversion',$2,'archived',100,$3,$3,$3)`,
+        [randomUUID(), team[0]!.params, units('25').toString()],
+      )
+    }
+    const after = await tradingView(paper)
+    expect(after.agents.filter((a) => a.status === 'active')).toHaveLength(4)
+    expect(after.agents.filter((a) => a.status === 'archived')).toHaveLength(100)
+    expect(after.metrics.cash).toBe(before.metrics.cash)
+    expect(after.metrics.exposure).toBe(before.metrics.exposure)
+    expect(after.metrics.equity).toBe(before.metrics.equity)
+  })
+
+  it('exits an old DCA basket before considering another scheduled entry', async () => {
+    await configurePaperStrategies('okx', 'classic')
+    await startTrading(paper, '', false, factory)
+    await tick()
+    const dca = (await agents(paper)).find((a) => a.kind === 'dca')!
+    await query(
+      "UPDATE trading_agents SET last_order_at=NULL,position_opened_at=now()-interval '25 hours',strategy_state=jsonb_set(strategy_state,'{lastEntryAt}',to_jsonb($2::bigint)) WHERE id=$1",
+      [dca.id, Date.now() - 31 * 60_000],
+    )
+    await tick()
+    const after = (await agents(paper)).find((a) => a.id === dca.id)!
+    expect(after.base).toBe('0')
+    expect(after.round_trips).toBe(1)
+    expect(after.last_signal).toBe('SCOUT_TIME_EXIT')
+    expect(classicState(after).entries).toBe(0)
+  })
+
+  it('closes an aged grid basket even when its profitable partial lot is below the sale minimum', async () => {
+    let thin = false
+    const originalMarket = exchange.market.bind(exchange)
+    exchange.market = async (symbol) => {
+      const m = await originalMarket(symbol)
+      m.instrument.minNotional = units('5')
+      if (thin) m.book.asks[0]![1] = units('0.03')
+      return m
+    }
+    await configurePaperStrategies('okx', 'classic')
+    await startTrading(paper, '', false, factory)
+    await tick()
+    const grid = (await agents(paper)).find((a) => a.kind === 'grid')!
+    exchange.price = '98.5'
+    thin = true
+    await noCooldown()
+    await tick()
+    const partial = (await agents(paper)).find((a) => a.id === grid.id)!
+    expect(classicState(partial).tranches).toHaveLength(2)
+    expect(classicState(partial).tranches[1]!.qty).toBe(units('0.03').toString())
+    thin = false
+    exchange.price = '100.15'
+    await noCooldown()
+    await tick()
+    expect((await agents(paper)).find((a) => a.id === grid.id)!.last_signal).toBe(
+      'GRID_LOT_BELOW_MINIMUM',
+    )
+    await query(
+      "UPDATE trading_agents SET position_opened_at=now()-interval '25 hours',last_order_at=NULL WHERE id=$1",
+      [grid.id],
+    )
+    await tick()
+    const after = (await agents(paper)).find((a) => a.id === grid.id)!
+    expect(after.base).toBe('0')
+    expect(after.round_trips).toBe(1)
+    expect(after.last_signal).toBe('SCOUT_TIME_EXIT')
+    expect(classicState(after).tranches).toHaveLength(0)
   })
 })

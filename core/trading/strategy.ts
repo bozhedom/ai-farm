@@ -3,6 +3,7 @@ import { TRADING_POLICY as P, SCOUT_POLICY as S } from '../policy'
 import { assertSymbol } from './universe'
 import { BPS, SCALE, cost, fee, floorStep, min, proceeds, ratioBps, units } from './decimal'
 import type { AgentRow, Market, OrderRequest, StrategyKind, StrategyParams } from './types'
+import { classicPlan, classicSignal, isClassic, type TradingSignal } from './classic'
 
 export const paramsSchema = z
   .object({
@@ -37,6 +38,12 @@ export const seeds: {
     kind: 'reversion',
     params: { lookback: 90, entryBps: 80, takeProfitBps: 120 },
   },
+]
+export const classicSeeds: typeof seeds = [
+  { name: 'Ступени', kind: 'grid', params: { lookback: 60, entryBps: 100, takeProfitBps: 150 } },
+  { name: 'Ритм', kind: 'dca', params: { lookback: 60, entryBps: 100, takeProfitBps: 150 } },
+  seeds[1]!,
+  seeds[0]!,
 ]
 
 export function validateMarket(
@@ -85,7 +92,12 @@ export function validateMarket(
 }
 
 /** All decisions use closed candles and executable bid/ask prices, never the last trade. */
-export function signal(agent: AgentRow, market: Market, forceExit = false) {
+export function signal(
+  agent: AgentRow,
+  market: Market,
+  forceExit = false,
+  now = Date.now(),
+): TradingSignal {
   const params = paramsSchema.parse(agent.params)
   const base = BigInt(agent.base)
   const basis = BigInt(agent.basis)
@@ -99,11 +111,12 @@ export function signal(agent: AgentRow, market: Market, forceExit = false) {
     const net = value - fee(value, P.maxFeeBps)
     if (net * BPS >= basis * (BPS + BigInt(params.takeProfitBps)))
       return { side: 'sell' as const, reason: 'TAKE_PROFIT' }
-    return { side: null, reason: 'HOLDING_POSITION' }
+    if (!isClassic(agent.kind)) return { side: null, reason: 'HOLDING_POSITION' }
   }
   if (forceExit) return { side: null, reason: 'ENTRIES_PAUSED' }
   const candles = market.candles.slice(-params.lookback)
   if (candles.length < params.lookback) return { side: null, reason: 'WARMING_UP' }
+  if (isClassic(agent.kind)) return classicSignal(agent, market, now)
   const mean = candles.reduce((sum, c) => sum + c.close, 0n) / BigInt(candles.length)
   let enter = false
   if (agent.kind === 'reversion') enter = ask * BPS <= mean * (BPS - BigInt(params.entryBps))
@@ -125,6 +138,7 @@ export function sizeOrder(
   market: Market,
   side: 'buy' | 'sell',
   clientId: string,
+  maxQty?: bigint,
 ): OrderRequest | null {
   const { tick, lot, minQty, symbol } = market.instrument
   // Round inward: the rounded limit never exceeds the configured slippage cap.
@@ -133,11 +147,14 @@ export function sizeOrder(
       ? floorStep((market.book.asks[0]![0] * (BPS + BigInt(P.slippageBps))) / BPS, tick)
       : (((market.book.bids[0]![0] * (BPS - BigInt(P.slippageBps))) / BPS + tick - 1n) / tick) *
         tick
-  const budget = min(units(String(P.orderUsdt)), BigInt(agent.cash))
+  const budget = min(
+    isClassic(agent.kind) ? classicPlan(agent).budget : units(String(P.orderUsdt)),
+    BigInt(agent.cash),
+  )
   const qty =
     side === 'buy'
       ? floorStep((((budget * BPS) / (BPS + BigInt(P.maxFeeBps))) * SCALE) / price, lot)
-      : floorStep(BigInt(agent.base), lot)
+      : floorStep(min(BigInt(agent.base), maxQty ?? BigInt(agent.base)), lot)
   if (
     qty < minQty ||
     proceeds(qty, price) < (market.instrument.minNotional || 0n) ||

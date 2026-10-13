@@ -67,6 +67,12 @@ export const SCOUT_POLICY = Object.freeze({
   stagnantPositionMs: 6 * 60 * 60_000,
   maxAgentsPerSymbol: 2,
 })
+/** New strategy families are restricted to paper until a separate execution acceptance. */
+export const CLASSIC_POLICY = Object.freeze({
+  maxEntries: 3,
+  dcaIntervalMs: 30 * 60_000,
+  paperOnly: true,
+})
 export const templates = serviceTemplates
 export type Template = ServiceTemplate
 export const templateSchema = z.enum(templates)

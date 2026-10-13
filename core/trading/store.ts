@@ -4,7 +4,8 @@ import { TRADING_POLICY as P, SCOUT_POLICY as S } from '../policy'
 import { scoutFresh, type ScoutRow } from './scout'
 import { pickSymbol, recordAssignment } from './rotation'
 import { units } from './decimal'
-import { eligible, fitness, seeds } from './strategy'
+import { classicSeeds, eligible, fitness, seeds } from './strategy'
+import { isClassic } from './classic'
 import { markAgent } from './accounting'
 import {
   exchanges,
@@ -15,6 +16,7 @@ import {
   type TradingMode,
   type TradingScope,
   type TradingExchange,
+  type StrategyPreset,
 } from './types'
 
 export const modes: TradingMode[] = ['paper', 'demo', 'live']
@@ -119,7 +121,7 @@ export async function paperCandidates(exchange: TradingExchange, db: Connection 
   )
   return candidates
     .filter((a) => {
-      if (!eligible(a)) return false
+      if (!eligible(a) || isClassic(a.kind)) return false
       const price = prices.find((m) => m.symbol === a.symbol)
       return (
         !!price &&
@@ -151,9 +153,15 @@ export async function event(
     db,
   )
 }
-export function seedPlan(s: TradingScope, scout: ScoutRow | undefined, champion?: AgentRow) {
+export function seedPlan(
+  s: TradingScope,
+  scout: ScoutRow | undefined,
+  champion?: AgentRow,
+  preset: StrategyPreset = 'adaptive',
+) {
   if (!scoutFresh(scout)) return []
-  const choices = s.mode === 'paper' ? seeds : [champion || seeds[0]!]
+  const choices =
+    s.mode === 'paper' ? (preset === 'classic' ? classicSeeds : seeds) : [champion || seeds[0]!]
   const occupied: AgentRow['symbol'][] = []
   return choices.flatMap((seed) => {
     const symbol = pickSymbol(seed.kind, scout!.coins, occupied)
@@ -170,9 +178,9 @@ export async function seedAgents(
 ) {
   if ((await agents(s, db)).length) return
   if (champion && champion.exchange !== s.exchange) throw new Error('TRADING_EXCHANGE_MISMATCH')
-  const choices = seedPlan(s, scout, champion)
-  if (!choices.length) return
   const p = await portfolio(s, db)
+  const choices = seedPlan(s, scout, champion, p.strategy_preset)
+  if (!choices.length) return
   const capital = BigInt(p.capital) / BigInt(choices.length)
   for (const [i, seed] of choices.entries()) {
     const id = randomUUID()
@@ -194,6 +202,78 @@ export async function seedAgents(
     )
     await recordAssignment(s, id, seed.symbol, null, 'SCOUT_ASSIGNED', db)
   }
+}
+
+/** Called under the scope lock and a transaction; held positions retain their original strategy. */
+export async function applyPaperStrategyPreset(s: TradingScope, db: Connection) {
+  if (s.mode !== 'paper') return
+  const p = await portfolio(s, db, true)
+  if (!p.strategy_preset_pending || (await pendingOrder(s, db))) return
+  const team = await agents(s, db)
+  const desired = [...(p.strategy_preset === 'classic' ? classicSeeds : seeds)].slice(
+    0,
+    team.length,
+  )
+  const replace: AgentRow[] = []
+  for (const a of team) {
+    const matched = desired.findIndex((seed) => seed.kind === a.kind)
+    if (matched >= 0) desired.splice(matched, 1)
+    else replace.push(a)
+  }
+  for (const a of replace) {
+    if (BigInt(a.base) || BigInt(a.basis)) continue
+    const seed = desired.shift()
+    if (!seed) break
+    const id = randomUUID()
+    await query(
+      "UPDATE trading_agents SET status='archived',archived_at=now() WHERE id=$1",
+      [a.id],
+      db,
+    )
+    await query(
+      `INSERT INTO trading_agents(id,exchange,mode,name,symbol,kind,params,parent_id,generation,initial_cash,cash,peak,selector_version)
+       VALUES($1,$2,'paper',$3,$4,$5,$6,$7,$8,$9,$9,$9,$10)`,
+      [
+        id,
+        s.exchange,
+        seed.name,
+        a.symbol,
+        seed.kind,
+        seed.params,
+        a.id,
+        a.generation,
+        a.cash,
+        S.version,
+      ],
+      db,
+    )
+    await recordAssignment(s, id, a.symbol, a.symbol, 'STRATEGY_PRESET_CHANGED', db)
+  }
+  await query(
+    'UPDATE trading_portfolios SET strategy_preset_pending=$3 WHERE exchange=$1 AND mode=$2',
+    [s.exchange, s.mode, desired.length > 0],
+    db,
+  )
+}
+
+export async function configurePaperStrategies(exchange: TradingExchange, preset: StrategyPreset) {
+  if (!exchanges.includes(exchange) || !['adaptive', 'classic'].includes(preset))
+    throw new Error('TRADING_STRATEGY_PRESET_INVALID')
+  await ensurePortfolios()
+  const s = scope(exchange, 'paper')
+  await withTradingLock(s, (db) =>
+    atomic(db, async () => {
+      await portfolio(s, db, true)
+      if (await pendingOrder(s, db)) throw new Error('TRADING_ORDER_UNKNOWN')
+      await query(
+        "UPDATE trading_portfolios SET strategy_preset=$2,strategy_preset_pending=true WHERE exchange=$1 AND mode='paper'",
+        [exchange, preset],
+        db,
+      )
+      await applyPaperStrategyPreset(s, db)
+      await event(s, 'strategy', 'STRATEGY_PRESET_SELECTED', { preset }, db)
+    }),
+  )
 }
 
 /** Initial funding plan only. Once activated, balances and risk history are immutable inputs. */

@@ -7,6 +7,7 @@ import { markAgent } from './accounting'
 import { hasKeys } from './wire'
 import { liveConfirmation } from './engine'
 import { eligible } from './strategy'
+import { isClassic } from './classic'
 import { agents, scope, ensurePortfolios, paperCandidates, portfolio } from './store'
 import type { AgentRow, OrderRow, TradingScope, TradingSymbol } from './types'
 
@@ -15,7 +16,10 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
   await ensurePortfolios()
   const p = await portfolio(s)
   const team = await query<AgentRow>(
-    'SELECT * FROM trading_agents WHERE mode=$1 AND exchange=$2 ORDER BY generation DESC,created_at,id LIMIT 100',
+    `SELECT * FROM trading_agents WHERE mode=$1 AND exchange=$2 AND status='active'
+     UNION ALL
+     (SELECT * FROM trading_agents WHERE mode=$1 AND exchange=$2 AND status='archived'
+      ORDER BY generation DESC,created_at DESC,id LIMIT 100)`,
     [mode, exchange],
   )
   const markets = await query<{ symbol: TradingSymbol; bid: string; ask: string; at: Date }>(
@@ -53,6 +57,7 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
   if (!current.length && mode === 'paper') cash = BigInt(p.capital)
   const equity = cash + exposure
   const paper = await paperCandidates(exchange)
+  const paperTeam = mode === 'paper' ? team : await agents(scope(exchange, 'paper'))
   const demo = await portfolio(scope(exchange, 'demo'))
   const demoAgents = await agents(scope(exchange, 'demo'))
   const connection =
@@ -70,6 +75,11 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
     workerAlive: !!p.heartbeat && Date.now() - p.heartbeat.getTime() < 90_000,
     generation: p.generation,
     evolutionReason: p.evolution_reason,
+    strategyPreset: {
+      selected: p.strategy_preset,
+      pending: p.strategy_preset_pending,
+      paperOnlyKinds: ['grid', 'dca'],
+    },
     metrics: {
       capital: decimal(BigInt(p.capital)),
       equity: decimal(equity),
@@ -99,6 +109,7 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
       keys: hasKeys(s),
       liveEnabled: config().TRADING_LIVE_ENABLED,
       paperQualified: paper.length > 0,
+      paperOnlyCandidate: paperTeam.some((a) => isClassic(a.kind) && eligible(a)),
       demoVerified:
         demoAgents.some((a) => a.round_trips > 0) &&
         !demo.check_error &&
