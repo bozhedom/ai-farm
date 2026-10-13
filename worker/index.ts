@@ -10,6 +10,8 @@ import { tradingTick } from '../core/trading/engine'
 import { exchanges, type TradingExchange } from '../core/trading/types'
 import { earningsTick } from '../core/earnings/monitor'
 import { managerTick } from '../core/manager/runtime'
+import { executionTick } from '../core/execution/engine'
+import { EXECUTION_POLICY } from '../core/policy'
 
 let stopping = false
 let farmBusy = false
@@ -17,6 +19,8 @@ let ordersBusy = false
 let paymentsBusy = false
 let earningsBusy = false
 let managerBusy = false
+let executionBusy = false
+let lastExecutionAt = 0
 const tradingBusy = new Set<TradingExchange>()
 let unavailableProviders = ''
 const running = new Set<Promise<void>>()
@@ -98,6 +102,18 @@ while (!stopping) {
           running.delete(researchTask)
         })
       running.add(researchTask)
+    }
+    if (!executionBusy && !stopping && Date.now() - lastExecutionAt >= EXECUTION_POLICY.tickMs) {
+      executionBusy = true
+      lastExecutionAt = Date.now()
+      const task = executionTick(undefined, isStopping)
+        .then(() => {})
+        .catch(() => console.error('EXECUTION_TICK_FAILED'))
+        .finally(() => {
+          executionBusy = false
+          running.delete(task)
+        })
+      running.add(task)
     }
     if (config().WORKSPACE_MODE === 'studio') await scheduleWork()
     if (stopping) break

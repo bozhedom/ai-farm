@@ -627,6 +627,7 @@ describe('multiple independent exchanges', () => {
   it('allows later cycles on a fast exchange while another lane is still waiting', async () => {
     const other = new Exchange(),
       own = (s: TradingScope) => (s.exchange === 'okx' ? exchange : other)
+    other.identity = 'independent-bybit-demo'
     await startTrading(scope('okx', 'demo'), '', false, own)
     await startTrading(scope('bybit', 'demo'), '', false, own)
     let release!: () => void
@@ -749,6 +750,8 @@ describe('multiple independent exchanges', () => {
   })
 
   it('requires paper evidence and a demo round trip on the same exchange', async () => {
+    const bybitDemo = new Exchange()
+    bybitDemo.identity = 'independent-bybit-demo'
     await allocateLive({ okx: 25, bybit: 25, binance: 25, bitget: 25 })
     await startTrading(scope('okx', 'paper'), '', false, factory)
     const [a] = await agents(scope('okx', 'paper'))
@@ -765,7 +768,7 @@ describe('multiple independent exchanges', () => {
       await expect(
         startTrading(scope('bybit', 'live'), 'ТОРГОВАТЬ 25 USDT НА BYBIT', false, factory),
       ).rejects.toThrow('TRADING_DEMO_REQUIRED')
-      await startTrading(scope('bybit', 'demo'), '', false, factory)
+      await startTrading(scope('bybit', 'demo'), '', false, () => bybitDemo)
       await query("UPDATE trading_agents SET round_trips=1 WHERE exchange='bybit' AND mode='demo'")
       await expect(
         startTrading(scope('bybit', 'live'), 'ТОРГОВАТЬ 25 USDT НА BYBIT', false, factory),
