@@ -718,6 +718,7 @@ export async function officeMoney(): Promise<OfficeMoney> {
     scout: 0,
     lead: 0,
     report: 0,
+    trading_manager: 0,
   }
   for (const row of categories)
     if (Object.hasOwn(byCategory, row.category))

@@ -9,12 +9,14 @@ import { setTimeout as pause } from 'node:timers/promises'
 import { tradingTick } from '../core/trading/engine'
 import { exchanges, type TradingExchange } from '../core/trading/types'
 import { earningsTick } from '../core/earnings/monitor'
+import { managerTick } from '../core/manager/runtime'
 
 let stopping = false
 let farmBusy = false
 let ordersBusy = false
 let paymentsBusy = false
 let earningsBusy = false
+let managerBusy = false
 const tradingBusy = new Set<TradingExchange>()
 let unavailableProviders = ''
 const running = new Set<Promise<void>>()
@@ -116,6 +118,17 @@ while (!stopping) {
     if (!ordersBusy && ready.model) {
       const job = await claimWorkerJob(['fulfill'], isStopping)
       if (job) launch(job, 'orders')
+    }
+    if (!managerBusy && !stopping) {
+      managerBusy = true
+      const managerTask = managerTick(undefined, isStopping, ready.model)
+        .then(() => {})
+        .catch(() => console.error('TRADING_MANAGER_FAILED'))
+        .finally(() => {
+          managerBusy = false
+          running.delete(managerTask)
+        })
+      running.add(managerTask)
     }
     if (!farmBusy && config().WORKSPACE_MODE === 'studio') {
       // Three lanes: orders, farm and payment reconciliation. The farm lane runs one job at a

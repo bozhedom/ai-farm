@@ -81,7 +81,9 @@ export async function atomic<T>(db: Connection, fn: () => Promise<T>): Promise<T
 
 export async function portfolio(s: TradingScope, db: Connection = pool, lock = false) {
   const [row] = await query<PortfolioRow>(
-    `SELECT * FROM trading_portfolios WHERE exchange=$1 AND mode=$2${lock ? ' FOR UPDATE' : ''}`,
+    // Portfolio keys never change. Serialize balance/control writers without blocking a
+    // manager task's foreign-key KEY SHARE while it publishes a plan under its own lock.
+    `SELECT * FROM trading_portfolios WHERE exchange=$1 AND mode=$2${lock ? ' FOR NO KEY UPDATE' : ''}`,
     [s.exchange, s.mode],
     db,
   )
@@ -266,7 +268,7 @@ export async function configurePaperStrategies(exchange: TradingExchange, preset
       await portfolio(s, db, true)
       if (await pendingOrder(s, db)) throw new Error('TRADING_ORDER_UNKNOWN')
       await query(
-        "UPDATE trading_portfolios SET strategy_preset=$2,strategy_preset_pending=true WHERE exchange=$1 AND mode='paper'",
+        "UPDATE trading_portfolios SET strategy_preset=$2,strategy_preset_pending=true,manager_revision=manager_revision+1 WHERE exchange=$1 AND mode='paper'",
         [exchange, preset],
         db,
       )

@@ -105,6 +105,7 @@ export const budgetCategories: Record<BudgetCategory, string> = {
   order: 'Заказы',
   lead: 'Поиск клиентов',
   report: 'Отчёты руководителя',
+  trading_manager: 'Менеджер торговли',
 }
 
 export const scoreComponents: Record<ScoreComponent, { label: string; hint: string }> = {

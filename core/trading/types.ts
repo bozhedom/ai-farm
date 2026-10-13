@@ -91,6 +91,7 @@ export type PortfolioRow = {
   evolution_reason: string
   strategy_preset: StrategyPreset
   strategy_preset_pending: boolean
+  manager_revision: number
 }
 export type AgentRow = {
   exchange: TradingExchange

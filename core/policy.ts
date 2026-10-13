@@ -102,6 +102,23 @@ export const CLASSIC_POLICY = Object.freeze({
   dcaIntervalMs: 30 * 60_000,
   paperOnly: true,
 })
+/** The manager proposes paper experiments; it has no trading or policy tools. */
+export const MANAGER_POLICY = Object.freeze({
+  intervalMs: 6 * 60 * 60_000,
+  manualCooldownMs: 30 * 60_000,
+  leaseMs: 22 * 60_000,
+  taskCheckMs: 30_000,
+  maxDailyRuns: 4,
+  maxTasksPerRun: 4,
+  reserveKopecks: 500,
+  dailyKopecks: 2000,
+  minAgentAgeMs: 24 * 60 * 60_000,
+  evaluationMs: 24 * 60 * 60_000,
+  minRoundTrips: 5,
+  queuedLifetimeMs: 48 * 60 * 60_000,
+  observationLifetimeMs: 7 * 24 * 60 * 60_000,
+  priceMaxAgeMs: 90_000,
+})
 export const templates = serviceTemplates
 export type Template = ServiceTemplate
 export const templateSchema = z.enum(templates)

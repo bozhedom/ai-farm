@@ -12,6 +12,7 @@ import { classicPlan, isClassic, settleClassic } from './classic'
 import { OrderRejected } from './wire'
 import { createVenue } from './venues'
 import { exchangeCatalog } from './catalog'
+import { applyManagerTask } from '../manager/tasks'
 import { exchanges, type TradingScope, type TradingExchange } from './types'
 import {
   agents,
@@ -424,6 +425,17 @@ async function evolve(exchange: TradingExchange, db: Connection) {
   const s = scope(exchange, 'paper')
   const p = await portfolio(s, db)
   if (p.strategy_preset_pending) return
+  if (
+    (
+      await query(
+        `SELECT id FROM trading_manager_tasks WHERE exchange=$1 AND
+      (status='observing' OR (status='queued' AND EXISTS(SELECT 1 FROM trading_manager WHERE enabled))) LIMIT 1`,
+        [exchange],
+        db,
+      )
+    ).length
+  )
+    return
   if (p.evolution_at && Date.now() - p.evolution_at.getTime() < 86_400_000) return
   const team = await agents(s, db)
   let reason = 'COLLECTING_DATA'
@@ -628,6 +640,7 @@ export async function tradingTick(
                   if ((await portfolio(s, db, true)).status === 'running') {
                     await applyPaperStrategyPreset(s, db)
                     await seedAgents(s, db, scout)
+                    await applyManagerTask(s, db)
                   }
                 })
               await rotateAgents(s, scout, db)
@@ -925,7 +938,11 @@ export async function controlTrading(s: TradingScope, action: 'pause' | 'stop' |
 export async function stopAllTrading() {
   await ensurePortfolios()
   await transaction(async (db) => {
-    await query('SELECT mode FROM trading_portfolios ORDER BY exchange,mode FOR UPDATE', [], db)
+    await query(
+      'SELECT mode FROM trading_portfolios ORDER BY exchange,mode FOR NO KEY UPDATE',
+      [],
+      db,
+    )
     await query("UPDATE trading_portfolios SET status='stopped',reason='OWNER_STOP'", [], db)
     for (const exchange of exchanges)
       for (const mode of modes) await event(scope(exchange, mode), 'stop', 'OWNER_STOP', {}, db)

@@ -191,7 +191,7 @@ export function parseSearchXml(xml: string): Evidence[] {
   return result
 }
 
-export async function model<T>(args: {
+export type ModelArgs<T> = {
   role: string
   key: string
   reservationId: string
@@ -199,7 +199,10 @@ export async function model<T>(args: {
   schema: z.ZodType<T>
   demoValue: T
   maxOutputTokens?: number
-}): Promise<T> {
+}
+
+/** The exact request envelope, shared by admission checks and the actual call. */
+export function prepareModelRequest<T>(args: ModelArgs<T>) {
   const c = config()
   const system =
     master() +
@@ -228,7 +231,6 @@ export async function model<T>(args: {
       'utf8',
     ) + 2048
   if (upperInput > 100000) throw new Error('CONTEXT_TOO_LARGE')
-  const demo = c.MODEL_PROVIDER === 'demo'
   const maximumMicrousd = c.MODEL_PROVIDER === 'openai' ? openaiMaximum(upperInput, maxTokens) : 0
   const maximum =
     c.MODEL_PROVIDER === 'openai'
@@ -239,6 +241,13 @@ export async function model<T>(args: {
             (upperInput * c.MODEL_INPUT_KOPECKS_PER_1K) / 1000 +
               (maxTokens * c.MODEL_OUTPUT_KOPECKS_PER_1K) / 1000,
           )
+  return { system, context, maxTokens, maximumMicrousd, maximum }
+}
+
+export async function model<T>(args: ModelArgs<T>): Promise<T> {
+  const c = config()
+  const demo = c.MODEL_PROVIDER === 'demo'
+  const { system, context, maxTokens, maximumMicrousd, maximum } = prepareModelRequest(args)
   return meteredCall({
     key: args.key,
     reservationId: args.reservationId,

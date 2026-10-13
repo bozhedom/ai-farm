@@ -251,6 +251,7 @@ describe('owner office API', () => {
       'report',
       'research',
       'scout',
+      'trading_manager',
     ])
 
     expect((await call('GET', '/api/office/reports', session)).json).toMatchObject({

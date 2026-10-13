@@ -3,6 +3,7 @@ import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { activityContext, checkWorkerDrain, type CallActivity } from './activity'
 import { lockResearchWindow } from './research-window'
+import { MANAGER_POLICY } from './policy'
 
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
@@ -28,13 +29,15 @@ export async function budgetSummary(db: Connection = pool) {
   }
 }
 
-export type BudgetCategory = 'research' | 'order' | 'scout' | 'lead' | 'report'
+export type BudgetCategory = 'research' | 'order' | 'scout' | 'lead' | 'report' | 'trading_manager'
 /** Farm work stops with the research window and pauses; accepted orders do not. */
 export const farmCategories: readonly BudgetCategory[] = ['research', 'scout', 'lead', 'report']
 
 /** Envelope per task. Free providers reserve nothing, as before. */
 export function reserveFor(category: BudgetCategory) {
   const c = config()
+  if (category === 'trading_manager')
+    return ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? MANAGER_POLICY.reserveKopecks : 0
   const paid =
     ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ||
     (category !== 'order' && c.SEARCH_PROVIDER === 'yandex')
@@ -181,7 +184,21 @@ export async function meteredCall<T>(args: {
     if (!state.research_enabled && farm) return { error: new Error('RESEARCH_WINDOW_CLOSED') }
     if (state.mode === 'emergency_stop') throw new Error('STOPPED')
     if (!reservation || reservation.status !== 'open') throw new Error('RESERVATION_CLOSED')
-    if (state.mode === 'paused' && farm) throw new Error('PAUSED')
+    if (state.mode === 'paused' && (farm || reservation.category === 'trading_manager'))
+      throw new Error('PAUSED')
+    if (reservation.category === 'trading_manager') {
+      const [manager] = await query('SELECT enabled FROM trading_manager WHERE id=true', [], db)
+      if (!manager?.enabled) throw new Error('MANAGER_PAUSED')
+      const [spent] = await query(
+        `SELECT coalesce(sum(t.charged_kopecks),0)::int AS amount FROM tool_calls t
+         JOIN budget_reservations r ON r.id=t.reservation_id WHERE r.category='trading_manager'
+         AND t.created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+        [],
+        db,
+      )
+      if (spent!.amount + args.maximum > MANAGER_POLICY.dailyKopecks)
+        throw new Error('MANAGER_BUDGET_LIMIT')
+    }
     if (
       !Number.isSafeInteger(args.maximum) ||
       args.maximum < 0 ||
