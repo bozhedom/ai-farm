@@ -1,3 +1,4 @@
+import type { VenueAccess } from './wire'
 import { createHmac } from 'node:crypto'
 import { z } from 'zod'
 import { listing } from './universe'
@@ -32,6 +33,7 @@ export class BinanceVenue implements TradingVenue {
   constructor(
     readonly mode: TradingMode,
     private transport: typeof fetch = fetch,
+    private access?: VenueAccess,
   ) {}
   private get host() {
     return this.mode === 'demo' ? 'testnet.binance.vision' : 'api.binance.com'
@@ -45,7 +47,7 @@ export class BinanceVenue implements TradingVenue {
     const p = new URLSearchParams(params),
       headers: Record<string, string> = {}
     if (privateCall) {
-      const c = keys('binance', this.mode)
+      const c = this.access?.credentials || keys('binance', this.mode)
       p.set('timestamp', String(Date.now()))
       p.set('recvWindow', '5000')
       p.set('signature', createHmac('sha256', c.secret).update(p.toString()).digest('hex'))
@@ -172,7 +174,7 @@ export class BinanceVenue implements TradingVenue {
     }
   }
   async account(symbols: readonly TradingSymbol[]): Promise<Account> {
-    keys('binance', this.mode)
+    this.access?.credentials || keys('binance', this.mode)
     checkClock(
       z.object({ serverTime: z.number().int() }).parse(await this.request('/api/v3/time'))
         .serverTime,
@@ -257,7 +259,7 @@ export class BinanceVenue implements TradingVenue {
       .map((o) => ({ clientId: o.clientOrderId }))
   }
   async place(order: OrderRequest) {
-    allowPlace(this.mode)
+    allowPlace(this.mode, this.access)
     try {
       const r = z.object({ orderId: id, clientOrderId: str, symbol: str }).parse(
         await this.request(

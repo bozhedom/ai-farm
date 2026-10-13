@@ -33,6 +33,45 @@ export const EARNINGS_POLICY = Object.freeze({
   slippageBpsPerLeg: 10,
 })
 
+/** Separate execution accounts. These limits do not extend spot or model permissions. */
+export const EXECUTION_POLICY = Object.freeze({
+  tickMs: 15_000,
+  scanMs: 60_000,
+  quoteMaxAgeMs: 10_000,
+  intentLifetimeMs: 10_000,
+  minCapital: '20',
+  maxOrderShareBps: 2000,
+  maxSupplyShareBps: 5000,
+  minOrder: '5',
+  dailyLossBps: 200,
+  drawdownBps: 1000,
+  positionLossBps: 300,
+  maxDailyOperations: 20,
+  maxRepairLegs: 3,
+  slippageBps: 10,
+  fundingLiquidationBufferBps: 2000,
+  defiYieldMaxAgeMs: 60 * 60_000,
+  maxSymbols: 12,
+  maxFeeBps: 30,
+  predictionFeeBps: 700,
+  minDemoOperations: 5,
+  minDemoHours: 24,
+  minConfirmations: 3,
+  defiMaxGas: '600000',
+  defiMaxFeePerGasWei: '200000000000',
+  defiMaxGasCostWei: '20000000000000000',
+  prediction: Object.freeze({
+    maxQuoteAgeMs: 5000,
+    requestTimeoutMs: 7000,
+    maxPages: 10,
+    maxAllocationBps: 1000,
+    maxLossBps: 1000,
+    feeReserveBps: 1000,
+    closeBeforeMs: 60_000,
+    minOrder: '1',
+  }),
+})
+
 export const POLICY = Object.freeze({
   version: 'v3',
   maxProducts: 12,

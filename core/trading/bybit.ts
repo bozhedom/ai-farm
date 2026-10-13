@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { z } from 'zod'
 import { config } from '../config'
+import type { VenueAccess } from './wire'
 import { listing } from './universe'
 import { decimal, units } from './decimal'
 import {
@@ -50,6 +51,7 @@ export class BybitVenue implements TradingVenue {
   constructor(
     readonly mode: TradingMode,
     private transport: typeof fetch = fetch,
+    private access?: VenueAccess,
   ) {}
   private get host() {
     return this.mode === 'demo' ? 'api-demo.bybit.com' : config().BYBIT_API_HOST
@@ -64,7 +66,7 @@ export class BybitVenue implements TradingVenue {
       payload = body ? JSON.stringify(body) : query
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (privateCall) {
-      const c = keys('bybit', this.mode),
+      const c = this.access?.credentials || keys('bybit', this.mode),
         stamp = String(Date.now()),
         window = '5000'
       Object.assign(headers, {
@@ -197,7 +199,7 @@ export class BybitVenue implements TradingVenue {
     }
   }
   async account(symbols: readonly TradingSymbol[]): Promise<Account> {
-    const c = keys('bybit', this.mode)
+    const c = this.access?.credentials || keys('bybit', this.mode)
     const time = z.object({ timeSecond: str }).parse(await this.request('/v5/market/time'))
     checkClock(Number(time.timeSecond) * 1000)
     let uid = `demo-key:${c.key}`
@@ -317,7 +319,7 @@ export class BybitVenue implements TradingVenue {
     return r.list.map((o) => ({ clientId: z.object({ orderLinkId: str }).parse(o).orderLinkId }))
   }
   async place(order: OrderRequest) {
-    allowPlace(this.mode)
+    allowPlace(this.mode, this.access)
     try {
       const r = z.object({ orderId: str.min(1), orderLinkId: str }).parse(
         await this.request(

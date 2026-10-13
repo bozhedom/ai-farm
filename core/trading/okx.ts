@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto'
 import { assertSymbol, listing } from './universe'
-import { setBalance } from './wire'
+import { setBalance, allowPlace, type VenueAccess } from './wire'
 import { z } from 'zod'
 import { config } from '../config'
 import { TRADING_POLICY as P } from '../policy'
@@ -91,6 +91,7 @@ export class OkxVenue implements TradingVenue {
   constructor(
     readonly mode: TradingMode,
     private readonly transport: typeof fetch = fetch,
+    private access?: VenueAccess,
   ) {}
 
   private async request(
@@ -103,7 +104,7 @@ export class OkxVenue implements TradingVenue {
     if (this.mode === 'demo') headers['x-simulated-trading'] = '1'
     if (options.private) {
       if (this.mode === 'paper') throw new Error('TRADING_PAPER_PRIVATE_FORBIDDEN')
-      const keys = credentials(this.mode)
+      const keys = this.access?.credentials || credentials(this.mode)
       if (!Object.values(keys).every(Boolean)) throw new Error('TRADING_KEYS_REQUIRED')
       const timestamp = new Date().toISOString()
       headers['OK-ACCESS-KEY'] = keys.key
@@ -301,8 +302,7 @@ export class OkxVenue implements TradingVenue {
 
   async place(order: OrderRequest) {
     assertSymbol(order.symbol)
-    if (this.mode === 'live' && !config().TRADING_LIVE_ENABLED)
-      throw new Error('TRADING_LIVE_DISABLED')
+    allowPlace(this.mode, this.access)
     try {
       const [item] = await this.request('/api/v5/trade/order', {
         private: true,

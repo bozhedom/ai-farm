@@ -17,6 +17,11 @@ export class ExchangeError extends Error {
     super('TRADING_EXCHANGE_ERROR')
   }
 }
+/** An isolated execution account can reuse transport without borrowing spot credentials. */
+export interface VenueAccess {
+  credentials: { key: string; secret: string; passphrase: string }
+  authorize: () => void
+}
 // Monetary values must be decimal strings. Numeric IDs are accepted only without precision loss.
 export const id = z.union([
   z.string().min(1),
@@ -141,7 +146,8 @@ function exactNumberToken(source: string) {
         : digits.slice(0, point) + '.' + digits.slice(point))
   )
 }
-export function allowPlace(mode: TradingMode) {
+export function allowPlace(mode: TradingMode, access?: VenueAccess) {
   if (mode === 'paper') throw new Error('TRADING_PAPER_ONLY')
+  if (access) return access.authorize()
   if (mode === 'live' && !config().TRADING_LIVE_ENABLED) throw new Error('TRADING_LIVE_DISABLED')
 }

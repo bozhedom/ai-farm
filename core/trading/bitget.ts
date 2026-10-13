@@ -1,3 +1,4 @@
+import type { VenueAccess } from './wire'
 import { createHmac } from 'node:crypto'
 import { z } from 'zod'
 import { listing } from './universe'
@@ -36,6 +37,7 @@ export class BitgetVenue implements TradingVenue {
   constructor(
     readonly mode: TradingMode,
     private transport: typeof fetch = fetch,
+    private access?: VenueAccess,
   ) {}
   private async request(
     path: string,
@@ -53,7 +55,7 @@ export class BitgetVenue implements TradingVenue {
     // This header is required on public market requests too, to use the demo order book.
     if (this.mode === 'demo') headers.paptrading = '1'
     if (privateCall) {
-      const c = keys('bitget', this.mode),
+      const c = this.access?.credentials || keys('bitget', this.mode),
         stamp = String(Date.now())
       Object.assign(headers, {
         'ACCESS-KEY': c.key,
@@ -273,7 +275,7 @@ export class BitgetVenue implements TradingVenue {
     return r.list.map((o) => ({ clientId: o.clientOid }))
   }
   async place(order: OrderRequest) {
-    allowPlace(this.mode)
+    allowPlace(this.mode, this.access)
     try {
       const r = z.object({ orderId: str.min(1), clientOid: str }).parse(
         await this.request(
