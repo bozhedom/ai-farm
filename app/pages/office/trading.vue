@@ -224,6 +224,7 @@ async function allocationSaved() {
         Ферма<span>торговый кабинет</span>
       </button>
       <div class="header-actions">
+        <NuxtLink class="t-link" to="/office/manager">Менеджер</NuxtLink>
         <NuxtLink class="t-link" to="/office/earnings">Направления</NuxtLink>
         <button class="t-link help-link" @click="help?.showModal()">Как это работает</button>
         <button

@@ -73,6 +73,7 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
       >
       <nav class="header-actions" aria-label="Основные разделы">
         <NuxtLink class="t-link" to="/office/trading">Мои биржи</NuxtLink>
+        <NuxtLink class="t-link" to="/office/manager">Менеджер</NuxtLink>
         <NuxtLink class="t-link" to="/office/products">Услуги</NuxtLink>
       </nav>
     </header>

@@ -5,7 +5,8 @@ const bare = computed(
   () =>
     route.path.startsWith('/office/login') ||
     route.path.startsWith('/office/trading') ||
-    route.path.startsWith('/office/earnings'),
+    route.path.startsWith('/office/earnings') ||
+    route.path.startsWith('/office/manager'),
 )
 useHead({
   htmlAttrs: { class: 'ds' },

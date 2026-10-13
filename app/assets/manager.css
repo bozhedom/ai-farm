@@ -1,0 +1,258 @@
+.manager-workspace .manager-control,
+.manager-workspace .manager-boards {
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: 10px;
+}
+.manager-workspace .manager-control {
+  padding: 24px;
+}
+.manager-workspace
+  :is(.manager-control-heading, .manager-task-heading, .manager-run-heading, .manager-cost) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.manager-workspace .manager-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 20px;
+}
+.manager-workspace .manager-caption {
+  font-size: 13px;
+  color: var(--t-muted);
+}
+.manager-workspace .manager-control-heading h2 {
+  margin: 0 0 6px;
+}
+.manager-workspace .manager-control .manager-scope {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--t-line);
+}
+.manager-workspace .manager-control .t-notice {
+  margin-top: 16px;
+}
+.manager-workspace .manager-demo-label {
+  display: inline-block;
+  margin-bottom: 10px;
+  color: var(--t-warning);
+  font-size: 13px;
+  font-weight: 500;
+}
+.manager-workspace .manager-issues {
+  margin: 16px 0 0;
+  padding-left: 20px;
+  color: var(--t-warning);
+  font-size: 14px;
+}
+.manager-workspace .manager-issues li + li {
+  margin-top: 8px;
+}
+.manager-workspace :is(.manager-summary, .manager-experiments, .manager-cost) {
+  margin-top: 32px;
+}
+.manager-workspace .manager-summary-text {
+  max-width: 760px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.manager-workspace .manager-board {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  column-gap: 20px;
+  padding: 22px 24px;
+}
+.manager-workspace .manager-board + .manager-board {
+  border-top: 1px solid var(--t-line);
+}
+.manager-workspace .manager-board > h3 {
+  grid-column: 1;
+  margin: 0;
+  padding-top: 1px;
+}
+.manager-workspace .manager-board > :not(h3) {
+  grid-column: 2;
+}
+.manager-workspace .manager-task + .manager-task {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--t-line);
+}
+.manager-workspace .manager-task-kind {
+  font-size: 14px;
+  color: var(--t-muted);
+}
+.manager-workspace .manager-status {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--t-canvas);
+  color: var(--t-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.manager-workspace .manager-status-observing {
+  background: var(--t-soft);
+  color: var(--t-blue);
+}
+.manager-workspace .manager-status-queued {
+  color: var(--t-warning);
+}
+.manager-workspace .manager-hypothesis {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 10px 0 8px;
+  overflow-wrap: anywhere;
+}
+.manager-workspace .manager-task-reason {
+  color: var(--t-muted);
+  font-size: 14px;
+  margin: 8px 0;
+}
+.manager-workspace .manager-outcome {
+  margin: 12px 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--t-line);
+}
+.manager-workspace .manager-outcome p + p {
+  margin-top: 6px;
+}
+.manager-workspace .manager-outcome strong {
+  font-weight: 500;
+}
+.manager-workspace .manager-result {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-variant-numeric: tabular-nums;
+}
+.manager-workspace .manager-result > :first-child {
+  font-size: 20px;
+  font-weight: 600;
+}
+.manager-workspace .manager-result > .t-muted {
+  font-size: 12px;
+}
+.manager-workspace .manager-no-task {
+  margin: 0;
+  font-size: 14px;
+  color: var(--t-muted);
+  max-width: 610px;
+}
+.manager-workspace .manager-details summary {
+  width: fit-content;
+  padding: 10px 0;
+  cursor: pointer;
+  color: var(--t-blue);
+  font-size: 14px;
+}
+.manager-workspace .manager-details > p {
+  margin: 8px 0 14px;
+  overflow-wrap: anywhere;
+}
+.manager-workspace .manager-facts {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 4px;
+  font-size: 13px;
+}
+.manager-workspace .manager-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.manager-workspace .manager-facts dt {
+  color: var(--t-muted);
+}
+.manager-workspace .manager-facts dd {
+  text-align: right;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.manager-workspace .manager-cost {
+  align-items: center;
+  padding: 22px 0;
+  border-block: 1px solid var(--t-line);
+}
+.manager-workspace .manager-cost-value {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.manager-workspace .manager-cost-value strong {
+  font: 700 22px var(--font-display);
+}
+.manager-workspace .manager-cost-value .t-muted {
+  font-size: 13px;
+}
+.manager-workspace :is(.manager-history, .manager-help) {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--t-line);
+}
+.manager-workspace .manager-help {
+  margin-bottom: 24px;
+}
+.manager-workspace .manager-runs {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.manager-workspace .manager-runs li {
+  padding: 16px 0;
+}
+.manager-workspace .manager-runs li + li {
+  border-top: 1px solid var(--t-line);
+}
+.manager-workspace .manager-runs li > p {
+  margin-top: 8px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.manager-workspace .manager-previous-task {
+  padding: 18px 0;
+  border-top: 1px solid var(--t-line);
+}
+.manager-workspace .manager-previous-task h3 {
+  margin-bottom: 12px;
+}
+@media (max-width: 800px) {
+  .manager-workspace .manager-control-heading {
+    flex-direction: column;
+  }
+}
+@media (max-width: 580px) {
+  .manager-workspace .manager-control {
+    padding: 18px;
+  }
+  .manager-workspace .manager-actions {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+  .manager-workspace .manager-board {
+    display: block;
+    padding: 18px;
+  }
+  .manager-workspace .manager-board > h3 {
+    margin-bottom: 14px;
+  }
+  .manager-workspace .manager-task-heading {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .manager-workspace .manager-cost,
+  .manager-workspace .manager-run-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .manager-workspace .manager-cost-value {
+    text-align: left;
+  }
+  .manager-workspace .section-heading {
+    align-items: flex-start;
+  }
+}

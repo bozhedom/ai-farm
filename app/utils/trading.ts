@@ -18,6 +18,8 @@ export const tradingModes = [
 ] as const
 
 const reasons: Record<string, string> = {
+  MANAGER_EXPERIMENT_STARTED: 'Менеджер запустил отдельный тренировочный эксперимент',
+  MANAGER_EVALUATED: 'Менеджер подвёл итог тренировочного эксперимента',
   CLASSIC_PAPER_ONLY: 'Эта стратегия пока проверяется только на виртуальных деньгах.',
   CLASSIC_CAPITAL_TOO_SMALL: 'Для следующей ступени не хватает средств в пределах лимитов.',
   DCA_SCHEDULED_ENTRY: 'Плановая покупка очередной части позиции',
