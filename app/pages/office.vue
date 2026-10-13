@@ -2,7 +2,10 @@
 // One shell for every office page: the menu, live status and polling survive navigation.
 const route = useRoute()
 const bare = computed(
-  () => route.path.startsWith('/office/login') || route.path.startsWith('/office/trading'),
+  () =>
+    route.path.startsWith('/office/login') ||
+    route.path.startsWith('/office/trading') ||
+    route.path.startsWith('/office/earnings'),
 )
 useHead({
   htmlAttrs: { class: 'ds' },

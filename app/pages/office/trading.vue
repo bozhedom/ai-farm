@@ -224,6 +224,7 @@ async function allocationSaved() {
         Ферма<span>торговый кабинет</span>
       </button>
       <div class="header-actions">
+        <NuxtLink class="t-link" to="/office/earnings">Направления</NuxtLink>
         <button class="t-link help-link" @click="help?.showModal()">Как это работает</button>
         <button
           class="t-button t-stop"
@@ -633,7 +634,7 @@ async function allocationSaved() {
             ? 'Прибыль не гарантирована. Комиссии учтены, сервер и налоги отдельно.'
             : 'Это тестовые деньги. Результаты тренировки не означают реальный доход.'
         }}</span
-        ><NuxtLink to="/office/overview">Архив студии</NuxtLink>
+        ><NuxtLink to="/office">Архив студии</NuxtLink>
       </footer>
     </main>
 

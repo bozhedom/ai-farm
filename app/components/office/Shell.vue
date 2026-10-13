@@ -26,6 +26,7 @@ const items = computed<Item[]>(() => {
   const orderAlerts = o?.needsOwner.filter((n) => /order|заказ/i.test(n.kind)).length || 0
   return [
     { to: '/office/trading', label: 'Торговая ферма', icon: 'money' },
+    { to: '/office/earnings', label: 'Направления', icon: 'idea' },
     { to: '/office', label: 'Главная', icon: 'home' },
     { to: '/office/ideas', label: 'Идеи', icon: 'idea', count: o?.totals.ideas },
     { to: '/office/agents', label: 'Агенты', icon: 'agents', count: o?.totals.activeAgents },
