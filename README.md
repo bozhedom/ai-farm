@@ -57,3 +57,5 @@ npm run test:e2e:office
 Integration требует отдельной базы с суффиксом `_test`. Проверка биржевого подключения без заявок: `npm run trading:check -- paper bybit` (также `okx`, `binance`, `bitget`), затем при наличии ключей `npm run trading:check -- demo bybit` или `-- live bybit`.
 
 Архитектура: [план](docs/01-project-plan.md), [карта проекта](docs/06-project-map.md), [правила моделей](prompts/master.md). Первоначальные DOCX сохранены как исходные материалы; актуальный торговый объём описан в [21-trading.md](docs/21-trading.md).
+
+Торговый LLM-менеджер: `/office/manager`. Сам ставит и проверяет ограниченные Paper-эксперименты; не включает Live и не снимает стопы. Подключение, бюджет и границы: [26-trading-manager.md](docs/26-trading-manager.md).
