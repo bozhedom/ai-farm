@@ -75,7 +75,7 @@ export async function createOrder(productId: string, input: string, requestKey: 
   })
 }
 
-function checkProductInput(product: Record<string, any>, input: string) {
+export function checkProductInput(product: Record<string, any>, input: string) {
   const spec = productSchema.parse(product.spec)
   validateTemplateInput(spec.template, input)
   if (product.template === 'social') {
@@ -86,7 +86,7 @@ function checkProductInput(product: Record<string, any>, input: string) {
 }
 
 /** Shared insert for owner and public orders; runs under the caller's system_state lock. */
-async function insertOrder(
+export async function insertOrder(
   db: Connection,
   o: {
     product: Record<string, any>
