@@ -16,6 +16,7 @@ const selected = computed({
     void navigateTo({ path: '/office/earnings', query: { track: id } })
   },
 })
+const yieldTrack = ref<'funding' | 'defi'>('funding')
 const { data, pending, status, refresh } = useOfficeResource<EarningsView>(
   () => 'earnings',
   () => officeFetch('/api/earnings'),
@@ -127,117 +128,145 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
             <NuxtLink to="/office/products" class="t-button">Мои услуги</NuxtLink>
             <NuxtLink to="/storefront" class="t-link">Витрина</NuxtLink>
           </div>
-          <section v-if="monitored" class="e-monitor">
-            <div class="section-heading">
-              <div>
-                <h3>Обновление данных</h3>
-                <p class="t-muted">
-                  Раз в {{ data?.monitor.intervalMinutes || 15 }} минут для всех источников.
-                </p>
-              </div>
+          <template v-if="monitored">
+            <div
+              v-if="track.id === 'yield'"
+              class="e-mode-tabs"
+              role="group"
+              aria-label="Вид вложения"
+            >
+              <button :aria-pressed="yieldTrack === 'funding'" @click="yieldTrack = 'funding'">
+                Фандинг
+              </button>
+              <button :aria-pressed="yieldTrack === 'defi'" @click="yieldTrack = 'defi'">
+                DeFi
+              </button>
             </div>
-            <p v-if="pending" role="status">Проверяем мониторинг…</p>
-            <template v-else-if="data">
-              <div class="e-actions">
-                <button
-                  class="t-button"
-                  :disabled="busy"
-                  @click="control(data.monitor.enabled ? 'pause' : 'enable')"
-                >
-                  {{
-                    data.monitor.enabled ? 'Выключить автообновление' : 'Включить автообновление'
-                  }}
-                </button>
-                <button class="t-link" :disabled="busyMonitor" @click="control('refresh')">
-                  {{
-                    data.monitor.running
-                      ? 'Получаем данные…'
-                      : data.monitor.pending
-                        ? 'Обновление в очереди…'
-                        : 'Обновить сейчас'
-                  }}
-                </button>
-              </div>
-              <p v-if="!data.monitor.workerAlive" class="t-notice t-warning">
-                Обновление временно недоступно. Запрос сохранён и выполнится после восстановления
-                связи.
-              </p>
-              <p v-if="data.monitor.enabled && data.monitor.nextAt" class="e-caption">
-                Следующее обновление {{ shortTime(data.monitor.nextAt) }}.
-              </p>
-              <p v-if="data.monitor.error" class="t-notice t-warning">
-                Не все источники обновились. Предыдущие данные могут быть устаревшими.
-              </p>
-              <p v-if="notice" class="t-notice" role="status">{{ notice }}</p>
-              <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
-              <template v-if="track.id === 'arbitrage' && data.arbitrage">
-                <p class="e-caption">
-                  Обновлено {{ shortTime(data.arbitrage.fetchedAt) }}. Доступны
-                  {{ data.arbitrage.sources.filter((s) => s.status === 'ok').length }} из 4 бирж.
-                  Сопоставлено {{ data.arbitrage.pairsCompared }} пар.
-                </p>
-                <p
-                  v-if="Date.parse(data.arbitrage.expiresAt) <= Date.now()"
-                  class="t-notice t-warning"
-                >
-                  Цены устарели. Обновите данные перед сравнением.
-                </p>
-                <div v-if="data.arbitrage.items.length" class="e-table-wrap">
-                  <table class="e-table">
-                    <caption>
-                      Разница цен по последним котировкам
-                    </caption>
-                    <thead>
-                      <tr>
-                        <th>Монета</th>
-                        <th>Купить / продать</th>
-                        <th>Разница</th>
-                        <th>С учётом затрат</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="item in data.arbitrage.items" :key="item.symbol">
-                        <th>{{ item.symbol }}</th>
-                        <td>
-                          {{ exchangeCatalog[item.buyExchange].name }} /
-                          {{ exchangeCatalog[item.sellExchange].name }}
-                        </td>
-                        <td>{{ pct(item.grossBps) }}</td>
-                        <td :class="item.estimatedNetBps > 0 ? 't-positive' : 't-muted'">
-                          {{ pct(item.estimatedNetBps) }}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+            <EarningsExecution
+              :key="track.id === 'yield' ? yieldTrack : track.id"
+              :track="
+                track.id === 'yield'
+                  ? yieldTrack
+                  : track.id === 'arbitrage'
+                    ? 'arbitrage'
+                    : 'prediction'
+              "
+            />
+          </template>
+          <details v-if="monitored" class="e-market-details">
+            <summary>Обзор рынка</summary>
+            <section class="e-monitor">
+              <div class="section-heading">
+                <div>
+                  <h3>Обновление данных</h3>
+                  <p class="t-muted">
+                    Раз в {{ data?.monitor.intervalMinutes || 15 }} минут для всех источников.
+                  </p>
                 </div>
-                <p v-else class="t-empty">Нет свежих котировок для сравнения.</p>
-                <details class="t-details">
-                  <summary>Как рассчитана разница</summary>
-                  <div class="t-details-body">
-                    <p>
-                      На покупку и продажу заложены комиссия
-                      {{ pct(data.arbitrage.feeBpsPerLeg) }} и проскальзывание
-                      {{ pct(data.arbitrage.slippageBpsPerLeg) }}. Переводы между биржами и
-                      восстановление балансов не учтены.
-                    </p>
-                    <p>
-                      Расчёт ориентировочный: фактические тарифы, объём заявок и совпадение токенов
-                      на разных биржах не проверены. Положительная разница не означает доступную
-                      сделку.
-                    </p>
+              </div>
+              <p v-if="pending" role="status">Проверяем мониторинг…</p>
+              <template v-else-if="data">
+                <div class="e-actions">
+                  <button
+                    class="t-button"
+                    :disabled="busy"
+                    @click="control(data.monitor.enabled ? 'pause' : 'enable')"
+                  >
+                    {{
+                      data.monitor.enabled ? 'Выключить автообновление' : 'Включить автообновление'
+                    }}
+                  </button>
+                  <button class="t-link" :disabled="busyMonitor" @click="control('refresh')">
+                    {{
+                      data.monitor.running
+                        ? 'Получаем данные…'
+                        : data.monitor.pending
+                          ? 'Обновление в очереди…'
+                          : 'Обновить сейчас'
+                    }}
+                  </button>
+                </div>
+                <p v-if="!data.monitor.workerAlive" class="t-notice t-warning">
+                  Обновление временно недоступно. Запрос сохранён и выполнится после восстановления
+                  связи.
+                </p>
+                <p v-if="data.monitor.enabled && data.monitor.nextAt" class="e-caption">
+                  Следующее обновление {{ shortTime(data.monitor.nextAt) }}.
+                </p>
+                <p v-if="data.monitor.error" class="t-notice t-warning">
+                  Не все источники обновились. Предыдущие данные могут быть устаревшими.
+                </p>
+                <p v-if="notice" class="t-notice" role="status">{{ notice }}</p>
+                <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
+                <template v-if="track.id === 'arbitrage' && data.arbitrage">
+                  <p class="e-caption">
+                    Обновлено {{ shortTime(data.arbitrage.fetchedAt) }}. Доступны
+                    {{ data.arbitrage.sources.filter((s) => s.status === 'ok').length }} из 4 бирж.
+                    Сопоставлено {{ data.arbitrage.pairsCompared }} пар.
+                  </p>
+                  <p
+                    v-if="Date.parse(data.arbitrage.expiresAt) <= Date.now()"
+                    class="t-notice t-warning"
+                  >
+                    Цены устарели. Обновите данные перед сравнением.
+                  </p>
+                  <div v-if="data.arbitrage.items.length" class="e-table-wrap">
+                    <table class="e-table">
+                      <caption>
+                        Разница цен по последним котировкам
+                      </caption>
+                      <thead>
+                        <tr>
+                          <th>Монета</th>
+                          <th>Купить / продать</th>
+                          <th>Разница</th>
+                          <th>С учётом затрат</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="item in data.arbitrage.items" :key="item.symbol">
+                          <th>{{ item.symbol }}</th>
+                          <td>
+                            {{ exchangeCatalog[item.buyExchange].name }} /
+                            {{ exchangeCatalog[item.sellExchange].name }}
+                          </td>
+                          <td>{{ pct(item.grossBps) }}</td>
+                          <td :class="item.estimatedNetBps > 0 ? 't-positive' : 't-muted'">
+                            {{ pct(item.estimatedNetBps) }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
-                </details>
+                  <p v-else class="t-empty">Нет свежих котировок для сравнения.</p>
+                  <details class="t-details">
+                    <summary>Как рассчитана разница</summary>
+                    <div class="t-details-body">
+                      <p>
+                        На покупку и продажу заложены комиссия
+                        {{ pct(data.arbitrage.feeBpsPerLeg) }} и проскальзывание
+                        {{ pct(data.arbitrage.slippageBpsPerLeg) }}. Переводы между биржами и
+                        восстановление балансов не учтены.
+                      </p>
+                      <p>
+                        Расчёт ориентировочный: фактические тарифы, объём заявок и совпадение
+                        токенов на разных биржах не проверены. Положительная разница не означает
+                        доступную сделку.
+                      </p>
+                    </div>
+                  </details>
+                </template>
+                <EarningsFeeds v-else-if="feeds.length" :feeds="feeds" />
+                <p v-else class="t-empty">
+                  Данных пока нет. Нажмите «Обновить сейчас» или включите автообновление.
+                </p>
               </template>
-              <EarningsFeeds v-else-if="feeds.length" :feeds="feeds" />
-              <p v-else class="t-empty">
-                Данных пока нет. Нажмите «Обновить сейчас» или включите автообновление.
+              <p v-else class="t-notice t-warning">
+                Не удалось загрузить состояние.
+                <button class="t-link" @click="refresh">Повторить</button>
               </p>
-            </template>
-            <p v-else class="t-notice t-warning">
-              Не удалось загрузить состояние.
-              <button class="t-link" @click="refresh">Повторить</button>
-            </p>
-          </section>
+            </section>
+          </details>
           <EarningsServices v-if="['services', 'business'].includes(track.id)" />
         </article>
       </div>

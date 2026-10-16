@@ -289,3 +289,135 @@
     padding: 8px 5px;
   }
 }
+.e-execution {
+  margin-top: 24px;
+}
+.e-mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 12px 0;
+}
+.e-mode-tabs button {
+  padding: 9px 14px;
+  border: 1px solid var(--t-line, #d9d5cc);
+  background: transparent;
+  border-radius: 5px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.e-mode-tabs button[aria-pressed='true'] {
+  background: #243d32;
+  color: #fff;
+  border-color: #243d32;
+}
+.e-mode-tabs button:focus-visible {
+  outline: 2px solid #32644b;
+  outline-offset: 3px;
+}
+.e-balances {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  padding: 22px 0;
+  border-bottom: 1px solid #dedad0;
+  margin-bottom: 20px;
+}
+.e-balances span {
+  display: block;
+  color: #706c61;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.e-balances strong {
+  font-size: 23px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.e-balances small {
+  font-size: 12px;
+  font-weight: 400;
+}
+.e-execution-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 18px 0;
+}
+.e-execution-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 14px;
+}
+.e-execution-form input,
+.e-execution-form select {
+  border: 1px solid #c9c4b9;
+  border-radius: 4px;
+  background: #fffdf8;
+  padding: 10px 12px;
+  font: inherit;
+  color: #252c25;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.e-execution-form small {
+  color: #706c61;
+}
+.e-form-options,
+.e-form-note {
+  grid-column: 1 / -1;
+}
+.e-form-options summary,
+.e-market-details > summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+.e-market-details {
+  margin-top: 32px;
+  padding-top: 14px;
+  border-top: 1px solid #d9d5cc;
+}
+.e-event-list {
+  list-style: none;
+  padding: 0;
+}
+.e-event-list li {
+  display: flex;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid #e6e2d9;
+  font-size: 13px;
+}
+.e-event-list time {
+  flex: 0 0 110px;
+  color: #706c61;
+}
+.e-position-list {
+  margin-top: 24px;
+}
+@media (max-width: 600px) {
+  .e-balances {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .e-balances > div {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .e-balances strong {
+    font-size: 18px;
+  }
+  .e-execution-form {
+    grid-template-columns: 1fr;
+  }
+  .e-mode-tabs button {
+    flex: 1 1 auto;
+    font-size: 13px;
+    padding: 9px;
+  }
+}

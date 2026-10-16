@@ -4,7 +4,7 @@ export type EarningTrackId =
 export interface EarningTrack {
   id: EarningTrackId
   title: string
-  stage: 'Спот' | 'Тренировка' | 'Мониторинг' | 'Тестовые заказы'
+  stage: 'Спот' | 'Тренировка' | 'Операции' | 'Тестовые заказы'
   summary: string
 }
 
@@ -26,21 +26,23 @@ export const earningTracks: EarningTrack[] = [
   {
     id: 'arbitrage',
     title: 'Арбитраж',
-    stage: 'Мониторинг',
-    summary: 'Разница цен одной монеты на разных биржах. Только наблюдение, без сделок.',
+    stage: 'Операции',
+    summary:
+      'Покупка и продажа одной монеты на двух биржах. Средства заранее распределяются между счетами.',
   },
   {
     id: 'yield',
     title: 'Фандинг и DeFi',
-    stage: 'Мониторинг',
+    stage: 'Операции',
     summary:
-      'Ставки фандинга Bybit и OKX, доходность пулов DeFi. Только наблюдение, без вложения средств.',
+      'Пара из спота и фьючерса на Bybit или размещение USDC в Aave. У каждого направления отдельный счёт.',
   },
   {
     id: 'prediction',
     title: 'Рынки прогнозов',
-    stage: 'Мониторинг',
-    summary: 'События, цены исходов и оборот Polymarket и Kalshi. Только наблюдение, без ставок.',
+    stage: 'Операции',
+    summary:
+      'Покупка контрактов Kalshi по заданной оценке вероятности. Polymarket доступен в обзоре рынка.',
   },
   {
     id: 'business',
