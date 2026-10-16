@@ -11,6 +11,8 @@
     "build": "nuxt build",
     "start": "node .output/server/index.mjs",
     "worker": "tsx --env-file=.env worker/index.ts",
+    "execution:local": "tsx --env-file=.env scripts/execution-local.ts",
+    "execution:aave:local": "tsx scripts/execution-aave-local.ts",
     "trading:check": "tsx --env-file=.env scripts/trading-check.ts",
     "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
     "setup": "node scripts/setup.mjs",
