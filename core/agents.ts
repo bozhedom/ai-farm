@@ -96,35 +96,38 @@ export async function agentNames(db: Connection = pool) {
 
 const founderParams: StrategyParams[] = [
   {
-    focusCategories: ['marketplaces', 'b2b', 'handmade'],
+    focusCategories: ['marketplaces', 'b2b', 'digital-goods'],
     evidenceMinimum: 3,
     tone: 'plain',
     ideaScope: 'narrow',
     riskAppetite: 'low',
   },
   {
-    focusCategories: ['food', 'beauty', 'travel'],
+    focusCategories: ['food', 'beauty', 'crypto-rewards'],
     evidenceMinimum: 3,
     tone: 'friendly',
     ideaScope: 'broad',
     riskAppetite: 'low',
   },
   {
-    focusCategories: ['tutoring', 'courses', 'creators'],
+    focusCategories: ['tutoring', 'courses', 'grants'],
     evidenceMinimum: 2,
     tone: 'expert',
     ideaScope: 'narrow',
     riskAppetite: 'medium',
   },
   {
-    focusCategories: ['auto', 'repair', 'farming'],
+    focusCategories: ['auto', 'repair', 'freelance'],
     evidenceMinimum: 2,
     tone: 'plain',
     ideaScope: 'broad',
     riskAppetite: 'medium',
   },
 ]
-/** Founder parameters by position; later founders cover the remaining industries. */
+/**
+ * Founder parameters by position; later founders cover the remaining industries. Each founder
+ * also watches one earning direction beyond client texts, so selection can compare them.
+ */
 export function defaultParams(index: number): StrategyParams {
   if (index < founderParams.length) return founderParams[index]!
   const rest = taxonomyCategoryIds.filter(

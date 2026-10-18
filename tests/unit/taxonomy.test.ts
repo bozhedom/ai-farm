@@ -12,9 +12,9 @@ import { validateContent } from '../../core/policy'
 import { chooseTopic } from '../../core/autonomy'
 
 describe('server taxonomy of legal industries', () => {
-  it('covers 12 to 18 industries with at least two topics each', () => {
+  it('covers 12 to 24 industries and earning directions with at least two topics each', () => {
     expect(taxonomyCategories.length).toBeGreaterThanOrEqual(12)
-    expect(taxonomyCategories.length).toBeLessThanOrEqual(18)
+    expect(taxonomyCategories.length).toBeLessThanOrEqual(24)
     expect(new Set(taxonomyCategories.map((c) => c.id)).size).toBe(taxonomyCategories.length)
     for (const category of taxonomyCategories)
       expect(topicsOf(category.id).length).toBeGreaterThanOrEqual(2)
@@ -39,6 +39,24 @@ describe('server taxonomy of legal industries', () => {
     const angles = taxonomyTopics.flatMap((t) => t.angles)
     expect(angles.some((a) => a.template === null)).toBe(true)
     expect(angles.some((a) => a.template !== null)).toBe(true)
+  })
+
+  it('includes earning directions beyond client texts, with honest human steps', () => {
+    for (const id of [
+      'crypto-rewards',
+      'grants',
+      'digital-goods',
+      'freelance',
+      'own-shop',
+      'own-media',
+    ]) {
+      const angles = topicsOf(id).flatMap((t) => t.angles)
+      expect(angles.length, id).toBeGreaterThanOrEqual(4)
+      expect(
+        angles.some((a) => a.template === null),
+        id,
+      ).toBe(true)
+    }
   })
 
   it('contains no excluded area and no decorated text', () => {
