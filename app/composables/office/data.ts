@@ -109,7 +109,7 @@ export function useOfficeReports() {
   )
 }
 
-export type IdeaView = '' | 'farm' | 'human' | 'rejected' | 'taken'
+export type IdeaView = '' | 'farm' | 'human' | 'rejected' | 'taken' | 'done'
 export type IdeaFilters = { status: IdeaStatus | ''; category: string; view?: IdeaView }
 
 export function useOfficeIdeas(filters: Ref<IdeaFilters>) {

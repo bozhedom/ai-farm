@@ -75,6 +75,10 @@ export const revenueModels: Record<string, string> = {
 export const revenueModelLabel = (value: string) => revenueModels[value] || ''
 
 export const takenBadge: Badge = { label: 'В работе у вас', tone: 'sun' }
+export const outcomeBadge: Record<'worked' | 'failed', Badge> = {
+  worked: { label: 'Сработало', tone: 'ok' },
+  failed: { label: 'Не сработало', tone: 'plain' },
+}
 
 export const orderStatus: Record<string, Badge> = {
   awaiting_payment: { label: 'Ждёт оплаты', tone: 'wait' },
@@ -115,6 +119,7 @@ export const scoreComponents: Record<ScoreComponent, { label: string; hint: stri
   B: { label: 'Продукты', hint: 'сколько продуктов из идей прошли проверку' },
   C: { label: 'Цена идеи', hint: 'чем дешевле идея, тем выше' },
   D: { label: 'Заказы без правок', hint: 'доля заказов, выданных без проверки владельца' },
+  H: { label: 'Итог владельца', hint: 'доля идей «нужен человек», которые сработали у владельца' },
 }
 
 const paramLabels: Record<string, string> = {

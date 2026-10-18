@@ -147,6 +147,13 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
     }
     case 'idea_taken':
       return item(`Вы взяли идею в работу: «${cleanText(d.title)}».`, `/office/ideas/${d.ideaId}`)
+    case 'idea_outcome':
+      return item(
+        d.outcome === 'worked'
+          ? `Вы запустили идею «${cleanText(d.title)}»: сработало.`
+          : `Вы запустили идею «${cleanText(d.title)}»: не сработало.`,
+        `/office/ideas/${d.ideaId}`,
+      )
     case 'idea_released':
       return item(
         `Идея «${cleanText(d.title)}» больше не в работе у вас.`,
@@ -309,6 +316,7 @@ export const feedKinds = [
   'idea_needs_human',
   'idea_build_failed',
   'idea_taken',
+  'idea_outcome',
   'idea_released',
   'product_published',
   'product_created',

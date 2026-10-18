@@ -7,6 +7,7 @@ import { when } from '~/composables/office/format'
 import {
   ideaStatus,
   launchBadge,
+  outcomeBadge,
   takenBadge,
   templateLabel,
   verdict,
@@ -37,6 +38,13 @@ async function saveNote() {
 }
 function setStatus(next: IdeaStatus, text: string) {
   void run('status', () => officeApi.saveIdea(id.value, { status: next }), text)
+}
+function finish(outcome: 'worked' | 'failed') {
+  void run(
+    'finish',
+    () => officeApi.saveIdea(id.value, { ownerStatus: 'done', ownerOutcome: outcome }),
+    'Итог записан. Он войдёт в балл разведчика, который нашёл идею.',
+  )
 }
 function setTaken(taken: boolean) {
   void run(
@@ -202,7 +210,12 @@ const checkStatus: Record<string, string> = {
         <section v-else class="card card-tint-clay rise">
           <h2>План запуска</h2>
           <p v-if="idea.ownerStatus === 'taken'" class="small">
-            Идея в работе у вас. Ферма не запускает её сама, план ниже.
+            Идея в работе у вас. Ферма не запускает её сама, план ниже. Когда закончите, отметьте
+            итог: он войдёт в отбор разведчиков.
+          </p>
+          <p v-else-if="idea.ownerStatus === 'done' && idea.ownerOutcome" class="small">
+            <OfficeBadge :badge="outcomeBadge[idea.ownerOutcome]" />
+            Итог записан {{ when(idea.ownerOutcomeAt) }}. Это ваша оценка, а не выручка.
           </p>
           <p v-else class="small">Ферма это не сделает: нужны люди. Вот с чего начать самому.</p>
           <ol v-if="idea.research.launchPlanForHuman.length" class="plan">
@@ -211,13 +224,31 @@ const checkStatus: Record<string, string> = {
           <p v-else class="muted">План ещё не готов.</p>
           <div class="row actions">
             <button
-              v-if="idea.status === 'needs_human' && idea.ownerStatus !== 'taken'"
+              v-if="idea.status === 'needs_human' && !idea.ownerStatus"
               type="button"
               class="btn btn-primary btn-sm"
               :disabled="!!busy"
               @click="setTaken(true)"
             >
               {{ busy === 'take' ? 'Берём' : 'Взять в работу' }}
+            </button>
+            <button
+              v-if="idea.ownerStatus === 'taken'"
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="!!busy"
+              @click="finish('worked')"
+            >
+              {{ busy === 'finish' ? 'Записываем' : 'Сработало' }}
+            </button>
+            <button
+              v-if="idea.ownerStatus === 'taken'"
+              type="button"
+              class="btn btn-sm"
+              :disabled="!!busy"
+              @click="finish('failed')"
+            >
+              Не сработало
             </button>
             <button
               v-if="idea.ownerStatus === 'taken'"
@@ -229,7 +260,7 @@ const checkStatus: Record<string, string> = {
               Вернуть в рейтинг
             </button>
             <button
-              v-if="idea.status === 'needs_human'"
+              v-if="idea.status === 'needs_human' && idea.ownerStatus !== 'done'"
               type="button"
               class="btn btn-ghost btn-sm"
               :disabled="!!busy"

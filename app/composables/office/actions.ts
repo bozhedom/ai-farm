@@ -59,7 +59,12 @@ export const officeApi = {
     post(`/api/office/products/${encodeURIComponent(id)}/visibility`, { visibility }),
   saveIdea: (
     id: string,
-    patch: { ownerNote?: string; status?: IdeaStatus; ownerStatus?: 'taken' | null },
+    patch: {
+      ownerNote?: string
+      status?: IdeaStatus
+      ownerStatus?: 'taken' | 'done' | null
+      ownerOutcome?: 'worked' | 'failed'
+    },
   ) => post(`/api/office/ideas/${encodeURIComponent(id)}`, patch),
   updateLead: (id: string, stage: string, note = '') =>
     post(`/api/opportunities/${encodeURIComponent(id)}`, { stage, note }),

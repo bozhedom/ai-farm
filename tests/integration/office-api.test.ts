@@ -354,4 +354,66 @@ describe('owner office API', () => {
     })
     expect(rejected.json).toMatchObject({ ownerStatus: null, status: 'rejected' })
   })
+
+  it('records the owner outcome once and scores the agent that found the idea', async () => {
+    const session = await attemptLogin('test-owner-password-at-least-20', '127.0.0.1')
+    await call('POST', '/api/office/scout', session, {})
+    for (let i = 0; i < 4; i++) {
+      const job = (await claimJob(['scout']))!
+      await runJob(job)
+      await finishJob(job)
+    }
+    const [first, second] = (await query('SELECT id FROM ideas ORDER BY created_at,id')).map(
+      (r) => r.id as string,
+    ) as [string, string]
+    await query(
+      `UPDATE ideas SET status='needs_human',farm_executable=false,suggested_template=NULL
+       WHERE id=ANY($1::uuid[])`,
+      [[first, second]],
+    )
+    const post = (id: string, body: object) =>
+      call('POST', `/api/office/ideas/${id}`, session, body)
+    // Only an idea in the owner's work can be finished, and only with an outcome.
+    expect((await post(first, { ownerStatus: 'done', ownerOutcome: 'worked' })).status).toBe(409)
+    await post(first, { ownerStatus: 'taken' })
+    expect((await post(first, { ownerStatus: 'done' })).status).toBe(400)
+    expect((await post(first, { ownerOutcome: 'worked' })).status).toBe(400)
+    const done = await post(first, { ownerStatus: 'done', ownerOutcome: 'worked' })
+    expect(done.status).toBe(200)
+    expect(done.json).toMatchObject({ ownerStatus: 'done', ownerOutcome: 'worked' })
+    expect(done.json.ownerOutcomeAt).toEqual(expect.any(String))
+    // The outcome is final: no release, no second outcome, no rejection.
+    expect((await post(first, { ownerStatus: null })).status).toBe(409)
+    expect((await post(first, { ownerStatus: 'taken' })).status).toBe(409)
+    expect((await post(first, { status: 'rejected' })).status).toBe(409)
+    // Finishing frees the single work slot.
+    expect((await post(second, { ownerStatus: 'taken' })).status).toBe(200)
+    await post(second, { ownerStatus: 'done', ownerOutcome: 'failed' })
+    const list = (await call('GET', '/api/office/ideas?view=done', session)).json
+    expect(list.counts).toMatchObject({ done: 2, taken: 0 })
+    expect(list.items.map((i: any) => i.ownerOutcome).sort()).toEqual(['failed', 'worked'])
+    const feed = (await call('GET', '/api/office/overview', session)).json.feed
+    expect(feed[0].text).toMatch(/: не сработало\.$/)
+    // The database refuses an outcome without a finished mark, whatever the caller.
+    await expect(query('UPDATE ideas SET owner_status=NULL WHERE id=$1', [first])).rejects.toThrow(
+      /ideas_owner_outcome/,
+    )
+    // The finder's score has the owner component; money and revenue stay untouched.
+    const found = (await call('GET', '/api/office/agents', session)).json
+    const owners = (
+      await query('SELECT strategy_id,owner_outcome FROM ideas WHERE id=ANY($1::uuid[])', [
+        [first, second],
+      ])
+    ).map((r) => ({ id: r.strategy_id as string, outcome: r.owner_outcome as string }))
+    for (const agent of found.agents) {
+      const own = owners.filter((o) => o.id === agent.id)
+      const worked = own.filter((o) => o.outcome === 'worked').length
+      expect(agent.score.components.H).toBe(
+        own.length ? Math.round((1000 * worked) / own.length) : null,
+      )
+    }
+    expect(
+      (await query('SELECT COALESCE(sum(revenue_kopecks),0)::int AS n FROM orders'))[0]!.n,
+    ).toBe(0)
+  })
 })

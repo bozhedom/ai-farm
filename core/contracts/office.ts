@@ -7,7 +7,7 @@ export type OfficeMode = 'running' | 'paused' | 'emergency_stop'
 export type IdeaStatus = 'new' | 'accepted' | 'needs_human' | 'rejected' | 'productized'
 export type CritiqueVerdict = 'PASS' | 'REVISE' | 'BLOCKED'
 export type AgentMutation = { param: string; from: unknown; to: unknown }
-export type ScoreComponent = 'P' | 'E' | 'U' | 'B' | 'C' | 'D'
+export type ScoreComponent = 'P' | 'E' | 'U' | 'B' | 'C' | 'D' | 'H'
 export type BudgetCategory = 'research' | 'order' | 'scout' | 'lead' | 'report' | 'trading_manager'
 
 export type OfficeOverview = {
@@ -86,9 +86,12 @@ export type OfficeIdea = {
     critique: string
   }[]
   ownerNote: string
-  /** Added by the UX pass: the owner took this "needs a person" idea into work. */
-  ownerStatus?: 'taken' | null
+  /** Added by the UX pass: the owner took this "needs a person" idea into work or finished it. */
+  ownerStatus?: 'taken' | 'done' | null
   ownerTakenAt?: string | null
+  /** The owner's own account after finishing; not revenue. */
+  ownerOutcome?: 'worked' | 'failed' | null
+  ownerOutcomeAt?: string | null
   /** Why the farm could not build a product from this idea (ideas.build_error), in words. */
   buildError?: string | null
   buildFailedAt?: string | null
@@ -118,6 +121,8 @@ export type OfficeIdeaList = {
     human: number
     rejected: number
     taken: number
+    /** Finished by the owner with an outcome. */
+    done?: number
     /** Ideas per industry id, all industries. */
     byCategory: Record<string, number>
   }
@@ -343,7 +348,9 @@ export type OfficeLeadSearchQueued = OfficeScoutQueued
 export type OfficeIdeaUpdate = {
   ownerNote?: string
   status?: 'needs_human' | 'rejected'
-  /** Added by the UX pass: take one "needs a person" idea into work, or null to let it go. */
-  ownerStatus?: 'taken' | null
+  /** Added by the UX pass: take one "needs a person" idea into work, finish it, or let it go. */
+  ownerStatus?: 'taken' | 'done' | null
+  /** Required with `done`. */
+  ownerOutcome?: 'worked' | 'failed'
 }
 export type OfficeVisibilityUpdate = { visibility: 'private' | 'public' }
