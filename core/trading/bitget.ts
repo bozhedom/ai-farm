@@ -174,11 +174,14 @@ export class BitgetVenue implements TradingVenue {
     const b = z
       .object({ a: levels, b: levels, ts: str })
       .parse(await this.request('/api/v3/market/orderbook', { ...params, limit: '50' }))
+    // Bitget reports a zero quantity minimum when only the amount minimum applies.
+    const lot = 10n ** BigInt(18 - ins.quantityPrecision),
+      minQty = units(ins.minOrderQty)
     return {
       instrument: {
         symbol,
-        lot: 10n ** BigInt(18 - ins.quantityPrecision),
-        minQty: units(ins.minOrderQty),
+        lot,
+        minQty: minQty > lot ? minQty : lot,
         tick: 10n ** BigInt(18 - ins.pricePrecision),
         minNotional: units(ins.minOrderAmount),
       },
