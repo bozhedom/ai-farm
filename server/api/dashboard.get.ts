@@ -1,5 +1,5 @@
 import { defineEventHandler } from 'h3'
-import { config, usesSourcePosts } from '../../core/config'
+import { config, paidModelId, usesSourcePosts } from '../../core/config'
 import { query } from '../../core/db'
 import { budgetSummary } from '../../core/budget'
 import { resultSummary } from '../../core/activity'
@@ -121,7 +121,7 @@ export default defineEventHandler(async () => {
         c.MODEL_PROVIDER === 'ollama'
           ? c.OLLAMA_MODEL
           : c.MODEL_PROVIDER === 'openai'
-            ? c.OPENAI_MODEL
+            ? paidModelId(c)
             : c.MODEL_PROVIDER === 'openrouter'
               ? c.OPENROUTER_MODEL
               : c.MODEL_PROVIDER === 'yandex'

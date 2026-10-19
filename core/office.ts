@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { config, usesSourcePosts } from './config'
+import { config, paidModelId, usesSourcePosts } from './config'
 import { audit, query, transaction } from './db'
 import { budgetSummary } from './budget'
 import { enqueue } from './queue'
@@ -823,7 +823,7 @@ const modelLabels: Record<string, string> = {
 }
 const modelIds: Record<string, (c: ReturnType<typeof config>) => string> = {
   ollama: (c) => c.OLLAMA_MODEL,
-  openai: (c) => c.OPENAI_MODEL,
+  openai: paidModelId,
   openrouter: (c) => c.OPENROUTER_MODEL,
   yandex: (c) => c.YANDEX_MODEL,
 }
@@ -848,7 +848,10 @@ export async function officeSettings(): Promise<OfficeSettings> {
     leadsPerDay: state!.leads_per_day,
     scheduleHourUtc: state!.schedule_hour_utc ?? 0,
     providers: {
-      model: modelLabels[c.MODEL_PROVIDER] ?? 'Модель',
+      model:
+        c.MODEL_PROVIDER === 'openai' && c.OPENAI_TRANSPORT === 'openrouter'
+          ? 'OpenAI через OpenRouter, платная модель'
+          : (modelLabels[c.MODEL_PROVIDER] ?? 'Модель'),
       search: searchLabels[c.SEARCH_PROVIDER] ?? c.SEARCH_PROVIDER,
       payment:
         c.PAYMENT_MODE === 'sepolia'

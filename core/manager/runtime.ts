@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { ZodError } from 'zod'
-import { config } from '../config'
+import { config, paidModelId } from '../config'
 import { audit, query, transaction, type Connection } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
 import { model, prepareModelRequest } from '../providers'
@@ -30,7 +30,7 @@ export function managerProvider() {
     provider: c.MODEL_PROVIDER,
     model:
       c.MODEL_PROVIDER === 'openai'
-        ? c.OPENAI_MODEL
+        ? paidModelId(c)
         : c.MODEL_PROVIDER === 'openrouter'
           ? c.OPENROUTER_MODEL
           : c.MODEL_PROVIDER === 'ollama'

@@ -12,6 +12,8 @@ const schema = z.object({
   SEARCH_PROVIDER: z.enum(['demo', 'yandex', 'searxng']).default('demo'),
   OPENAI_API_KEY: z.string().default(''),
   OPENAI_MODEL: z.literal('gpt-6-astra').default('gpt-6-astra'),
+  // The same paid model and dollar limits, sent through OpenRouter with OPENROUTER_API_KEY.
+  OPENAI_TRANSPORT: z.enum(['openai', 'openrouter']).default('openai'),
   OPENAI_TOTAL_BUDGET_MICROUSD: z.coerce.number().int().min(0).max(1000000000).default(1000000),
   OPENAI_USD_KOPECKS: positive(12000).refine((n) => n <= 1000000),
   OPENROUTER_API_KEY: z.string().default(''),
@@ -115,8 +117,10 @@ export function config(): Config {
   const c = schema.parse(process.env)
   if ((c.MODEL_PROVIDER === 'demo') !== (c.SEARCH_PROVIDER === 'demo'))
     throw new Error('DEMO_PROVIDERS_MUST_MATCH')
-  if (c.MODEL_PROVIDER === 'openai' && !c.OPENAI_API_KEY)
+  if (c.MODEL_PROVIDER === 'openai' && c.OPENAI_TRANSPORT === 'openai' && !c.OPENAI_API_KEY)
     throw new Error('OPENAI_CREDENTIALS_REQUIRED')
+  if (c.MODEL_PROVIDER === 'openai' && c.OPENAI_TRANSPORT === 'openrouter' && !c.OPENROUTER_API_KEY)
+    throw new Error('OPENROUTER_CREDENTIALS_REQUIRED')
   if (c.MODEL_PROVIDER === 'openrouter') {
     if (!c.OPENROUTER_API_KEY) throw new Error('OPENROUTER_CREDENTIALS_REQUIRED')
     if (!isFreeOpenrouterModel(c.OPENROUTER_MODEL))
@@ -174,6 +178,10 @@ export function isLocalRpc(c: Pick<Config, 'SEPOLIA_RPC_URL'>) {
 /** Free models distorted rewritten posts; their social service only lays out the full source text. */
 export function usesSourcePosts(provider: string) {
   return provider === 'ollama' || provider === 'openrouter'
+}
+/** Recorded model of the paid provider; a transport change mid-job is then refused. */
+export function paidModelId(c: Pick<Config, 'OPENAI_MODEL' | 'OPENAI_TRANSPORT'>) {
+  return c.OPENAI_TRANSPORT === 'openrouter' ? `openai/${c.OPENAI_MODEL}` : c.OPENAI_MODEL
 }
 export function isFreeOpenrouterModel(model: string) {
   return (

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { XMLParser } from 'fast-xml-parser'
 import { z } from 'zod'
-import { config } from '../config'
+import { config, paidModelId } from '../config'
 import { meteredCall } from '../budget'
 import { POLICY, safeSourceUrl, type Evidence, type Template } from '../policy'
 import { localModel, localSearch } from './local'
@@ -261,7 +261,7 @@ export async function model<T>(args: ModelArgs<T>): Promise<T> {
         c.MODEL_PROVIDER === 'ollama'
           ? c.OLLAMA_MODEL
           : c.MODEL_PROVIDER === 'openai'
-            ? c.OPENAI_MODEL
+            ? paidModelId(c)
             : c.MODEL_PROVIDER === 'openrouter'
               ? c.OPENROUTER_MODEL
               : c.MODEL_PROVIDER === 'yandex'

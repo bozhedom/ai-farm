@@ -15,6 +15,7 @@
     "autopilot:local": "tsx --env-file=.env scripts/autopilot-local.ts",
     "execution:aave:local": "tsx scripts/execution-aave-local.ts",
     "trading:check": "tsx --env-file=.env scripts/trading-check.ts",
+    "cloud:check": "tsx --env-file=.env scripts/cloud-check.ts",
     "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
     "setup": "node scripts/setup.mjs",
     "typecheck": "nuxt typecheck && tsc --project tsconfig.core.json --noEmit",

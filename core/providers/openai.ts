@@ -3,6 +3,7 @@ import { config } from '../config'
 import { query } from '../db'
 import { reportProgress } from '../activity'
 import { openaiCost, usdToKopecks } from './openai-cost'
+import { openrouterPaidModel } from './openrouter-paid'
 
 const tokens = z.number().int().nonnegative().max(100000)
 const usageSchema = z.object({
@@ -20,6 +21,7 @@ export async function openaiModel<T>(args: {
   maxTokens: number
 }) {
   const c = config()
+  if (c.OPENAI_TRANSPORT === 'openrouter') return openrouterPaidModel(args)
   if (!c.OPENAI_API_KEY) throw new Error('OPENAI_CREDENTIALS_REQUIRED')
   if (!Number.isSafeInteger(args.maxTokens) || args.maxTokens < 16 || args.maxTokens > 2800)
     throw new Error('OPENAI_OUTPUT_LIMIT_INVALID')
