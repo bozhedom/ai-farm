@@ -86,6 +86,10 @@ else
   warn "Readiness returned $code: backup/observer status may still be warming up. Re-check in 5 minutes."
 fi
 
+log 'Autopilot and loop status (read-only)'
+compose exec -T worker node --import tsx scripts/server-autopilot-check.ts ||
+  warn 'autopilot check failed; see docs/33-autonomy.md'
+
 if [ "${NO_EDGE:-0}" = 1 ]; then
   url='http://127.0.0.1:3210'
   log 'No Caddy: open through an SSH tunnel: ssh -L 3210:127.0.0.1:3210 farm@SERVER'

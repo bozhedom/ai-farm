@@ -124,6 +124,13 @@ ensure_data_dirs() {
       fi
     fi
   done
+  # Computer-use screenshots are written by the image's `node` user (uid 1000), not LOCAL_UID.
+  dir="$APP_DIR/output/computer-use"
+  mkdir -p "$dir" 2>/dev/null || sudo -n mkdir -p "$dir"
+  if [ "$(stat -c '%u:%g' "$dir")" != 1000:1000 ]; then
+    log 'Fixing owner of output/computer-use to 1000:1000'
+    if [ "$(id -u)" = 0 ]; then chown 1000:1000 "$dir"; else sudo -n chown 1000:1000 "$dir" || die "chown 1000:1000 $dir failed"; fi
+  fi
   chmod 700 "$APP_DIR/backups" 2>/dev/null || sudo -n chmod 700 "$APP_DIR/backups"
   chmod 755 "$APP_DIR/.health" 2>/dev/null || sudo -n chmod 755 "$APP_DIR/.health"
 }

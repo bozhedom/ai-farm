@@ -236,6 +236,10 @@ if step env 'private .env with fresh secrets'; then
   env_file="$APP_DIR/.env"
   if [ -f "$env_file" ]; then
     log '.env already exists; secrets and settings preserved'
+    if [ -z "$(env_get VM_AGENT_TOKEN "$env_file")" ]; then
+      env_set VM_AGENT_TOKEN "$(openssl rand -hex 32)" "$env_file"
+      log 'Added the missing VM_AGENT_TOKEN (nothing else changed)'
+    fi
   else
     [ -f "$APP_DIR/.env.example" ] || die "$APP_DIR/.env.example is missing"
     if [ -z "${DOMAIN:-}" ]; then
@@ -259,6 +263,13 @@ if step env 'private .env with fresh secrets'; then
     env_set DOMAIN "$DOMAIN" "$env_file.tmp"
     env_set FARM_DB_VOLUME "$(env_get FARM_DB_VOLUME "$env_file.tmp" | grep . || echo ai-farm-db)" "$env_file.tmp"
     env_set FARM_IMAGE "$(env_get FARM_IMAGE "$env_file.tmp" | grep . || echo ai-farm:pending)" "$env_file.tmp"
+    # Server autonomy (docs/33-autonomy.md): the worker autopilot starts Paper/Demo loops itself,
+    # never Live, and a stuck loop exits so Docker restarts the worker.
+    env_set AUTOPILOT_ON_BOOT true "$env_file.tmp"
+    env_set WORKER_STUCK_RESTART true "$env_file.tmp"
+    env_set PACING_ENABLED true "$env_file.tmp"
+    # Shared secret with the separate computer-use VM (docs/32-computer-use.md); off until enabled.
+    env_set VM_AGENT_TOKEN "$(openssl rand -hex 32)" "$env_file.tmp"
     chmod 600 "$env_file.tmp"
     if id "$DEPLOY_USER" >/dev/null 2>&1; then chown "$DEPLOY_USER:$DEPLOY_USER" "$env_file.tmp"; fi
     mv "$env_file.tmp" "$env_file"
