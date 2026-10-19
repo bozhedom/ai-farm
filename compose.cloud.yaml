@@ -7,9 +7,14 @@ services:
   web:
     environment:
       SEARXNG_URL: http://search:8080
+    volumes:
+      # Computer-use screenshots: written by worker, served by web. Host dir owned by uid 1000.
+      - ./output/computer-use:/app/output/computer-use
   worker:
     environment:
       SEARXNG_URL: http://search:8080
+    volumes:
+      - ./output/computer-use:/app/output/computer-use
     depends_on:
       search:
         condition: service_healthy

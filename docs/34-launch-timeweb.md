@@ -1,0 +1,328 @@
+# Запуск фермы на Timeweb Cloud
+
+20.10.2026 владелец поручил перенести ферму на новый VPS Timeweb Cloud и запустить там все направления. Реальные деньги по-прежнему включаются только после приёмочных проверок и явного решения владельца. Прежний сервер FirstVDS `45.114.60.6` описан в [10-cloud-vps.md](10-cloud-vps.md). Что остаётся за человеком: [35-owner-actions.md](35-owner-actions.md).
+
+> Поручение от 20.10 записано в `AGENTS.md`: на новом сервере работают все направления, включая `core/execution`, в Paper/Demo. Live — только через прежние приёмочные условия и явное включение владельцем. Постоянная автономная работа описана в [33-autonomy.md](33-autonomy.md), браузерный агент на отдельной ВМ — в [32-computer-use.md](32-computer-use.md).
+
+Сценарии лежат в `deploy/timeweb/`:
+
+| Файл                   | Назначение                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `netcheck.sh`          | Проверяет доступность Bybit/OKX/Binance/Bitget, OpenRouter, Docker Hub и npm именно с этого сервера, а также расхождение часов. Ключи не используются. |
+| `bootstrap.sh`         | Первая подготовка чистой Ubuntu 24.04 от root. Скрипт идемпотентный: пользователь, SSH, ufw, fail2ban, обновления, swap, Docker, время, код и `.env`.  |
+| `deploy.sh`            | Сборка или загрузка образа, миграции, запуск всех служб, проверка health и HTTPS, вывод адреса.                                                        |
+| `update.sh`            | Обновление: остановка worker, проверенная копия pg_dump, подсчёт строк, новая версия, проверки, отчёт об уменьшившихся таблицах.                       |
+| `restore-from-dump.sh` | Восстановление копии со старого сервера в **пустую** БД. Если в базе уже есть таблицы, скрипт отказывается работать.                                   |
+| `db-snapshot.sh`       | Число строк по каждой таблице, с ключом `--fingerprint` добавляется md5 содержимого. Нужен для сверки старого и нового сервера.                        |
+| `status.sh`, `dc.sh`   | Сводка состояния на одном экране. `docker compose` с рабочим набором файлов (`compose.yaml` + `prebuilt` + `cloud` + `edge`).                          |
+
+## Какой сервер арендовать
+
+- **Ферма:** минимум 2 vCPU, 4 GB RAM, 50 GB NVMe, Ubuntu 24.04, публичный статический IPv4. На 2 GB RAM сборка Nuxt идёт только со swap и медленно. Docker-образы, БД и семь дней копий занимают единицы гигабайт; запас нужен для двух-трёх прежних образов на случай отката.
+- **Computer-use VM:** отдельная машина 4 vCPU / 8 GB. На сервер фермы её не ставят. Описание в [32-computer-use.md](32-computer-use.md) и [31-paid-model-and-computer-use.md](31-paid-model-and-computer-use.md).
+- **Локация.** От неё зависит доступ к биржам и моделям. Российские IP часто блокируются поставщиками моделей. Bybit ограничивает часть юрисдикций; Нидерланды, по имеющимся данным, в их числе (**не проверено**). Разумный первый выбор — Казахстан (Алматы) или Германия (Франкфурт), если Timeweb их предлагает. Окончательное решение — по результату `netcheck.sh`, а не по этому списку. Требование Bybit о стране регистрации аккаунта остаётся на ответственности владельца: сервер в другой стране не меняет правила для его аккаунта.
+- Пароль root в Timeweb лучше не использовать. При создании сервера добавьте свой SSH-ключ (раздел панели «SSH-ключи»; названия меню указаны по памяти и могут отличаться).
+
+## План на день запуска
+
+| #   | Шаг                                                   | Время      | Кто              |
+| --- | ----------------------------------------------------- | ---------- | ---------------- |
+| 1   | Арендовать VPS, добавить SSH-ключ                     | 10–15 мин  | владелец         |
+| 2   | `netcheck.sh`: проверка локации                       | 5 мин      | владелец/админ   |
+| 3   | Загрузить код, `bootstrap.sh`                         | 15–20 мин  | админ            |
+| 4   | Проверить вход по ключу в новом окне                  | 2 мин      | админ            |
+| 5   | (необязательно) Перенос БД со старого сервера         | 30–45 мин  | админ            |
+| 6   | `deploy.sh`: сборка и запуск                          | 15–25 мин  | админ            |
+| 7   | Вход в кабинет, запуск тренировки                     | 5 мин      | владелец         |
+| 8   | OpenRouter: ключ, лимит, провайдер                    | 10–15 мин  | владелец + админ |
+| 9   | Bybit: субаккаунт, Demo-ключ, проверка, тестовый цикл | 40–60 мин  | владелец + админ |
+| 10  | Bybit: Live-ключ с IP и проверка без торговли         | 15 мин     | владелец + админ |
+| 11  | Отключить старый сервер                               | 10 мин     | админ            |
+| 12  | Ожидание допуска к Live (≥ 7 дней бумаги)             | дни/недели | автоматически    |
+
+Итого в первый день около 3–4 часов. Live в первый день **не включается**: допуск требует зрелых бумажных результатов (см. «Bybit»).
+
+## 1–2. Сервер и проверка локации
+
+После создания сервера войдите `ssh root@IP` и выполните проверку (файл можно скопировать отдельно до загрузки кода):
+
+```bash
+scp deploy/timeweb/netcheck.sh root@IP:/root/
+ssh root@IP bash /root/netcheck.sh
+```
+
+Нужно, чтобы были `OK` у **Bybit live API**, **Bybit demo API**, **OpenRouter**, **Docker Hub registry**, **Docker apt repo** и **npm registry**. Остальные биржи важны только при их использовании. `403`, `451` или `000` означают блокировку или недоступность. Такой сервер удалите и создайте в другой локации; почасовая оплата делает это дешёвым. Смещение часов относительно Bybit должно быть заметно меньше 4000 мс; `bootstrap.sh` дополнительно включает chrony.
+
+Если недоступен только Docker Hub, можно указать зеркало: `DOCKER_REGISTRY_MIRROR=https://… bash bootstrap.sh`. У Timeweb, по имеющимся данным, есть публичное зеркало `dockerhub.timeweb.cloud` (**адрес не проверен**, сверьте с документацией Timeweb).
+
+## 3. Код и bootstrap
+
+Вариант А — архив с компьютера разработчика (Git-история на сервер не попадёт, обновления делаются через `update.sh --no-pull`):
+
+```bash
+# на своём компьютере, в каталоге проекта
+git archive --format=tar.gz -o /tmp/ai-farm.tar.gz HEAD
+scp /tmp/ai-farm.tar.gz root@IP:/root/
+# на сервере
+mkdir -p /root/ai-farm-src && tar -xzf /root/ai-farm.tar.gz -C /root/ai-farm-src
+bash /root/ai-farm-src/deploy/timeweb/bootstrap.sh
+```
+
+Вариант Б — клонирование, если репозиторий доступен серверу по deploy key или токену. Тогда `update.sh` сам выполняет `git pull --ff-only`:
+
+```bash
+REPO_URL=git@github.com:OWNER/ai-farm.git REPO_REF=main bash bootstrap.sh
+```
+
+Полезные переменные: `DOMAIN=farm.example.ru` для собственного домена (по умолчанию `farm.<IP>.sslip.io`), `SSH_PUBKEY='ssh-ed25519 …'` для добавления ключа, `DEPLOY_USER` (по умолчанию `farm`).
+
+Что делает `bootstrap.sh`:
+
+1. Ставит базовые пакеты, переводит часы в UTC, включает chrony.
+2. Создаёт swap 2–4 GB, если RAM не больше 4 GB и swap ещё нет.
+3. Ставит Docker Engine и плагин Compose из официального репозитория `download.docker.com`. Включает ротацию логов и `live-restore`.
+4. Создаёт пользователя `farm` с группой `docker` и sudo без пароля: пароля у пользователя нет, вход только по ключу. Ключи root копируются ему.
+5. **SSH:** отключает вход по паролю и вход root по паролю (`/etc/ssh/sshd_config.d/10-ai-farm.conf`), но **только если** у root или `farm` уже есть `authorized_keys`. Конфигурация проверяется `sshd -t`; при ошибке файл удаляется. Без ключей вход по паролю остаётся, выводится предупреждение.
+6. ufw: входящие только 22, 80, 443. Docker публикует порты в обход ufw. Поэтому Compose привязывает PostgreSQL (55432) и web (3210) к 127.0.0.1, наружу смотрит только Caddy.
+7. fail2ban для sshd. Автоматические обновления безопасности включаются без автоматической перезагрузки: перезагрузка во время сделки нежелательна, перезагружайте вручную.
+8. Копирует код в `/opt/ai-farm` (0700, владелец `farm`). Существующий каталог не трогает.
+9. Создаёт `/opt/ai-farm/.env` (0600) из `.env.example` со свежими `POSTGRES_PASSWORD`, `SESSION_SECRET`, `OWNER_PASSWORD`. Заполняет `APP_ORIGIN=https://DOMAIN`, `SECURE_COOKIE=true`, `DOMAIN`, `FARM_DB_VOLUME=ai-farm-db`, `LOCAL_UID/GID`. Для автономной работы ставит `AUTOPILOT_ON_BOOT=true`, `WORKER_STUCK_RESTART=true`, `PACING_ENABLED=true`. Генерирует `VM_AGENT_TOKEN` (64 hex-символа) для ВМ computer-use; сама функция остаётся выключенной (`COMPUTER_USE_ENABLED=false`). **Существующий `.env` никогда не перезаписывается.** Единственное исключение — пустой `VM_AGENT_TOKEN`: его скрипт дописывает. Пароль владельца печатается один раз; он также хранится в `.env`.
+
+Повторный запуск безопасен. Отдельные шаги можно пропустить: `SKIP_STEPS=swap,ufw`.
+
+## 4. Проверка входа
+
+**Не закрывайте сессию root**, пока в новом окне не выполнится вход:
+
+```bash
+ssh farm@IP 'docker ps && sudo -n true && echo OK'
+```
+
+Если вход не работает, в старой сессии удалите `/etc/ssh/sshd_config.d/10-ai-farm.conf` и выполните `systemctl reload ssh`. Резервный путь — VNC-консоль в панели Timeweb.
+
+## 5. Перенос данных со старого сервера (необязательно)
+
+Можно начать с чистой базы. Тогда тренировки, менеджер и журнал начнутся заново, а старая история останется в копиях FirstVDS. Если история нужна (архивные стратегии, аудит, ключи идемпотентности, бумажные портфели и их риск, расходы модели), перенесите её **до первого `deploy.sh`**. Перенесённая БД сохраняет и прежние остановки: `emergency_stop` модельных задач, выключенный менеджер и паузы портфелей. Снимать их — отдельное решение владельца в кабинете; перенос таким решением не является.
+
+На **старом** сервере (FirstVDS, рабочий набор без Caddy в Compose):
+
+```bash
+cd /opt/ai-farm
+OLD='docker compose -f compose.yaml -f compose.prebuilt.yaml -f compose.cloud.yaml --profile app'
+# 1) скопировать сценарии сверки из новой версии кода
+mkdir -p deploy/timeweb   # затем scp deploy/timeweb/{lib.sh,db-snapshot.sh} сюда
+# 2) остановить запись: после этого старый кабинет не работает
+$OLD stop worker observer web
+# 3) копия и сверка
+sh scripts/backup.sh                       # backups/farm-…-manual-….dump
+sh scripts/restore-check.sh backups/ИМЯ.dump
+OLD_COMPOSE="${OLD% --profile app}" bash deploy/timeweb/db-snapshot.sh > /root/old-counts.txt
+OLD_COMPOSE="${OLD% --profile app}" bash deploy/timeweb/db-snapshot.sh --fingerprint > /root/old-fingerprints.txt
+```
+
+Перенос файла с компьютера, у которого есть SSH к обоим серверам:
+
+```bash
+scp -3 root@45.114.60.6:/opt/ai-farm/backups/ИМЯ.dump farm@NEW_IP:/opt/ai-farm/backups/
+scp -3 root@45.114.60.6:/root/old-counts.txt root@45.114.60.6:/root/old-fingerprints.txt farm@NEW_IP:/opt/ai-farm/backups/
+```
+
+На **новом** сервере, пока `deploy.sh` ещё не запускался:
+
+```bash
+cd /opt/ai-farm
+bash deploy/timeweb/restore-from-dump.sh backups/ИМЯ.dump
+diff backups/old-counts.txt backups/restored-ИМЯ.counts.txt && echo 'строки совпали'
+bash deploy/timeweb/db-snapshot.sh --fingerprint | diff backups/old-fingerprints.txt - && echo 'содержимое совпало'
+bash deploy/timeweb/deploy.sh      # применит только более новые миграции
+```
+
+Запуск `deploy.sh` разрешён только после совпадения обеих сверок. Расхождение в таблицах означает, что старый worker писал после копии. В этом случае повторите копию после его остановки. После `deploy.sh` таблица `migrations` вырастет на новые миграции, а worker начнёт добавлять строки. Это ожидаемо.
+
+Как перенести настройки:
+
+- `OWNER_PASSWORD`: можно оставить новый или вручную скопировать прежнее значение в новый `.env`.
+- Ключей бирж на старом сервере не было. Ключ OpenAI старого сервера не переносите: OpenRouter настраивается заново (шаг 8).
+- `SESSION_SECRET` новый, поэтому старые сессии браузера станут недействительны.
+- `.health/` (минутная история observer) не переносится, она начнётся заново.
+
+После проверки нового сервера **старый worker не запускайте больше никогда**. Две активные копии одной истории разойдутся в бюджетах и портфелях. Оставьте FirstVDS выключенным с данными примерно на неделю, затем удалите.
+
+Если сверка не сошлась и причина неясна, начните с чистой БД: `bash deploy/timeweb/dc.sh down`, затем `FARM_DB_VOLUME=ai-farm-db-2` в `.env` и `deploy.sh`. Старый том остаётся нетронутым для разбора.
+
+## 6. Развёртывание
+
+```bash
+ssh farm@IP
+cd /opt/ai-farm
+bash deploy/timeweb/deploy.sh
+```
+
+Скрипт проверяет `.env` (0600, секреты, `APP_ORIGIN=https://DOMAIN`, `SECURE_COOKIE=true`). Затем собирает образ `ai-farm:<коммит>-<время>` (5–15 минут), записывает его в `FARM_IMAGE` (прежний — в `FARM_IMAGE_PREVIOUS`). Поднимает PostgreSQL и SearXNG, применяет миграции и запускает web, worker, backup, observer и Caddy. Ждёт healthy, проверяет `/api/health`, `/api/readiness` и внешний HTTPS. В конце печатает адрес `https://DOMAIN/office/trading`.
+
+Образ можно собрать на своём компьютере и загрузить: `docker save ai-farm:TAG | gzip > farm.tar.gz`, затем `bash deploy/timeweb/deploy.sh --image-tar farm.tar.gz --image ai-farm:TAG`. Сборка на сервере проще и не зависит от архитектуры.
+
+Проверки после запуска:
+
+```bash
+bash deploy/timeweb/status.sh                     # службы, health, readiness, HTTPS, копии, диск
+curl -s -o /dev/null -w '%{http_code}\n' https://DOMAIN/api/trading/overview   # без входа: 401
+bash deploy/timeweb/dc.sh exec worker node --import tsx scripts/trading-check.ts paper bybit
+bash deploy/timeweb/dc.sh exec worker node --import tsx scripts/server-autopilot-check.ts   # = npm run autopilot:check
+```
+
+`deploy.sh` сам печатает отчёт автопилота в конце. В отчёте по-русски перечислены режим фермы, связь с worker, модель, расходы дня, менеджер, каждый цикл и каждое направление с причиной ожидания. Readiness может первые минуты отвечать 503, пока backup и observer не записали первый статус. Сертификат Let's Encrypt выдаётся при первом запросе; DNS собственного домена должен заранее указывать на IP.
+
+## 7. Кабинет и тренировка
+
+Откройте `https://DOMAIN/office` и войдите с паролем из `bootstrap.sh`. Главный экран — обзор доходов. Блок «Нужен человек» перечисляет то, что ждёт владельца: ключи бирж, выключенный Live, модель/OpenRouter, менеджер, компьютер ИИ, решения по идеям и заказам.
+
+При `AUTOPILOT_ON_BOOT=true` worker сам запускает четыре бумажных портфеля, Demo там, где есть Demo-ключи, менеджера и Paper-книги арбитража, фандинга и DeFi (по 100 виртуальных USDT). Проверка идёт сразу после старта и затем каждые 10 минут. Нажимать «Запустить тренировку» не нужно, но это и не мешает. Отсчёт 7 дней для допуска к Live начинается с первого запуска тренировки. Автопилот **не** снимает паузы и стопы, не включает выключенное владельцем, не трогает Live, лимиты и капитал. Поэтому в перенесённой БД со стопом сначала нужно нажать «Продолжить».
+
+## 8. OpenRouter и бюджеты модели
+
+По заданию владельца модель фермы — платная GPT-6 Astra через OpenRouter ([31-paid-model-and-computer-use.md](31-paid-model-and-computer-use.md), [33-autonomy.md](33-autonomy.md)). Можно временно оставить `MODEL_PROVIDER=demo`: торговля и Paper-направления работают без модели.
+
+1. На openrouter.ai: «Keys» → «Create Key», задайте **лимит кредитов на ключ**. Пополните баланс (Credits) на сумму не меньше `OPENAI_TOTAL_BUDGET_MICROUSD`. Без средств вызовы вернут `OPENROUTER_HTTP_402`. В настройках приватности не разрешайте сбор данных: адаптер требует `data_collection=deny`.
+2. В `/opt/ai-farm/.env` (через `nano`, не через чат):
+
+   ```dotenv
+   MODEL_PROVIDER=openai
+   OPENAI_TRANSPORT=openrouter
+   OPENROUTER_API_KEY=…
+   SEARCH_PROVIDER=searxng
+   WORKSPACE_MODE=studio              # разведка всех направлений вместе с торговлей
+   AUTONOMY_ENABLED=true
+   OPENAI_TOTAL_BUDGET_MICROUSD=90000000   # $90 на всю историю БД, не обнуляется
+   DAILY_BUDGET_KOPECKS=120000             # ~$10 в сутки; должен покрывать резерв computer-use
+   MONTHLY_BUDGET_KOPECKS=1080000
+   ```
+
+   Суммы взяты из примера [33-autonomy.md](33-autonomy.md). Их выбирает владелец. `MODEL_PROVIDER` и `SEARCH_PROVIDER` должны быть оба `demo` или оба не `demo` (`DEMO_PROVIDERS_MUST_MATCH`). Бесплатный вариант (`MODEL_PROVIDER=openrouter`, модели `…:free`) описан в [13-openrouter.md](13-openrouter.md).
+
+3. Остальные пределы. `PACING_ENABLED=true` распределяет дневной бюджет по часам UTC. Менеджер получает по умолчанию 120 ₽ на разбор и 480 ₽ в сутки для Astra, четыре разбора в сутки; это можно изменить через `MANAGER_RESERVE_KOPECKS`, `MANAGER_DAILY_KOPECKS`, `MANAGER_RUNS_PER_DAY` (потолки 200 ₽ / 1000 ₽ / 12). Также действуют резервы `SCOUT_/LEAD_/REPORT_/ORDER_/RESEARCH_RESERVE_KOPECKS`. Все расходы считаются в одном реестре; пределы не повышаются автоматически.
+4. Примените: `bash deploy/timeweb/dc.sh up -d --no-build --force-recreate web worker`. Простой `restart` новый `.env` не читает. Затем `… server-autopilot-check.ts`: модель должна быть «готова».
+5. Если модельные задачи остановлены (`emergency_stop` из перенесённой БД), владелец сам решает нажать «Продолжить» в кабинете. Менеджер, выключенный владельцем, автопилот не включает: «Менеджер» → «Включить менеджера».
+
+### Computer use (отдельная ВМ)
+
+ВМ 4 vCPU / 8 GB арендуется отдельно и настраивается по [32-computer-use.md](32-computer-use.md) (`vm-agent/`, `compose.vm.yaml`, ufw только с IP фермы на порт 8787). На ВМ укажите тот же `VM_AGENT_TOKEN`, что сгенерировал `bootstrap.sh` (`grep ^VM_AGENT_TOKEN= /opt/ai-farm/.env`). На ферме:
+
+```dotenv
+COMPUTER_USE_ENABLED=true
+VM_AGENT_URL=http://<ip-вм>:8787/
+```
+
+Остальные пределы: `COMPUTER_USE_STEP_LIMIT`, `COMPUTER_USE_TASK_CAP_MICROUSD` ($2), `COMPUTER_USE_DAILY_CAP_MICROUSD` ($10). Резерв задания $2 × `OPENAI_USD_KOPECKS` = 24 000 копеек, поэтому `DAILY_BUDGET_KOPECKS` должен быть не меньше, иначе будет `BUDGET_BLOCKED`. Снимки экрана пишутся в `/opt/ai-farm/output/computer-use`. Каталог подключён к web и worker в `compose.cloud.yaml`; `deploy.sh` выставляет ему владельца uid 1000. После `.env` пересоздайте web/worker и включите переключатель в кабинете. Внешние действия (оплаты, регистрации, публикации, сообщения) ждут одобрения владельца.
+
+## 9–10. Bybit
+
+Bybit используют два независимых продукта, и **у каждого свой субаккаунт и свои ключи**. Один счёт нельзя подключать к двум книгам учёта: сервер это проверяет.
+
+| Продукт                                | Режим счёта Bybit                                                                       | Права ключа (Live)                                                     | Переменные                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
+| Спот-торговля ([21](21-trading.md))    | Unified Trading (UTA), **Cross/Regular margin**, без займов, Spot hedging выключен      | Read-Write, **только «Spot — Trade»**; все остальные разделы пустые    | `BYBIT_DEMO_*`, `BYBIT_LIVE_*`            |
+| Фандинг-хедж ([29](29-execution.md))   | UTA **2.0**, **Isolated margin**, позиционный режим One-Way, плечо 1x на нужных монетах | Read-Write, «Spot — Trade» + «Contracts — Orders, Positions», не более | `EXECUTION_FUNDING_BYBIT_DEMO_*`/`LIVE_*` |
+| Арбитраж ([29](29-execution.md), опц.) | Как спот, отдельный субаккаунт                                                          | Как спот                                                               | `EXECUTION_ARBITRAGE_BYBIT_*`             |
+
+Во всех ключах **запрещены**: Withdrawal (вывод), Account/Sub-account Transfer (переводы), Convert/Exchange, Earn, Options, Copy Trading, NFT, Block Trade, Affiliate. Сервер в Live читает права через `/v5/user/query-api`. При лишнем праве он выдаёт `TRADING_KEY_PERMISSIONS` / `EXECUTION_KEY_PERMISSIONS`, без IP-ограничения — `TRADING_IP_REQUIRED` / `EXECUTION_IP_REQUIRED`.
+
+### Субаккаунт (владелец)
+
+Названия меню приведены по англоязычному интерфейсу Bybit в том виде, в каком они известны на 2025–2026 годы, и могут отличаться. Неуверенные места помечены.
+
+1. Войдите в основной аккаунт Bybit (KYC пройден владельцем) и включите 2FA.
+2. Аватар → **Subaccounts** («Субаккаунты») → **Create Subaccount** → **Standard Subaccount**. Имя, например `farm-spot`. Для фандинга создайте второй, `farm-funding`.
+3. Режим счёта субаккаунта: **Unified Trading Account**. Для `farm-spot` margin mode **Cross** (в API `REGULAR_MARGIN`), **Spot Margin Trading выключен**. Для `farm-funding` — **Isolated Margin** и в настройках деривативов **One-Way Mode**. Плечо 1x на монетах, указанных в «Условиях работы» фандинга. Бот не меняет эти настройки сам. (Точное расположение переключателей в интерфейсе **не проверено**: обычно это страница деривативов/настройки счёта субаккаунта.)
+4. На выделенном счёте не торгуйте вручную и не подключайте других ботов.
+
+### Demo-ключ (сначала)
+
+1. В основном аккаунте: аватар → **Demo Trading** (переключение в демо-режим). Пополнение демо-счёта: кнопка запроса тестовых средств на странице активов демо-режима.
+2. В демо-режиме: аватар → **API** → **Create New Key** → **System-generated API Keys** → **API Transaction**. Права: Read-Write, «Spot — Trade» (для фандинга дополнительно «Contracts — Orders, Positions»). IP для демо не проверяется приложением, но его можно указать.
+3. Перед **первой** инициализацией спотового Demo-портфеля на демо-счёте должно быть ≥ 100 USDT и **никаких других ненулевых активов**. Иначе будет ошибка `TRADING_INITIAL_ASSETS`: продайте или сконвертируйте прочие демо-монеты в USDT.
+4. **Не проверено:** доступен ли Demo Trading отдельно для каждого субаккаунта. Если демо-счёт только один, используйте его для спота. Для демо фандинга нужен второй демо-счёт с Isolated margin, иначе фандинг остаётся в тренировке до появления второго счёта. Один демо-счёт двум продуктам не подключайте.
+
+Запишите в `/opt/ai-farm/.env`:
+
+```dotenv
+BYBIT_DEMO_API_KEY=…
+BYBIT_DEMO_SECRET=…
+# при втором демо-счёте для фандинга:
+EXECUTION_FUNDING_BYBIT_DEMO_API_KEY=…
+EXECUTION_FUNDING_BYBIT_DEMO_SECRET=…
+```
+
+Примените и проверьте (команда только читает данные, заявок не отправляет):
+
+```bash
+bash deploy/timeweb/dc.sh up -d --no-build --force-recreate web worker
+bash deploy/timeweb/dc.sh exec worker node --import tsx scripts/trading-check.ts demo bybit
+```
+
+Затем в кабинете: «Тест биржи» → Bybit → «Подключение» → «Проверить подключение» → **«Проверить покупку и продажу»**. Это покупка и продажа до 10 тестовых USDT со сверкой баланса. Для фандинга: «Направления» → «Фандинг и DeFi» → «Фандинг» → «Тестовый счёт», сумма, «Сохранить», «Запустить».
+
+### Live-ключ
+
+1. В **субаккаунте** `farm-spot` (переключение на субаккаунт или раздел API субаккаунта из основного; путь **не проверен**): **API** → **Create New Key** → **System-generated API Keys** → **API Transaction**.
+2. **Read-Write**. IP: «Only IPs with permissions granted…» → **публичный IP нового сервера** (`curl -4 https://api.ipify.org` на сервере). Права: только **Unified Trading → Spot → Trade**. Для `farm-funding` — **Spot → Trade** и **Contracts → Orders, Positions**. Ничего из раздела Assets/Wallet.
+3. Ключ без IP у Bybit со временем истекает, а приложение его отвергнет. С IP-ограничением ключ бессрочный, но при смене сервера его нужно перевыпустить.
+4. В `.env`: `BYBIT_LIVE_API_KEY`, `BYBIT_LIVE_SECRET` (и `EXECUTION_FUNDING_BYBIT_LIVE_*` для фандинга). `BYBIT_API_HOST` оставьте `api.bybit.com`, если аккаунт не региональный (`api.bybit.kz`, `api.bybit.tr` и др. из [21-trading.md](21-trading.md)). Адаптер фандинга работает только с `api.bybit.com`.
+5. Проверка без торговли: пересоздать web/worker, затем `… trading-check.ts live bybit`. Ожидаемо: `live: credentials, permissions, account mode, balance format and fees OK`.
+6. Пополнение (владелец, вручную на Bybit): переведите USDT с основного аккаунта на Unified Trading субаккаунта. Приложение деньги не переводит и не выводит.
+
+### Когда открывается Live и как его включить
+
+**Спот (Bybit):**
+
+- В тренировке Bybit есть прибыльный бумажный кандидат: не моложе 7 дней, ≥ 20 закрытых позиций, просадка ≤ 8%. Это может занять дольше недели или не наступить вовсе.
+- Завершён демо-цикл «Проверить покупку и продажу» на Bybit. Недавно пройдена проверка подключения Live-ключа.
+- Владелец ставит `TRADING_LIVE_ENABLED=true` в `.env`, пересоздаёт web/worker, в режиме «Реальная торговля» задаёт «Бюджет на биржи» (минимум 20 USDT, верхнего предела нет) и вводит точную фразу, например `ТОРГОВАТЬ 25 USDT НА BYBIT`. После первого запуска бюджет фиксируется.
+
+**Фандинг/арбитраж (`core/execution`):**
+
+- Минимум пять полных подтверждённых Demo-циклов за период от суток с теми же параметрами, без незавершённых неопределённых операций.
+- `EXECUTION_LIVE_ENABLED=true` и `EXECUTION_LIVE_ACCEPTED_TRACKS=funding` (через запятую: `funding,arbitrage`) в `.env`, пересоздание web/worker, затем «Реальный счёт» → сумма → «Запустить» в «Направлениях».
+
+Сами ключи и флаги торговлю не запускают. Без выполненных условий сервер отклонит запуск.
+
+## 11. Отключение старого сервера
+
+После успешной проверки нового:
+
+```bash
+ssh root@45.114.60.6
+cd /opt/ai-farm && docker compose -f compose.yaml -f compose.prebuilt.yaml -f compose.cloud.yaml --profile app stop
+docker update --restart=no $(docker compose -f compose.yaml -f compose.prebuilt.yaml -f compose.cloud.yaml --profile app ps -aq)
+```
+
+Caddy в `/opt/ai-farm-demo` можно остановить так же. Старый адрес `farm.45.114.60.6.sslip.io` перестанет открываться. Удалять VPS стоит не раньше чем через неделю.
+
+## Обновление
+
+```bash
+cd /opt/ai-farm
+bash deploy/timeweb/update.sh            # git pull --ff-only + сборка
+bash deploy/timeweb/update.sh --no-pull  # код уже заменён (архив/rsync)
+```
+
+Порядок: остановка worker (дожидается конца текущего цикла), копия `backups/farm-…-preupdate-….dump` с проверкой `pg_restore --list`, подсчёт строк. Затем `deploy.sh` (сборка, миграции, запуск, health). В конце выводится список таблиц, в которых число строк уменьшилось; рост числа строк нормален.
+
+### Откат
+
+- **Миграций в обновлении не было** (в выводе нет `Applied 0xx-…`): `sed -i "s|^FARM_IMAGE=.*|FARM_IMAGE=$(grep ^FARM_IMAGE_PREVIOUS= .env | cut -d= -f2)|" .env`, затем `bash deploy/timeweb/deploy.sh --image <прежний тег>`. Данные не трогаются.
+- **Миграции были:** откат только образа не проверен, старый код может не понимать новую схему. Остановите web/worker и сделайте новую копию текущей БД. Укажите **новый** `FARM_DB_VOLUME`, выполните `restore-from-dump.sh` с копией `preupdate` и сверьте обязательства, заказы, неопределённые вызовы и ордера. Только после этого запускайте прежний образ. Рабочий том не перезаписывайте и не удаляйте.
+- Открытые позиции на бирже откат не закрывает. Перед откатом с Live нажмите «Приостановить покупки» и дождитесь отсутствия ордеров в работе.
+
+## Копии и обслуживание
+
+- Служба `backup` делает `pg_dump` при старте и раз в сутки и хранит 7 дней в `/opt/ai-farm/backups`. Проверка восстановления: `sh scripts/restore-check.sh backups/ИМЯ.dump` (использует `docker compose` без набора файлов — подходит, т. к. БД одна).
+- **Внешнего хранилища копий нет.** Копия на том же диске не защищает от потери VPS. Рекомендуется включить платные снимки сервера в панели Timeweb или регулярно забирать `backups/` на другой компьютер: `rsync -a farm@IP:/opt/ai-farm/backups/ ./farm-backups/`.
+- Старые образы: `docker image ls ai-farm`. Оставляйте текущий и `FARM_IMAGE_PREVIOUS`, остальные удаляйте `docker image rm`. `docker system prune` без проверки не запускайте.
+- Внешних оповещений нет: observer пишет историю только на этот сервер. Раз в день смотрите `status.sh` или кабинет.
+- Перезагрузка ОС: Compose-службы стартуют сами (`restart: unless-stopped`). Зависший цикл завершает worker (`WORKER_STUCK_RESTART=true`), Docker его поднимает. После перезагрузки проверьте `status.sh` и отчёт автопилота.
+- Выключить автопилот: `AUTOPILOT_ON_BOOT=false` и пересоздать worker. Остановки направлений описаны в [35-owner-actions.md](35-owner-actions.md).
+
+## Что проверено, а что нет
+
+20.10.2026 сценарии прошли `bash -n` и shellcheck. `bootstrap.sh` дважды подряд выполнен в одноразовом контейнере `ubuntu:24.04` без systemd/ufw/swap: пользователь, ключи, SSH-конфигурация (`sshd -T`), Docker из официального репозитория, копирование кода и генерация `.env` прошли успешно, повторный запуск ничего не перезаписал. В изолированном Docker-in-Docker с чистой БД прогнана цепочка `deploy.sh` → `status.sh` → `update.sh --no-pull` → `restore-from-dump.sh` в новый том → `deploy.sh`. Результат: все шесть служб healthy, health и readiness — 200, кабинет — 200, закрытый API без входа — 401. `trading-check paper bybit` получил 389 пар Bybit. После слияния с автопилотом прогон повторён: отчёт автопилота показал все циклы worker, тренировки и Paper-направления в работе; `VM_AGENT_TOKEN` сгенерирован (64 символа), каталог снимков computer-use доступен worker на запись. Копия `preupdate` восстановлена в отдельный том, построчная сверка совпала. Восстановление в непустую БД и при работающих службах отклонено. Caddy стартовал, но сертификат для вымышленного имени, ожидаемо, не выдан. Прогон выявил и исправил ошибку: `backups/` и `.health/` должны принадлежать `LOCAL_UID`, теперь `deploy.sh` это проверяет. На настоящем VPS Timeweb, с systemd/ufw/fail2ban, настоящим сертификатом и приватными API Bybit сценарии **ещё не выполнялись**. Это приёмка дня запуска.
