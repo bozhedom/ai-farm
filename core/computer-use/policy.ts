@@ -10,6 +10,9 @@ import type { BrowserAction } from './schema'
 export const COMPUTER_USE_POLICY = Object.freeze({
   version: 'computer-v1',
   leaseMs: 5 * 60_000,
+  // One worker tick hands the task back after this long; the next tick resumes it, so a long
+  // task never looks like a stuck loop to the worker watchdog (40 minutes).
+  tickBudgetMs: 10 * 60_000,
   stepTimeoutMs: 60_000,
   agentTimeoutMs: 45_000,
   maxOutputTokens: 700,

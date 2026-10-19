@@ -249,6 +249,24 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     ])
   })
 
+  it('hands a long task back after the tick budget; the next tick resumes it', async () => {
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent()
+    const wait = () => ({ name: 'wait', arguments: { ms: 100 } })
+    const model = scripted([wait, wait, wait, wait])
+    let clock = 0
+    // Every look at the clock is four minutes later: two steps fit into the ten-minute budget.
+    expect(await computerUseTick({ agent, model, now: () => (clock += 4 * 60_000) })).toBe(true)
+    let row = await task()
+    expect(row).toMatchObject({ status: 'running', step_count: 2 })
+    const [owner] = await query('SELECT lease_id,last_error FROM computer_use WHERE id=true')
+    expect(owner).toMatchObject({ lease_id: null, last_error: '' })
+    expect(await computerUseTick({ agent, model })).toBe(true)
+    row = await task()
+    expect(row).toMatchObject({ status: 'done', step_count: 5 })
+    expect(agent.sessions.size).toBe(0)
+  })
+
   it('recognises a card number typed in pieces into one field', async () => {
     await controlComputerUse('enable')
     const agent = new FakeVmAgent({

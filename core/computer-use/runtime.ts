@@ -800,12 +800,16 @@ async function runStep(
   return { kind: 'continue' }
 }
 
-export type ComputerUseDeps = { agent?: VmAgentClient; model?: ComputerUseModel }
+export type ComputerUseDeps = {
+  agent?: VmAgentClient
+  model?: ComputerUseModel
+  now?: () => number
+}
 
 /**
  * Drives at most one browser task per worker: screenshot, model, validation, policy, VM. Stops
- * on pause, stop, budget limits, an approval request or the end of the task; a resumable stop
- * leaves the task running without a lease.
+ * on pause, stop, budget limits, an approval request, the end of the task or the tick budget;
+ * a resumable stop leaves the task running without a lease and the next tick picks it up.
  */
 export async function computerUseTick(deps: ComputerUseDeps = {}, isStopping = () => false) {
   await ensureComputerUse()
@@ -816,8 +820,10 @@ export async function computerUseTick(deps: ComputerUseDeps = {}, isStopping = (
   if (!claim) return false
   const agent = deps.agent ?? vmAgentFromConfig()
   const model = deps.model ?? astraStep(demoScript)
+  const now = deps.now ?? Date.now
+  const startedAt = now()
   try {
-    while (!isStopping()) {
+    while (!isStopping() && now() - startedAt < P.tickBudgetMs) {
       const outcome = await runStep(claim, agent, model)
       if (outcome.kind !== 'continue') break
     }
