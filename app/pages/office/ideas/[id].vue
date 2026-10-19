@@ -387,6 +387,7 @@ const checkStatus: Record<string, string> = {
   line-height: 1.7;
 }
 .actions {
+  flex-wrap: wrap;
   margin-top: var(--s-4);
 }
 @media (max-width: 1023px) {
