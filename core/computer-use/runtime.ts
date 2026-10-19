@@ -551,11 +551,17 @@ async function perform(
   return agent.act(sessionId, action)
 }
 
-/** A decided approval becomes a step: the owner's action runs or the refusal is recorded. */
+/**
+ * A decided approval becomes a step: the owner's action runs or the refusal is recorded. The
+ * approval is marked executed before the VM is contacted: an outward action runs at most once,
+ * even if the worker dies between the action and its step row.
+ */
 async function applyResolvedApproval(task: TaskRow, agent: VmAgentClient, stepNo: number) {
   const [approval] = await query(
-    `SELECT * FROM computer_use_approvals WHERE task_id=$1 AND status IN ('approved','rejected','expired')
-     AND executed_at IS NULL ORDER BY created_at LIMIT 1`,
+    `UPDATE computer_use_approvals SET executed_at=now() WHERE id=(
+       SELECT id FROM computer_use_approvals WHERE task_id=$1
+       AND status IN ('approved','rejected','expired') AND executed_at IS NULL
+       ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *`,
     [task.id],
   )
   if (!approval) return false
@@ -578,7 +584,6 @@ async function applyResolvedApproval(task: TaskRow, agent: VmAgentClient, stepNo
           ? 'COMPUTER_USE_OWNER_REJECTED'
           : 'COMPUTER_USE_APPROVAL_EXPIRED',
     })
-  await query('UPDATE computer_use_approvals SET executed_at=now() WHERE id=$1', [approval.id])
   return true
 }
 

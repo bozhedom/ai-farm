@@ -204,6 +204,51 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     expect(agent.actions.map((a) => a.action.name)).toEqual(['navigate'])
   })
 
+  it('marks an approval executed before the VM acts, so an approved action never runs twice', async () => {
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent({
+      target: {
+        tag: 'button',
+        type: 'submit',
+        name: '',
+        text: 'Отправить',
+        href: '',
+        autocomplete: '',
+      },
+    })
+    const model = scripted([
+      () => ({ name: 'navigate', arguments: { url: 'https://forum.example/thread' } }),
+      () => ({ name: 'click', arguments: { x: 100, y: 100 } }),
+    ])
+    await computerUseTick({ agent, model })
+    const [approval] = await query("SELECT * FROM computer_use_approvals WHERE status='pending'")
+    await resolveApproval(approval.id, 'approve')
+    const executedAtAct: (Date | null)[] = []
+    const act = agent.act.bind(agent)
+    agent.act = async (sessionId, action) => {
+      if (action.name === 'click') {
+        const [row] = await query('SELECT executed_at FROM computer_use_approvals WHERE id=$1', [
+          approval.id,
+        ])
+        executedAtAct.push(row!.executed_at)
+      }
+      return act(sessionId, action)
+    }
+    await computerUseTick({ agent, model })
+    await computerUseTick({ agent, model })
+    expect(executedAtAct).toHaveLength(1)
+    expect(executedAtAct[0]).toBeInstanceOf(Date)
+    expect(agent.actions.filter((a) => a.action.name === 'click')).toHaveLength(1)
+    const row = await task()
+    expect(row.status).toBe('done')
+    expect((await steps(row.id)).map((s) => s.decision)).toEqual([
+      'allowed',
+      'approval',
+      'approved',
+      'allowed',
+    ])
+  })
+
   it('recognises a card number typed in pieces into one field', async () => {
     await controlComputerUse('enable')
     const agent = new FakeVmAgent({
