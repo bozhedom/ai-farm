@@ -147,7 +147,7 @@ describe('office income overview', () => {
       mode: 'paper',
       result: { unit: 'USDT', test: true },
     })
-    expect(source('computer')).toMatchObject({ status: 'disabled', result: null })
+    expect(source('computer')).toMatchObject({ status: 'needs_human', result: null })
     expect(source('services').mode).toBe('test')
     expect(v.sources.map((s) => s.id)).toEqual(
       expect.arrayContaining(['manager', 'execution:arbitrage', 'execution:prediction', 'scouts']),

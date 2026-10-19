@@ -629,7 +629,15 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       link: '/office/computer',
       severity: 'warn',
     })
-  else if (cu?.approvals)
+  else if (!cu?.enabled)
+    add({
+      id: 'computer',
+      title: 'Компьютер ИИ выключен',
+      detail: 'Машина подключена. Включите раздел, чтобы агент начал искать заработок в браузере.',
+      link: '/office/computer',
+      severity: 'warn',
+    })
+  else if (cu.approvals)
     add({
       id: 'computer',
       title: `Компьютер ИИ ждёт решения: ${cu.approvals}`,
