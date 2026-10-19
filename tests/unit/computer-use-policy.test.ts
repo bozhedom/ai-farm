@@ -7,7 +7,10 @@ import {
 } from '../../core/computer-use/policy'
 import { rotationGoals } from '../../core/computer-use/goals'
 
-const page = (url: string, extra: Partial<{ focused: ElementInfo; target: ElementInfo }> = {}) => ({
+const page = (
+  url: string,
+  extra: Partial<{ focused: ElementInfo; target: ElementInfo; typedBefore: string }> = {},
+) => ({
   url,
   title: 'Страница',
   ...extra,
@@ -107,6 +110,53 @@ describe('computer-use policy: browsing runs, outward actions wait, fraud is ref
       ),
     ).toMatchObject({ verdict: 'approval' })
   })
+  it('does not let Enter, pieces of a card number or a prefilled outward link skip approval', () => {
+    const card = element({ tag: 'input', name: 'cardnumber', autocomplete: 'cc-number' })
+    expect(
+      classifyAction(
+        { name: 'key', key: 'Enter' },
+        page('https://shop.example/x', { focused: card }),
+      ),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_SENSITIVE_FIELD' })
+    expect(
+      classifyAction(
+        { name: 'key', key: 'Enter' },
+        page('https://shop.example/x', { focused: element({ tag: 'input', name: 'otp' }) }),
+      ),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_SENSITIVE_FIELD' })
+    expect(
+      classifyAction(
+        { name: 'key', key: 'PageDown' },
+        page('https://shop.example/x', { focused: card }),
+      ),
+    ).toMatchObject({ verdict: 'allow' })
+    // Four pieces of a card number: the last piece completes it.
+    const field = element({ tag: 'input', name: 'number' })
+    expect(
+      classifyAction(
+        { name: 'type', text: '1111' },
+        page('https://shop.example/x', { focused: field, typedBefore: '411111111111' }),
+      ),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_PAYMENT_DATA' })
+    expect(
+      classifyAction(
+        { name: 'type', text: '1111' },
+        page('https://shop.example/x', { focused: field, typedBefore: '41111111' }),
+      ),
+    ).toMatchObject({ verdict: 'allow' })
+    expect(
+      classifyAction(
+        { name: 'navigate', url: 'https://site.example/send?to=user&text=hello' },
+        page('https://site.example/'),
+      ),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_OUTWARD_PAGE' })
+    expect(
+      classifyAction({ name: 'navigate', url: 'https://site.example/login' }, page('x')),
+    ).toMatchObject({ verdict: 'allow' })
+    expect(
+      classifyAction({ name: 'navigate', url: 'https://site.example/jobs?page=2' }, page('x')),
+    ).toMatchObject({ verdict: 'allow' })
+  })
   it('refuses verification bypass, multi-accounting and private targets outright', () => {
     expect(
       classifyAction({ name: 'navigate', url: 'https://2captcha.com/' }, page('about:blank')),
@@ -140,6 +190,12 @@ describe('computer-use policy: browsing runs, outward actions wait, fraud is ref
       '172.20.0.1',
       '192.168.1.1',
       '::1',
+      '[::ffff:7f00:1]',
+      '[::ffff:10.0.0.1]',
+      'fe80::1',
+      'ff02::1',
+      '198.18.0.1',
+      '0.0.0.0',
       'db',
       'x.local',
     ])

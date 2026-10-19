@@ -83,7 +83,11 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     try {
       return send(res, 200, { sessionId: await sessions.start() })
     } catch (error) {
-      return send(res, 409, { error: error instanceof Error ? error.message : 'SESSION_FAILED' })
+      // Codes only: a browser launch error carries paths and arguments of this machine.
+      const limit = error instanceof Error && error.message === 'SESSION_LIMIT'
+      return send(res, limit ? 409 : 503, {
+        error: limit ? 'SESSION_LIMIT' : 'BROWSER_UNAVAILABLE',
+      })
     }
   }
   const match = /^\/sessions\/([^/]+)(?:\/(screenshot|inspect|actions))?$/.exec(path)

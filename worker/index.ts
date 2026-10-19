@@ -23,6 +23,7 @@ let lastExecutionAt = 0
 let lastAutopilotAt = 0
 let stuckExit = false
 let tickStartedAt = Date.now()
+let tickIdle = false
 let unavailableProviders = ''
 const running = new Set<Promise<void>>()
 const reportedStuck = new Set<string>()
@@ -72,7 +73,8 @@ function background(name: string, fn: () => Promise<unknown>) {
 const watchdog = setInterval(() => {
   const now = Date.now()
   const stuck = loops.stuck(now)
-  if (now - tickStartedAt > loopSpecs.tick!.stuckMs) stuck.push('tick')
+  // The pause between ticks is idle time, not a stuck tick, whatever POLL_INTERVAL_MS is.
+  if (!tickIdle && now - tickStartedAt > loopSpecs.tick!.stuckMs) stuck.push('tick')
   for (const name of stuck) {
     if (reportedStuck.has(name)) continue
     reportedStuck.add(name)
@@ -99,6 +101,7 @@ await audit(
 )
 while (!stopping) {
   tickStartedAt = Date.now()
+  tickIdle = false
   try {
     if (
       config().AUTOPILOT_ON_BOOT &&
@@ -174,6 +177,7 @@ while (!stopping) {
     // Never log provider URLs, request bodies or secrets.
     console.error('WORKER_TICK_FAILED')
   }
+  tickIdle = true
   await pause(config().POLL_INTERVAL_MS, undefined, { signal: shutdown.signal }).catch(() => {})
 }
 clearInterval(watchdog)

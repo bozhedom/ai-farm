@@ -348,8 +348,21 @@ async function whenFree<T>(busy: string, fn: () => Promise<T>) {
     }
 }
 
+/** A pause or stop pressed while the pass runs wins over the plan made a moment earlier. */
+async function farmRunning() {
+  const [system] = await query('SELECT mode FROM system_state WHERE id=true')
+  return system?.mode === 'running'
+}
+
 async function apply(d: PlannedDecision, deps: AutopilotDeps): Promise<AutopilotDecision> {
   const decision = strip(d)
+  if (!(await farmRunning()))
+    return {
+      ...decision,
+      status: 'blocked',
+      code: 'AUTOPILOT_FARM_NOT_RUNNING',
+      text: `${d.name ?? d.key}: не запущено, ферма на паузе или остановлена.`,
+    }
   try {
     if (d.action === 'enable_schedule') await setSchedule(true, 'autopilot')
     else if (d.action === 'enable_manager') await controlManager('enable', 'autopilot')

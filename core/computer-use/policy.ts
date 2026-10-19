@@ -10,6 +10,9 @@ import type { BrowserAction } from './schema'
 export const COMPUTER_USE_POLICY = Object.freeze({
   version: 'computer-v1',
   leaseMs: 5 * 60_000,
+  // One worker tick hands the task back after this long; the next tick resumes it, so a long
+  // task never looks like a stuck loop to the worker watchdog (40 minutes).
+  tickBudgetMs: 10 * 60_000,
   stepTimeoutMs: 60_000,
   agentTimeoutMs: 45_000,
   maxOutputTokens: 700,
@@ -42,6 +45,8 @@ export type PageContext = {
   focused?: ElementInfo | null
   /** The element under the click point. */
   target?: ElementInfo | null
+  /** Text of the directly preceding `type` steps: card data typed in pieces is still card data. */
+  typedBefore?: string
 }
 export type Verdict = { verdict: 'allow' | 'approval' | 'blocked'; reason: string }
 
@@ -130,15 +135,25 @@ export function isPrivateHost(host: string): boolean {
       (a === 172 && b >= 16 && b <= 31) ||
       (a === 192 && b === 168) ||
       (a === 100 && b >= 64 && b <= 127) ||
+      (a === 198 && (b === 18 || b === 19)) ||
       a >= 224
     )
   }
   if (h.includes(':')) {
     const v6 = h.toLowerCase()
-    if (v6 === '::1' || v6 === '::' || v6.startsWith('fe80:') || /^f[cd][0-9a-f]{2}:/.test(v6))
+    if (v6 === '::1' || v6 === '::') return true
+    if (/^fe[89ab][0-9a-f]:/.test(v6) || /^f[cd][0-9a-f]{2}:/.test(v6) || /^ff/.test(v6))
       return true
     const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v6)
-    return mapped ? isPrivateHost(mapped[1]!) : false
+    if (mapped) return isPrivateHost(mapped[1]!)
+    // The URL parser writes a mapped address in hex: [::ffff:7f00:1] is 127.0.0.1.
+    const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6)
+    if (hex) {
+      const hi = parseInt(hex[1]!, 16)
+      const lo = parseInt(hex[2]!, 16)
+      return isPrivateHost(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
+    }
+    return false
   }
   return !h.includes('.')
 }
@@ -175,6 +190,12 @@ const outwardElement = (element: ElementInfo | null | undefined) =>
   (outwardText.test(` ${element.text} `) ||
     outwardText.test(` ${element.name} `) ||
     element.type === 'submit')
+/** Card, code, password and identity fields by name or autocomplete hint. */
+const sensitiveElement = (element: ElementInfo | null | undefined) =>
+  !!element &&
+  (/^cc-|one-time-code|current-password|new-password/.test(element.autocomplete) ||
+    sensitiveField.test(`${element.name} ${element.autocomplete}`))
+const pathOf = (url: string) => (URL.canParse(url) ? new URL(url).pathname : '')
 
 /**
  * Browsing, reading, searching and filling research forms run on their own. Money, credentials,
@@ -191,6 +212,9 @@ export function classifyAction(action: BrowserAction, page: PageContext): Verdic
     if (forbiddenTextReason(action.url))
       return { verdict: 'blocked', reason: 'COMPUTER_USE_SCHEME_BLOCKED' }
     if (isPaymentHost(target)) return { verdict: 'approval', reason: 'COMPUTER_USE_PAYMENT_SITE' }
+    // An outward page opened with parameters may act on them (GET forms, prefilled sends).
+    if (outwardPath.test(pathOf(action.url)) && new URL(action.url).search.length > 1)
+      return { verdict: 'approval', reason: 'COMPUTER_USE_OUTWARD_PAGE' }
     return { verdict: 'allow', reason: '' }
   }
   if (host && isForbiddenHost(host))
@@ -201,13 +225,10 @@ export function classifyAction(action: BrowserAction, page: PageContext): Verdic
     const focused = page.focused
     if (focused?.type === 'password')
       return { verdict: 'approval', reason: 'COMPUTER_USE_CREDENTIALS' }
-    if (
-      focused &&
-      (/^cc-|one-time-code|current-password|new-password/.test(focused.autocomplete) ||
-        sensitiveField.test(`${focused.name} ${focused.autocomplete}`))
-    )
+    if (sensitiveElement(focused))
       return { verdict: 'approval', reason: 'COMPUTER_USE_SENSITIVE_FIELD' }
-    if (cardLike.test(action.text) || /\b0x[0-9a-f]{40}\b|\bbc1[0-9a-z]{25,}\b/i.test(action.text))
+    const typed = `${page.typedBefore ?? ''}${action.text}`
+    if (cardLike.test(typed) || /\b0x[0-9a-f]{40}\b|\bbc1[0-9a-z]{25,}\b/i.test(typed))
       return { verdict: 'approval', reason: 'COMPUTER_USE_PAYMENT_DATA' }
     if (host && isPaymentHost(host))
       return { verdict: 'approval', reason: 'COMPUTER_USE_PAYMENT_SITE' }
@@ -230,8 +251,11 @@ export function classifyAction(action: BrowserAction, page: PageContext): Verdic
       return { verdict: 'approval', reason: 'COMPUTER_USE_OUTWARD_ACTION' }
     if (page.focused?.type === 'password' && action.name === 'key')
       return { verdict: 'approval', reason: 'COMPUTER_USE_CREDENTIALS' }
+    // Enter in a card, code or identity field submits what was typed there.
+    if (action.name === 'key' && sensitiveElement(page.focused))
+      return { verdict: 'approval', reason: 'COMPUTER_USE_SENSITIVE_FIELD' }
     if (
-      outwardPath.test(URL.canParse(page.url) ? new URL(page.url).pathname : '') &&
+      outwardPath.test(pathOf(page.url)) &&
       (element?.type === 'submit' || element?.tag === 'button' || action.name === 'key')
     )
       return { verdict: 'approval', reason: 'COMPUTER_USE_OUTWARD_PAGE' }

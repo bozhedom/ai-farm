@@ -551,11 +551,17 @@ async function perform(
   return agent.act(sessionId, action)
 }
 
-/** A decided approval becomes a step: the owner's action runs or the refusal is recorded. */
+/**
+ * A decided approval becomes a step: the owner's action runs or the refusal is recorded. The
+ * approval is marked executed before the VM is contacted: an outward action runs at most once,
+ * even if the worker dies between the action and its step row.
+ */
 async function applyResolvedApproval(task: TaskRow, agent: VmAgentClient, stepNo: number) {
   const [approval] = await query(
-    `SELECT * FROM computer_use_approvals WHERE task_id=$1 AND status IN ('approved','rejected','expired')
-     AND executed_at IS NULL ORDER BY created_at LIMIT 1`,
+    `UPDATE computer_use_approvals SET executed_at=now() WHERE id=(
+       SELECT id FROM computer_use_approvals WHERE task_id=$1
+       AND status IN ('approved','rejected','expired') AND executed_at IS NULL
+       ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *`,
     [task.id],
   )
   if (!approval) return false
@@ -578,8 +584,18 @@ async function applyResolvedApproval(task: TaskRow, agent: VmAgentClient, stepNo
           ? 'COMPUTER_USE_OWNER_REJECTED'
           : 'COMPUTER_USE_APPROVAL_EXPIRED',
     })
-  await query('UPDATE computer_use_approvals SET executed_at=now() WHERE id=$1', [approval.id])
   return true
+}
+
+/** Text of the directly preceding typed steps, so card data typed in pieces is recognised. */
+export function typedBefore(history: StepHistory[]) {
+  let text = ''
+  for (let i = history.length - 1; i >= 0; i--) {
+    const step = history[i]!
+    if (step.action.name !== 'type' || step.decision !== 'allowed') break
+    text = `${String(step.action.text ?? '')}${text}`
+  }
+  return text.slice(-4000)
 }
 
 async function requestApproval(
@@ -757,7 +773,9 @@ async function runStep(
   const context: PageContext =
     action.name === 'click'
       ? { ...page, target: await agent.inspect(sessionId, action.x, action.y) }
-      : page
+      : action.name === 'type'
+        ? { ...page, typedBefore: typedBefore(history) }
+        : page
   const verdict = classifyAction(action, context)
   if (verdict.verdict === 'blocked') {
     await recordStep(task, stepNo, { ...base, decision: 'blocked', reason: verdict.reason })
@@ -782,12 +800,16 @@ async function runStep(
   return { kind: 'continue' }
 }
 
-export type ComputerUseDeps = { agent?: VmAgentClient; model?: ComputerUseModel }
+export type ComputerUseDeps = {
+  agent?: VmAgentClient
+  model?: ComputerUseModel
+  now?: () => number
+}
 
 /**
  * Drives at most one browser task per worker: screenshot, model, validation, policy, VM. Stops
- * on pause, stop, budget limits, an approval request or the end of the task; a resumable stop
- * leaves the task running without a lease.
+ * on pause, stop, budget limits, an approval request, the end of the task or the tick budget;
+ * a resumable stop leaves the task running without a lease and the next tick picks it up.
  */
 export async function computerUseTick(deps: ComputerUseDeps = {}, isStopping = () => false) {
   await ensureComputerUse()
@@ -798,8 +820,10 @@ export async function computerUseTick(deps: ComputerUseDeps = {}, isStopping = (
   if (!claim) return false
   const agent = deps.agent ?? vmAgentFromConfig()
   const model = deps.model ?? astraStep(demoScript)
+  const now = deps.now ?? Date.now
+  const startedAt = now()
   try {
-    while (!isStopping()) {
+    while (!isStopping() && now() - startedAt < P.tickBudgetMs) {
       const outcome = await runStep(claim, agent, model)
       if (outcome.kind !== 'continue') break
     }

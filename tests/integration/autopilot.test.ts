@@ -11,7 +11,7 @@ const saved = vi.hoisted(() => {
 })
 
 import { pool, query } from '../../core/db'
-import { runAutopilot, autonomyView } from '../../core/autopilot'
+import { runAutopilot, autonomyView, type AutopilotDeps } from '../../core/autopilot'
 import { setSchedule } from '../../core/autonomy'
 import { controlManager, ensureManager } from '../../core/manager/runtime'
 import { controlTrading } from '../../core/trading/engine'
@@ -21,7 +21,7 @@ import { ensureExecution } from '../../core/execution/store'
 import { listing } from '../../core/trading/universe'
 import { units } from '../../core/trading/decimal'
 import { loopFinished, loopStarted, workerLoops } from '../../core/worker-loops'
-import type { Account, TradingSymbol, TradingVenue } from '../../core/trading/types'
+import type { Account, TradingScope, TradingSymbol, TradingVenue } from '../../core/trading/types'
 import { market } from '../fixtures/trading'
 import { applyMigrations, resetDatabase } from './helpers/db'
 
@@ -158,6 +158,30 @@ describe('server autopilot', () => {
       expect(decisions[0]!.status).toBe('blocked')
       expect((await statuses()).system.mode).toBe(mode)
     }
+  })
+
+  it('stops the rest of a pass when the owner pauses the farm during it', async () => {
+    // The first exchange start (alphabetical: Binance) pauses the farm while it runs:
+    // everything planned after it must stay idle.
+    const pausing: AutopilotDeps = {
+      ...deps,
+      trading: (s: TradingScope) => {
+        if (s.exchange === 'binance')
+          void query("UPDATE system_state SET mode='paused' WHERE id=true")
+        return venue
+      },
+    }
+    const decisions = await runAutopilot(undefined, pausing)
+    const s = await statuses()
+    expect(s.system.mode).toBe('paused')
+    expect(status(s.trading, 'binance', 'paper').status).toBe('running')
+    for (const exchange of ['bitget', 'bybit', 'okx'])
+      expect(status(s.trading, exchange, 'paper').status).toBe('idle')
+    for (const book of s.books) expect(book.status).toBe('idle')
+    expect(decisions.find((d) => d.key === 'trading:bybit:paper')).toMatchObject({
+      status: 'blocked',
+      code: 'AUTOPILOT_FARM_NOT_RUNNING',
+    })
   })
 
   it('keeps what the owner switched off, paused or stopped', async () => {
