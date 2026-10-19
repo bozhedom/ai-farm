@@ -45,7 +45,18 @@ export const browserActionSchema = z.discriminatedUnion('name', [
       y: coordinate(VIEWPORT.height - 1),
     })
     .strict(),
-  z.object({ name: z.literal('type'), text: z.string().min(1).max(2000) }).strict(),
+  // No control characters: a line break or tab would press Enter or Tab past the policy check
+  // of the `key` action (Playwright types "\n" as Enter).
+  z
+    .object({
+      name: z.literal('type'),
+      text: z
+        .string()
+        .min(1)
+        .max(2000)
+        .regex(/^[^\p{Cc}]+$/u, 'CONTROL_CHARACTERS'),
+    })
+    .strict(),
   z.object({ name: z.literal('key'), key: z.enum(keyNames) }).strict(),
   z
     .object({

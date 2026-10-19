@@ -582,6 +582,17 @@ async function applyResolvedApproval(task: TaskRow, agent: VmAgentClient, stepNo
   return true
 }
 
+/** Text of the directly preceding typed steps, so card data typed in pieces is recognised. */
+export function typedBefore(history: StepHistory[]) {
+  let text = ''
+  for (let i = history.length - 1; i >= 0; i--) {
+    const step = history[i]!
+    if (step.action.name !== 'type' || step.decision !== 'allowed') break
+    text = `${String(step.action.text ?? '')}${text}`
+  }
+  return text.slice(-4000)
+}
+
 async function requestApproval(
   task: TaskRow,
   stepNo: number,
@@ -757,7 +768,9 @@ async function runStep(
   const context: PageContext =
     action.name === 'click'
       ? { ...page, target: await agent.inspect(sessionId, action.x, action.y) }
-      : page
+      : action.name === 'type'
+        ? { ...page, typedBefore: typedBefore(history) }
+        : page
   const verdict = classifyAction(action, context)
   if (verdict.verdict === 'blocked') {
     await recordStep(task, stepNo, { ...base, decision: 'blocked', reason: verdict.reason })

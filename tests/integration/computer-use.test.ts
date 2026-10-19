@@ -204,6 +204,32 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     expect(agent.actions.map((a) => a.action.name)).toEqual(['navigate'])
   })
 
+  it('recognises a card number typed in pieces into one field', async () => {
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent({
+      focused: { tag: 'input', type: 'text', name: 'number', text: '', href: '', autocomplete: '' },
+    })
+    const piece = (text: string) => () => ({ name: 'type', arguments: { text } })
+    const model = scripted([
+      () => ({ name: 'navigate', arguments: { url: 'https://shop.example/order/42' } }),
+      piece('4111'),
+      piece('1111'),
+      piece('1111'),
+      piece('1111'),
+    ])
+    await computerUseTick({ agent, model })
+    const row = await task()
+    expect(row.status).toBe('waiting_approval')
+    expect((await steps(row.id)).map((s) => [s.decision, s.reason])).toEqual([
+      ['allowed', ''],
+      ['allowed', ''],
+      ['allowed', ''],
+      ['allowed', ''],
+      ['approval', 'COMPUTER_USE_PAYMENT_DATA'],
+    ])
+    expect(agent.actions.filter((a) => a.action.name === 'type')).toHaveLength(3)
+  })
+
   it('blocks forbidden targets and invalid calls without contacting the VM, then gives up', async () => {
     await controlComputerUse('enable')
     const agent = new FakeVmAgent()

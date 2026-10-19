@@ -13,6 +13,9 @@ describe('computer-use tool calls are validated strictly on the server', () => {
       name: 'click',
     })
     expect(parseToolCall('key', { key: 'PageDown' })).toEqual({ name: 'key', key: 'PageDown' })
+    expect(parseToolCall('type', { text: 'гранты для разработчиков 2026, ё/Ü' })).toMatchObject({
+      name: 'type',
+    })
     expect(
       parseToolCall('finish', { report: 'Найдено два конкурса, оба требуют регистрации.' }),
     ).toMatchObject({ name: 'finish' })
@@ -40,6 +43,11 @@ describe('computer-use tool calls are validated strictly on the server', () => {
       ['navigate', { url: 'file:///etc/passwd' }],
       ['navigate', { url: 'javascript:alert(1)' }],
       ['key', { key: 'F12' }],
+      // Playwright types "\n" as Enter and "\t" as Tab: only the `key` action may press those.
+      ['type', { text: 'login\n' }],
+      ['type', { text: 'a\tb' }],
+      ['type', { text: 'a\rb' }],
+      ['type', { text: 'x\u001b' }],
       ['wait', { ms: 60000 }],
       ['finish', { report: '<script>alert(1)</script>' }],
       [
