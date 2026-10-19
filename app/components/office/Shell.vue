@@ -20,14 +20,18 @@ type Item = {
   count?: number | null
   alert?: number
   hint?: string
+  /** Shorter name for the phone tab bar. */
+  short?: string
 }
 const items = computed<Item[]>(() => {
   const o = overview.value
   const orderAlerts = o?.needsOwner.filter((n) => /order|заказ/i.test(n.kind)).length || 0
   return [
-    { to: '/office/trading', label: 'Торговая ферма', icon: 'money' },
-    { to: '/office/earnings', label: 'Направления', icon: 'idea' },
-    { to: '/office', label: 'Главная', icon: 'home' },
+    { to: '/office', label: 'Обзор', icon: 'home' },
+    { to: '/office/trading', label: 'Торговая ферма', icon: 'money', short: 'Торговля' },
+    { to: '/office/earnings', label: 'Направления', icon: 'spark' },
+    { to: '/office/computer', label: 'Компьютер ИИ', icon: 'box' },
+    { to: '/office/farm', label: 'Ферма идей', icon: 'leaf', short: 'Ферма' },
     { to: '/office/ideas', label: 'Идеи', icon: 'idea', count: o?.totals.ideas },
     { to: '/office/agents', label: 'Агенты', icon: 'agents', count: o?.totals.activeAgents },
     { to: '/office/products', label: 'Продукты', icon: 'box', count: o?.totals.publicProducts },
@@ -50,7 +54,7 @@ const items = computed<Item[]>(() => {
 })
 const tabs = computed(() =>
   items.value.filter((item) =>
-    ['/office', '/office/ideas', '/office/agents', '/office/leads'].includes(item.to),
+    ['/office', '/office/trading', '/office/farm', '/office/ideas'].includes(item.to),
   ),
 )
 const isActive = (to: string) =>
@@ -197,7 +201,7 @@ async function logout() {
           :to="tab.to"
           :class="{ 'is-active': isActive(tab.to) }"
           :aria-current="isActive(tab.to) ? 'page' : undefined"
-          ><OfficeIcon :name="tab.icon" />{{ tab.label }}</NuxtLink
+          ><OfficeIcon :name="tab.icon" />{{ tab.short ?? tab.label }}</NuxtLink
         >
         <button
           type="button"

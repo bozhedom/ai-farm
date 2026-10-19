@@ -12,6 +12,7 @@ import type {
   OfficeReport,
   OfficeSettings,
 } from '../../../core/contracts/office'
+import type { OfficeIncome } from '../../../core/contracts/overview'
 import { officeFetch, useOfficeResource } from './resource'
 
 /**
@@ -75,6 +76,13 @@ async function pagedFetch<T>(url: string, filters: Record<string, string>, pages
 
 export function useOfficeOverview() {
   return useOfficeResource('overview', () => officeFetch<OfficeOverview>('/api/office/overview'))
+}
+
+/** How the farm earns: `/api/office/income`, one aggregated snapshot for the main screen. */
+export function useOfficeIncome(interval = 10000) {
+  return useOfficeResource('income', () => officeFetch<OfficeIncome>('/api/office/income'), {
+    interval,
+  })
 }
 
 export function useOfficeAgents(interval = 5000) {
