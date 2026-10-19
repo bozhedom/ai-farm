@@ -94,7 +94,7 @@ COMPUTER_USE_SCREENSHOT_DIR=output/computer-use
 
    В панели Timeweb продублировать правило для 8787 на уровне сети. Трафик между сервером и ВМ идёт по HTTP внутри одного оператора; для публичного интернета ставьте перед агентом Caddy с HTTPS или WireGuard.
 
-5. На сервере фермы: `VM_AGENT_URL=http://<ip-вм>:8787/`, `VM_AGENT_TOKEN=<токен>`, `COMPUTER_USE_ENABLED=true`. В `compose.yaml` для службы `worker` добавить том `./output/computer-use:/app/output/computer-use` (и такой же для `web`, который отдаёт снимки), затем перезапустить `web` и `worker`. Проверка связи: `curl -H "Authorization: Bearer <токен>" -X POST -H 'Content-Type: application/json' -d '{}' http://<ip-вм>:8787/sessions`.
+5. На сервере фермы: `VM_AGENT_URL=http://<ip-вм>:8787/`, `VM_AGENT_TOKEN=<токен>`, `COMPUTER_USE_ENABLED=true`. В `compose.yaml` для службы `worker` добавить том `./output/computer-use:/app/output/computer-use` (и такой же для `web`, который отдаёт снимки), затем перезапустить `web` и `worker`. Каталог на хосте должен быть доступен на запись пользователю `node` контейнера (uid 1000); без него шаги идут дальше, но снимки в кабинете не показываются. Проверка связи: `curl -H "Authorization: Bearer <токен>" -X POST -H 'Content-Type: application/json' -d '{}' http://<ip-вм>:8787/sessions`.
 6. Наблюдение глазами (по желанию): `noVNC` на ВМ не нужен для работы, так как кабинет показывает снимок каждого шага. Если нужен живой экран, запускайте вместо headless режима отдельный контейнер с Xvfb и noVNC только на `127.0.0.1` и смотрите через SSH-туннель; это не входит в текущую поставку.
 7. Обновление: `git pull` на сервере фермы, `scp` нового `vm-agent/` на ВМ, `docker compose -f compose.vm.yaml up -d --build`.
 

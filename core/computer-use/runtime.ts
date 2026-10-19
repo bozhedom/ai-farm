@@ -268,8 +268,13 @@ async function saveScreenshot(taskId: string, stepNo: number, png: Buffer) {
   const path = `${taskId}/${stepNo}.png`
   const file = screenshotFile(path)
   if (!file || png.length > P.maxScreenshotBytes) return { path: null, bytes: 0 }
-  await mkdir(join(screenshotRoot(), taskId), { recursive: true })
-  await writeFile(file, png)
+  try {
+    await mkdir(join(screenshotRoot(), taskId), { recursive: true })
+    await writeFile(file, png)
+  } catch {
+    // A read-only or missing directory loses the picture, not the step: the model still sees it.
+    return { path: null, bytes: 0 }
+  }
   return { path, bytes: png.length }
 }
 let cleanedAt = 0
