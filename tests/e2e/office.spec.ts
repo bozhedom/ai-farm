@@ -39,6 +39,7 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
       return json(route, { statusMessage: 'DOWN' }, 503)
     const offset = Number(url.searchParams.get('offset') || 0)
     if (path === '/api/office/overview') return json(route, fx.overview)
+    if (path === '/api/office/income') return json(route, fx.income)
     if (path === '/api/office/agents') return json(route, fx.agents)
     if (path === '/api/office/money') return json(route, fx.money)
     if (path === '/api/office/settings') return json(route, fx.settings)
@@ -126,7 +127,8 @@ async function noHorizontalScroll(page: Page) {
 
 const fx = officeFixtures()
 const sections: { name: string; path: string; ready: string }[] = [
-  { name: 'home', path: '/office', ready: 'Что произошло сегодня' },
+  { name: 'overview', path: '/office', ready: 'Источники заработка' },
+  { name: 'farm', path: '/office/farm', ready: 'Что произошло сегодня' },
   { name: 'ideas', path: '/office/ideas', ready: fx.ideas[0]!.title },
   {
     name: 'idea',
@@ -298,13 +300,13 @@ test.describe('office behaviour', () => {
     await page.screenshot({ path: join(shots, 'offline-1440.png') })
   })
 
-  test('login sends the password and opens the trading office', async ({ page }) => {
+  test('login sends the password and opens the main overview', async ({ page }) => {
     const posted = await stubOffice(page, fx)
     await page.goto('/office/login')
     await page.waitForLoadState('networkidle')
     await page.getByLabel('Пароль', { exact: true }).fill('owner-password')
     await page.getByRole('button', { name: 'Войти' }).click()
-    await expect(page).toHaveURL(/\/office\/trading$/)
+    await expect(page).toHaveURL(/\/office$/)
     expect(posted[0]).toEqual({ url: '/api/auth/login', body: { password: 'owner-password' } })
   })
 
@@ -316,3 +318,58 @@ test.describe('office behaviour', () => {
     await expect(page).toHaveURL(/\/office\/leads$/)
   })
 })
+
+const overviewShots = join(process.cwd(), 'output/playwright/overview')
+mkdirSync(overviewShots, { recursive: true })
+
+for (const width of [1440, 390]) {
+  test.describe(`income overview ${width}`, () => {
+    test.use({ viewport: { width, height: width > 1000 ? 900 : 844 } })
+
+    test('shows how the farm earns, keeping test money apart', async ({ page }) => {
+      const errors = watchConsole(page)
+      await stubOffice(page, fx)
+      await page.goto('/office')
+      await expect(page.getByRole('heading', { name: 'Как ферма зарабатывает' })).toBeVisible()
+      const kpis = page.getByLabel('Деньги за период')
+      await expect(kpis).toContainText('Реальный доход')
+      await expect(kpis).toContainText('настоящих денег пока нет')
+      await expect(kpis).toContainText('Не выручка')
+      await expect(kpis).toContainText(/−118,40\s₽/)
+      await page.getByRole('button', { name: 'Сегодня' }).click()
+      await expect(kpis).toContainText(/−4,12\s₽/)
+
+      const sources = page.locator('.sources')
+      await expect(sources.locator('li')).toHaveCount(fx.income.sources.length)
+      await expect(sources).toContainText('Компьютер ИИ')
+      await expect(sources).toContainText('Только тренировка')
+      await expect(page.getByRole('heading', { name: 'Нужен человек' })).toBeVisible()
+      await expect(page.getByText('Bybit: нет ключей')).toBeVisible()
+      await expect(page.getByText('Bybit · Тест биржи: продал BTC').first()).toBeVisible()
+
+      await page.getByRole('button', { name: /^Тест биржи/ }).click()
+      await expect(page.locator('.lc-legend')).toContainText('Bybit')
+      await expect(page.locator('.lc-legend')).not.toContainText('OKX')
+      await page.getByRole('button', { name: /^Реальные/ }).click()
+      await expect(page.getByText('за 30 дней нет отметок капитала')).toBeVisible()
+      await page.getByRole('button', { name: /^Тренировка/ }).click()
+
+      await expect(page.getByText('Оплачено деньгами')).toBeVisible()
+      await expect(page.locator('.products')).toContainText(/1\s490\s₽/)
+      await page.waitForTimeout(400)
+      await noHorizontalScroll(page)
+      if (width < 1024) await page.addStyleTag({ content: '.tabbar{position:static!important}' })
+      await page.screenshot({ path: join(overviewShots, `overview-${width}.png`), fullPage: true })
+      if (width > 1000) {
+        await page.evaluate(() => (document.documentElement.dataset.theme = 'dark'))
+        await page.waitForTimeout(200)
+        await noHorizontalScroll(page)
+        await page.screenshot({
+          path: join(overviewShots, `overview-dark-${width}.png`),
+          fullPage: true,
+        })
+      }
+      expect(errors).toEqual([])
+    })
+  })
+}
