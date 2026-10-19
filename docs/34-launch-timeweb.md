@@ -2,7 +2,7 @@
 
 20.10.2026 владелец поручил перенести ферму на новый VPS Timeweb Cloud и запустить там все направления. Реальные деньги по-прежнему включаются только после приёмочных проверок и явного решения владельца. Прежний сервер FirstVDS `45.114.60.6` описан в [10-cloud-vps.md](10-cloud-vps.md). Что остаётся за человеком: [35-owner-actions.md](35-owner-actions.md).
 
-> Исполнение арбитража, фандинга, DeFi и прогнозов (`core/execution`) до этого поручения было разрешено только локально. В `AGENTS.md` до сих пор указано «local only; do not deploy». До публикации этого блока на новом сервере владелец должен подтвердить поручение от 20.10 и обновить `AGENTS.md`. Спот, менеджер, разведчик и мониторинг публиковать уже разрешено.
+> Поручение от 20.10 записано в `AGENTS.md`: на новом сервере работают все направления, включая `core/execution`, в Paper/Demo. Live — только через прежние приёмочные условия и явное включение владельцем. Постоянная автономная работа описана в [33-autonomy.md](33-autonomy.md), браузерный агент на отдельной ВМ — в [32-computer-use.md](32-computer-use.md).
 
 Сценарии лежат в `deploy/timeweb/`:
 
@@ -86,7 +86,7 @@ REPO_URL=git@github.com:OWNER/ai-farm.git REPO_REF=main bash bootstrap.sh
 6. ufw: входящие только 22, 80, 443. Docker публикует порты в обход ufw. Поэтому Compose привязывает PostgreSQL (55432) и web (3210) к 127.0.0.1, наружу смотрит только Caddy.
 7. fail2ban для sshd. Автоматические обновления безопасности включаются без автоматической перезагрузки: перезагрузка во время сделки нежелательна, перезагружайте вручную.
 8. Копирует код в `/opt/ai-farm` (0700, владелец `farm`). Существующий каталог не трогает.
-9. Создаёт `/opt/ai-farm/.env` (0600) из `.env.example` со свежими `POSTGRES_PASSWORD`, `SESSION_SECRET`, `OWNER_PASSWORD`. Заполняет `APP_ORIGIN=https://DOMAIN`, `SECURE_COOKIE=true`, `DOMAIN`, `FARM_DB_VOLUME=ai-farm-db`, `LOCAL_UID/GID`. **Существующий `.env` никогда не перезаписывается.** Пароль владельца печатается один раз; он также хранится в `.env`.
+9. Создаёт `/opt/ai-farm/.env` (0600) из `.env.example` со свежими `POSTGRES_PASSWORD`, `SESSION_SECRET`, `OWNER_PASSWORD`. Заполняет `APP_ORIGIN=https://DOMAIN`, `SECURE_COOKIE=true`, `DOMAIN`, `FARM_DB_VOLUME=ai-farm-db`, `LOCAL_UID/GID`. Для автономной работы ставит `AUTOPILOT_ON_BOOT=true`, `WORKER_STUCK_RESTART=true`, `PACING_ENABLED=true`. Генерирует `VM_AGENT_TOKEN` (64 hex-символа) для ВМ computer-use; сама функция остаётся выключенной (`COMPUTER_USE_ENABLED=false`). **Существующий `.env` никогда не перезаписывается.** Единственное исключение — пустой `VM_AGENT_TOKEN`: его скрипт дописывает. Пароль владельца печатается один раз; он также хранится в `.env`.
 
 Повторный запуск безопасен. Отдельные шаги можно пропустить: `SKIP_STEPS=swap,ufw`.
 
@@ -168,32 +168,52 @@ bash deploy/timeweb/deploy.sh
 bash deploy/timeweb/status.sh                     # службы, health, readiness, HTTPS, копии, диск
 curl -s -o /dev/null -w '%{http_code}\n' https://DOMAIN/api/trading/overview   # без входа: 401
 bash deploy/timeweb/dc.sh exec worker node --import tsx scripts/trading-check.ts paper bybit
+bash deploy/timeweb/dc.sh exec worker node --import tsx scripts/server-autopilot-check.ts   # = npm run autopilot:check
 ```
 
-Readiness может первые минуты отвечать 503, пока backup и observer не записали первый статус. Сертификат Let's Encrypt выдаётся при первом запросе; DNS собственного домена должен заранее указывать на IP.
+`deploy.sh` сам печатает отчёт автопилота в конце. В отчёте по-русски перечислены режим фермы, связь с worker, модель, расходы дня, менеджер, каждый цикл и каждое направление с причиной ожидания. Readiness может первые минуты отвечать 503, пока backup и observer не записали первый статус. Сертификат Let's Encrypt выдаётся при первом запросе; DNS собственного домена должен заранее указывать на IP.
 
 ## 7. Кабинет и тренировка
 
-Откройте `https://DOMAIN/office/trading`, войдите с паролем из `bootstrap.sh` и нажмите «Запустить тренировку». Это четыре бумажных портфеля на публичных котировках, ключи не нужны. Отсчёт 7 дней для допуска к Live начинается с этого момента, поэтому шаг стоит сделать сразу. При переносе БД тренировки уже идут.
+Откройте `https://DOMAIN/office` и войдите с паролем из `bootstrap.sh`. Главный экран — обзор доходов. Блок «Нужен человек» перечисляет то, что ждёт владельца: ключи бирж, выключенный Live, модель/OpenRouter, менеджер, компьютер ИИ, решения по идеям и заказам.
+
+При `AUTOPILOT_ON_BOOT=true` worker сам запускает четыре бумажных портфеля, Demo там, где есть Demo-ключи, менеджера и Paper-книги арбитража, фандинга и DeFi (по 100 виртуальных USDT). Проверка идёт сразу после старта и затем каждые 10 минут. Нажимать «Запустить тренировку» не нужно, но это и не мешает. Отсчёт 7 дней для допуска к Live начинается с первого запуска тренировки. Автопилот **не** снимает паузы и стопы, не включает выключенное владельцем, не трогает Live, лимиты и капитал. Поэтому в перенесённой БД со стопом сначала нужно нажать «Продолжить».
 
 ## 8. OpenRouter и бюджеты модели
 
-1. На openrouter.ai: «Keys» → «Create Key». Задайте **лимит кредитов на ключ**. Пополнение баланса (Credits) нужно только для платных моделей.
-2. В `/opt/ai-farm/.env` (через `nano`, без чата):
+По заданию владельца модель фермы — платная GPT-6 Astra через OpenRouter ([31-paid-model-and-computer-use.md](31-paid-model-and-computer-use.md), [33-autonomy.md](33-autonomy.md)). Можно временно оставить `MODEL_PROVIDER=demo`: торговля и Paper-направления работают без модели.
+
+1. На openrouter.ai: «Keys» → «Create Key», задайте **лимит кредитов на ключ**. Пополните баланс (Credits) на сумму не меньше `OPENAI_TOTAL_BUDGET_MICROUSD`. Без средств вызовы вернут `OPENROUTER_HTTP_402`. В настройках приватности не разрешайте сбор данных: адаптер требует `data_collection=deny`.
+2. В `/opt/ai-farm/.env` (через `nano`, не через чат):
 
    ```dotenv
-   MODEL_PROVIDER=openrouter
+   MODEL_PROVIDER=openai
+   OPENAI_TRANSPORT=openrouter
    OPENROUTER_API_KEY=…
-   OPENROUTER_MODEL=dots-studio/dots-3-note-preview:free
-   OPENROUTER_REASONING_EFFORT=low
    SEARCH_PROVIDER=searxng
+   WORKSPACE_MODE=studio              # разведка всех направлений вместе с торговлей
+   AUTONOMY_ENABLED=true
+   OPENAI_TOTAL_BUDGET_MICROUSD=90000000   # $90 на всю историю БД, не обнуляется
+   DAILY_BUDGET_KOPECKS=120000             # ~$10 в сутки; должен покрывать резерв computer-use
+   MONTHLY_BUDGET_KOPECKS=1080000
    ```
 
-   `MODEL_PROVIDER` и `SEARCH_PROVIDER` должны быть оба `demo` или оба не `demo`, иначе приложение не стартует (`DEMO_PROVIDERS_MUST_MATCH`). Текущий адаптер разрешает только бесплатные модели (`…:free`), подробности в [13-openrouter.md](13-openrouter.md). Платные модели и их денежные лимиты описаны в [31-paid-model-and-computer-use.md](31-paid-model-and-computer-use.md); там же перечислены дополнительные переменные.
+   Суммы взяты из примера [33-autonomy.md](33-autonomy.md). Их выбирает владелец. `MODEL_PROVIDER` и `SEARCH_PROVIDER` должны быть оба `demo` или оба не `demo` (`DEMO_PROVIDERS_MUST_MATCH`). Бесплатный вариант (`MODEL_PROVIDER=openrouter`, модели `…:free`) описан в [13-openrouter.md](13-openrouter.md).
 
-3. Общие рублёвые пределы: `DAILY_BUDGET_KOPECKS` (по умолчанию 15000 = 150 ₽), `MONTHLY_BUDGET_KOPECKS` (300000 = 3000 ₽). Также резервы `SCOUT_/LEAD_/REPORT_/ORDER_/RESEARCH_RESERVE_KOPECKS` и тарифы `MODEL_INPUT/OUTPUT_KOPECKS_PER_1K`. Лимиты менеджера заданы в коде (`MANAGER_POLICY`: до 5 ₽ на разбор, 20 ₽ в сутки, четыре разбора в сутки) и через `.env` не повышаются.
-4. Примените: `bash deploy/timeweb/dc.sh up -d --no-build --force-recreate web worker`. Простой `restart` новый `.env` не читает.
-5. В кабинете: «Менеджер» → «Включить менеджера». Если модельные задачи остановлены (`emergency_stop` из перенесённой БД), сначала нужно решение владельца нажать «Продолжить» в «Настройках».
+3. Остальные пределы. `PACING_ENABLED=true` распределяет дневной бюджет по часам UTC. Менеджер получает по умолчанию 120 ₽ на разбор и 480 ₽ в сутки для Astra, четыре разбора в сутки; это можно изменить через `MANAGER_RESERVE_KOPECKS`, `MANAGER_DAILY_KOPECKS`, `MANAGER_RUNS_PER_DAY` (потолки 200 ₽ / 1000 ₽ / 12). Также действуют резервы `SCOUT_/LEAD_/REPORT_/ORDER_/RESEARCH_RESERVE_KOPECKS`. Все расходы считаются в одном реестре; пределы не повышаются автоматически.
+4. Примените: `bash deploy/timeweb/dc.sh up -d --no-build --force-recreate web worker`. Простой `restart` новый `.env` не читает. Затем `… server-autopilot-check.ts`: модель должна быть «готова».
+5. Если модельные задачи остановлены (`emergency_stop` из перенесённой БД), владелец сам решает нажать «Продолжить» в кабинете. Менеджер, выключенный владельцем, автопилот не включает: «Менеджер» → «Включить менеджера».
+
+### Computer use (отдельная ВМ)
+
+ВМ 4 vCPU / 8 GB арендуется отдельно и настраивается по [32-computer-use.md](32-computer-use.md) (`vm-agent/`, `compose.vm.yaml`, ufw только с IP фермы на порт 8787). На ВМ укажите тот же `VM_AGENT_TOKEN`, что сгенерировал `bootstrap.sh` (`grep ^VM_AGENT_TOKEN= /opt/ai-farm/.env`). На ферме:
+
+```dotenv
+COMPUTER_USE_ENABLED=true
+VM_AGENT_URL=http://<ip-вм>:8787/
+```
+
+Остальные пределы: `COMPUTER_USE_STEP_LIMIT`, `COMPUTER_USE_TASK_CAP_MICROUSD` ($2), `COMPUTER_USE_DAILY_CAP_MICROUSD` ($10). Резерв задания $2 × `OPENAI_USD_KOPECKS` = 24 000 копеек, поэтому `DAILY_BUDGET_KOPECKS` должен быть не меньше, иначе будет `BUDGET_BLOCKED`. Снимки экрана пишутся в `/opt/ai-farm/output/computer-use`. Каталог подключён к web и worker в `compose.cloud.yaml`; `deploy.sh` выставляет ему владельца uid 1000. После `.env` пересоздайте web/worker и включите переключатель в кабинете. Внешние действия (оплаты, регистрации, публикации, сообщения) ждут одобрения владельца.
 
 ## 9–10. Bybit
 
@@ -300,8 +320,9 @@ bash deploy/timeweb/update.sh --no-pull  # код уже заменён (арх�
 - **Внешнего хранилища копий нет.** Копия на том же диске не защищает от потери VPS. Рекомендуется включить платные снимки сервера в панели Timeweb или регулярно забирать `backups/` на другой компьютер: `rsync -a farm@IP:/opt/ai-farm/backups/ ./farm-backups/`.
 - Старые образы: `docker image ls ai-farm`. Оставляйте текущий и `FARM_IMAGE_PREVIOUS`, остальные удаляйте `docker image rm`. `docker system prune` без проверки не запускайте.
 - Внешних оповещений нет: observer пишет историю только на этот сервер. Раз в день смотрите `status.sh` или кабинет.
-- Перезагрузка ОС: Compose-службы стартуют сами (`restart: unless-stopped`). После перезагрузки проверьте `status.sh`.
+- Перезагрузка ОС: Compose-службы стартуют сами (`restart: unless-stopped`). Зависший цикл завершает worker (`WORKER_STUCK_RESTART=true`), Docker его поднимает. После перезагрузки проверьте `status.sh` и отчёт автопилота.
+- Выключить автопилот: `AUTOPILOT_ON_BOOT=false` и пересоздать worker. Остановки направлений описаны в [35-owner-actions.md](35-owner-actions.md).
 
 ## Что проверено, а что нет
 
-20.10.2026 сценарии прошли `bash -n` и shellcheck. `bootstrap.sh` дважды подряд выполнен в одноразовом контейнере `ubuntu:24.04` без systemd/ufw/swap: пользователь, ключи, SSH-конфигурация (`sshd -T`), Docker из официального репозитория, копирование кода и генерация `.env` прошли успешно, повторный запуск ничего не перезаписал. В изолированном Docker-in-Docker с чистой БД прогнана цепочка `deploy.sh` → `status.sh` → `update.sh --no-pull` → `restore-from-dump.sh` в новый том → `deploy.sh`. Результат: все шесть служб healthy, health и readiness — 200, кабинет — 200, закрытый API без входа — 401. `trading-check paper bybit` получил 389 пар Bybit. Копия `preupdate` восстановлена в отдельный том, построчная сверка совпала. Восстановление в непустую БД и при работающих службах отклонено. Caddy стартовал, но сертификат для вымышленного имени, ожидаемо, не выдан. Прогон выявил и исправил ошибку: `backups/` и `.health/` должны принадлежать `LOCAL_UID`, теперь `deploy.sh` это проверяет. На настоящем VPS Timeweb, с systemd/ufw/fail2ban, настоящим сертификатом и приватными API Bybit сценарии **ещё не выполнялись**. Это приёмка дня запуска.
+20.10.2026 сценарии прошли `bash -n` и shellcheck. `bootstrap.sh` дважды подряд выполнен в одноразовом контейнере `ubuntu:24.04` без systemd/ufw/swap: пользователь, ключи, SSH-конфигурация (`sshd -T`), Docker из официального репозитория, копирование кода и генерация `.env` прошли успешно, повторный запуск ничего не перезаписал. В изолированном Docker-in-Docker с чистой БД прогнана цепочка `deploy.sh` → `status.sh` → `update.sh --no-pull` → `restore-from-dump.sh` в новый том → `deploy.sh`. Результат: все шесть служб healthy, health и readiness — 200, кабинет — 200, закрытый API без входа — 401. `trading-check paper bybit` получил 389 пар Bybit. После слияния с автопилотом прогон повторён: отчёт автопилота показал все циклы worker, тренировки и Paper-направления в работе; `VM_AGENT_TOKEN` сгенерирован (64 символа), каталог снимков computer-use доступен worker на запись. Копия `preupdate` восстановлена в отдельный том, построчная сверка совпала. Восстановление в непустую БД и при работающих службах отклонено. Caddy стартовал, но сертификат для вымышленного имени, ожидаемо, не выдан. Прогон выявил и исправил ошибку: `backups/` и `.health/` должны принадлежать `LOCAL_UID`, теперь `deploy.sh` это проверяет. На настоящем VPS Timeweb, с systemd/ufw/fail2ban, настоящим сертификатом и приватными API Bybit сценарии **ещё не выполнялись**. Это приёмка дня запуска.
