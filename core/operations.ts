@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { query } from './db'
 import { config } from './config'
+import { loopHealth, type LoopRow } from './worker-loops'
 import {
   isFresh,
   observationSummary,
@@ -22,13 +23,16 @@ async function readStatus(name: string) {
   }
 }
 export async function serviceReadiness(now = new Date()) {
-  const [state, backup] = await Promise.all([
+  const [state, backup, loops] = await Promise.all([
     query(
       'SELECT worker_heartbeat,payment_heartbeat,provider_readiness FROM system_state WHERE id=true',
     )
       .then((rows) => rows[0])
       .catch(() => null),
     readStatus('backup.json'),
+    query<LoopRow>('SELECT * FROM worker_loops')
+      .then((rows) => loopHealth(rows, now))
+      .catch(() => []),
   ])
   const infrastructureChecks: InfrastructureChecks = {
     database: !!state,
@@ -81,6 +85,8 @@ export async function serviceReadiness(now = new Date()) {
               : ('not_probed' as const),
       },
     },
+    // Informational: one line per worker loop. Codes and details stay in the office.
+    loops: loops.map((loop) => ({ name: loop.name, state: loop.state })),
     checkedAt: now.toISOString(),
   }
 }
