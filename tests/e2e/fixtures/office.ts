@@ -973,6 +973,7 @@ export function officeFixtures(now = new Date()) {
       lead: 1840,
       report: 1000,
       trading_manager: 0,
+      computer_use: 0,
     },
     testPayments: { count: 11, kopecks: 612000 },
     realRevenueKopecks: 0,

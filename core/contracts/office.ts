@@ -8,7 +8,8 @@ export type IdeaStatus = 'new' | 'accepted' | 'needs_human' | 'rejected' | 'prod
 export type CritiqueVerdict = 'PASS' | 'REVISE' | 'BLOCKED'
 export type AgentMutation = { param: string; from: unknown; to: unknown }
 export type ScoreComponent = 'P' | 'E' | 'U' | 'B' | 'C' | 'D' | 'H'
-export type BudgetCategory = 'research' | 'order' | 'scout' | 'lead' | 'report' | 'trading_manager'
+export type BudgetCategory =
+  'research' | 'order' | 'scout' | 'lead' | 'report' | 'trading_manager' | 'computer_use'
 
 export type OfficeOverview = {
   mode: OfficeMode

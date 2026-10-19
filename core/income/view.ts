@@ -1,4 +1,4 @@
-import { config } from '../config'
+import { computerUseReady, config } from '../config'
 import { query } from '../db'
 import { officeOverview, publicUrl } from '../office'
 import { serviceName } from '../service-names'
@@ -248,10 +248,13 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
        FROM system_state s WHERE s.id=true`,
     ),
     query('SELECT enabled,finished_at,error FROM earnings_monitor WHERE id=true'),
-    // Computer use is built separately; until its tables exist the direction is not connected.
     query(
-      `SELECT table_name FROM information_schema.tables
-       WHERE table_schema='public' AND table_name LIKE 'computer%' ORDER BY 1 LIMIT 5`,
+      `SELECT c.enabled,c.last_error,
+        (SELECT count(*)::int FROM computer_use_tasks WHERE status='done') AS done,
+        (SELECT count(*)::int FROM computer_use_approvals WHERE status='pending') AS approvals,
+        (SELECT count(*)::int FROM computer_use_opportunities) AS found,
+        (SELECT max(created_at) FROM computer_use_steps) AS last_step
+       FROM computer_use c WHERE c.id=true`,
     ),
     query(
       `SELECT o.exchange,o.mode,o.side,o.symbol,o.filled_qty::text,o.quote::text,
@@ -515,17 +518,27 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     lastAt: iso(mon?.finished_at),
     link: '/office/earnings',
   })
+  const cu = computer[0]
+  const cuBlocker = computerUseReady(config())
   sources.push({
     id: 'computer',
     group: 'computer',
     title: 'Компьютер ИИ',
-    status: computer.length ? 'needs_human' : 'disabled',
+    status: cuBlocker
+      ? 'disabled'
+      : !cu?.enabled
+        ? 'needs_human'
+        : cu.approvals
+          ? 'needs_human'
+          : 'autonomous',
     mode: null,
     result: null,
-    detail: computer.length
-      ? 'Раздел подключается. Состояние смотрите на его странице.'
-      : 'Не подключён. Виртуальная машина для работы агента ещё не настроена.',
-    lastAt: null,
+    detail: cuBlocker
+      ? 'Не подключён. Виртуальная машина для работы агента ещё не настроена.'
+      : !cu?.enabled
+        ? 'Готов, но выключен. Включите на странице раздела.'
+        : `Заданий выполнено: ${cu.done}, найдено возможностей: ${cu.found}${cu.approvals ? `, ждут вашего решения: ${cu.approvals}` : ''}.`,
+    lastAt: iso(cu?.last_step),
     link: '/office/computer',
   })
 
@@ -608,11 +621,20 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       link: '/office/manager',
       severity: 'warn',
     })
-  if (!computer.length)
+  if (cuBlocker)
     add({
       id: 'computer',
       title: 'Компьютер ИИ не настроен',
       detail: 'Нужна отдельная виртуальная машина для агента. Без неё направление не работает.',
+      link: '/office/computer',
+      severity: 'warn',
+    })
+  else if (cu?.approvals)
+    add({
+      id: 'computer',
+      title: `Компьютер ИИ ждёт решения: ${cu.approvals}`,
+      detail:
+        'Оплата, вход, регистрация или публикация выполняются только после вашего разрешения.',
       link: '/office/computer',
       severity: 'warn',
     })

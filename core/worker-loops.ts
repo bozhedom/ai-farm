@@ -37,6 +37,7 @@ export const loopSpecs: Record<string, LoopSpec> = {
   providers: { label: 'Проверка модели и поиска', expectedMs: 2 * minute, stuckMs: 15 * minute },
   orders: { label: 'Заказы', expectedMs: 2 * minute, stuckMs: 15 * minute },
   manager: { label: 'Торговый менеджер', expectedMs: 5 * minute, stuckMs: 40 * minute },
+  computer: { label: 'Компьютер ИИ', expectedMs: 5 * minute, stuckMs: 40 * minute },
   farm: { label: 'Разведка, отчёты, отбор', expectedMs: 2 * minute, stuckMs: 15 * minute },
   autopilot: { label: 'Автопилот', expectedMs: 30 * minute, stuckMs: 15 * minute },
 }

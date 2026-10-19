@@ -37,6 +37,14 @@ const messages: Record<string, string> = {
   PRODUCT_NOT_PUBLIC: 'Сначала покажите продукт на сайте.',
   INVALID_INPUT: 'Проверьте введённые данные.',
   RATE_LIMITED: 'Слишком часто. Подождите минуту.',
+  COMPUTER_USE_SCHEME_BLOCKED:
+    'Такое задание не берём: обход проверок, мультиаккаунты или чужие данные.',
+  COMPUTER_USE_GOAL_LENGTH: 'Опишите задание от 10 до 1000 символов без угловых скобок.',
+  COMPUTER_USE_QUEUE_FULL: 'Очередь заданий заполнена. Дождитесь выполнения.',
+  COMPUTER_USE_TASK_FINISHED: 'Задание уже завершено.',
+  COMPUTER_TASK_NOT_FOUND: 'Такого задания нет.',
+  COMPUTER_APPROVAL_NOT_FOUND: 'Этот запрос уже решён.',
+  POLICY_IDEA_TOPIC_BLOCKED: 'Такие темы ферма не берёт.',
 }
 
 export type OfficeError = { status: number; code: string; text: string }

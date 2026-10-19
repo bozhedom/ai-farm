@@ -42,6 +42,7 @@
 - `prompts/master.md` — общие инструкции всех модельных ролей. Разрешения и действия контролирует сервер.
 - Ферма ([19-farm-cycle.md](19-farm-cycle.md), [20-evolution.md](20-evolution.md)): `core/taxonomy.ts` (отрасли, темы, поисковые фразы), `core/ideas.ts` (отпечаток, повторы, балл, статусы), `core/agents.ts` (параметры, имена «Разведчик А2», метрики), `core/evolution.ts` (балл и раунд отбора), `core/jobs/{scout,report,lead,evolve}.ts`, расписание в `core/autonomy.ts`, лента в `core/activity-feed.ts`, данные кабинета в `core/office.ts` и `server/api/office/**`, подготовка показа `scripts/demo-prepare.ts`.
 
+- Компьютер ИИ ([32-computer-use.md](32-computer-use.md)): `core/computer-use/` (схемы действий, политика, цикл заданий, данные кабинета), `core/providers/openrouter-tools.ts` (единственный путь вызова с инструментами), `vm-agent/` (отдельный сервис браузера на ВМ), `server/api/computer-use/**`, страница `app/pages/office/computer.vue`, миграция `037`.
 - `core/storefront.ts` — серверный список цен (`priceList`, `priceIds`), цены типов услуг по умолчанию, `publicSlug`, `publicServiceProjection`, рубли и wei без плавающей точки.
 - `core/contracts/` — общие типы API: `common.ts`, `public.ts` (покупатель), `office.ts` (кабинет).
 

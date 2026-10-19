@@ -11,6 +11,7 @@ import { exchanges } from '../core/trading/types'
 import { earningsTick } from '../core/earnings/monitor'
 import { managerTick } from '../core/manager/runtime'
 import { executionTick } from '../core/execution/engine'
+import { computerUseTick } from '../core/computer-use/runtime'
 import { EXECUTION_POLICY } from '../core/policy'
 import { createLoopRunner, loopSpecs } from '../core/worker-loops'
 import { runAutopilot } from '../core/autopilot'
@@ -147,6 +148,9 @@ while (!stopping) {
       if (job) launch(job, 'orders')
     })
     background('manager', () => managerTick(undefined, isStopping, ready.model))
+    // One browser task on the separate VM, screenshot by screenshot.
+    if (config().COMPUTER_USE_ENABLED)
+      background('computer', () => computerUseTick(undefined, isStopping))
     if (config().WORKSPACE_MODE === 'studio')
       await step('farm', async () => {
         if (farmBusy) return

@@ -246,6 +246,7 @@ describe('owner office API', () => {
     const money = (await call('GET', '/api/office/money', session)).json
     expect(money).toMatchObject({ realRevenueKopecks: 0, testPayments: { count: 0, kopecks: 0 } })
     expect(Object.keys(money.byCategory).sort()).toEqual([
+      'computer_use',
       'lead',
       'order',
       'report',
