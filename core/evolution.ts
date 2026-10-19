@@ -191,6 +191,7 @@ export const scoreWeights: Readonly<Record<ScoreComponent, number>> = Object.fre
   B: 15,
   C: 5,
   D: 10,
+  H: 20,
 })
 export type ScoredAgent = {
   strategyId: string
@@ -221,6 +222,7 @@ export function scoreStrategies(rows: AgentMetrics[]): ScoredAgent[] {
         m.delivered + m.review >= 3
           ? Math.round((1000 * m.delivered) / (m.delivered + m.review))
           : null,
+      H: m.humanFinished ? Math.round((1000 * m.humanWorked) / m.humanFinished) : null,
     }
     let weighted = 0
     let weights = 0

@@ -17,6 +17,8 @@ const metrics = (id: string, over: Partial<AgentMetrics> = {}): AgentMetrics => 
   reserveKopecks: 0,
   delivered: 0,
   review: 0,
+  humanFinished: 0,
+  humanWorked: 0,
   ...over,
 })
 const state = {
@@ -30,7 +32,15 @@ const state = {
 describe('quality score', () => {
   it('uses integer components and drops the ones that do not apply', () => {
     const [scored] = scoreStrategies([metrics('a')])
-    expect(scored!.components).toEqual({ P: 500, E: 667, U: 1000, B: null, C: null, D: null })
+    expect(scored!.components).toEqual({
+      P: 500,
+      E: 667,
+      U: 1000,
+      B: null,
+      C: null,
+      D: null,
+      H: null,
+    })
     expect(scored!.total).toBe(Math.round((40 * 500 + 20 * 667 + 10 * 1000) / 70))
     const full = scoreStrategies([
       metrics('b', {
@@ -40,12 +50,16 @@ describe('quality score', () => {
         costKopecks: 9000,
         delivered: 3,
         review: 1,
+        humanFinished: 4,
+        humanWorked: 1,
       }),
     ])[0]!
-    expect(full.components).toEqual({ P: 500, E: 667, U: 1000, B: 500, C: 500, D: 750 })
+    expect(full.components).toEqual({ P: 500, E: 667, U: 1000, B: 500, C: 500, D: 750, H: 250 })
     const weights = Object.values(scoreWeights).reduce((a, b) => a + b, 0)
     expect(full.total).toBe(
-      Math.round((40 * 500 + 20 * 667 + 10 * 1000 + 15 * 500 + 5 * 500 + 10 * 750) / weights),
+      Math.round(
+        (40 * 500 + 20 * 667 + 10 * 1000 + 15 * 500 + 5 * 500 + 10 * 750 + 20 * 250) / weights,
+      ),
     )
     expect(Number.isInteger(full.total)).toBe(true)
   })

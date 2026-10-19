@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { config, usesSourcePosts } from '../config'
+import { config, paidModelId, usesSourcePosts } from '../config'
 import { isDemoStand } from '../stand'
 import { audit, query, transaction } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
@@ -168,7 +168,7 @@ export async function research(job: Job) {
         cloudTariff:
           config().MODEL_PROVIDER === 'openai'
             ? {
-                model: config().OPENAI_MODEL,
+                model: paidModelId(config()),
                 inputMicrousdPerToken: 10,
                 cacheReadMicrousdPerToken: 1,
                 cacheWriteTenthsMicrousdPerToken: 125,

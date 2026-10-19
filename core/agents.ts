@@ -96,35 +96,38 @@ export async function agentNames(db: Connection = pool) {
 
 const founderParams: StrategyParams[] = [
   {
-    focusCategories: ['marketplaces', 'b2b', 'handmade'],
+    focusCategories: ['marketplaces', 'b2b', 'digital-goods'],
     evidenceMinimum: 3,
     tone: 'plain',
     ideaScope: 'narrow',
     riskAppetite: 'low',
   },
   {
-    focusCategories: ['food', 'beauty', 'travel'],
+    focusCategories: ['food', 'beauty', 'crypto-rewards'],
     evidenceMinimum: 3,
     tone: 'friendly',
     ideaScope: 'broad',
     riskAppetite: 'low',
   },
   {
-    focusCategories: ['tutoring', 'courses', 'creators'],
+    focusCategories: ['tutoring', 'courses', 'grants'],
     evidenceMinimum: 2,
     tone: 'expert',
     ideaScope: 'narrow',
     riskAppetite: 'medium',
   },
   {
-    focusCategories: ['auto', 'repair', 'farming'],
+    focusCategories: ['auto', 'repair', 'freelance'],
     evidenceMinimum: 2,
     tone: 'plain',
     ideaScope: 'broad',
     riskAppetite: 'medium',
   },
 ]
-/** Founder parameters by position; later founders cover the remaining industries. */
+/**
+ * Founder parameters by position; later founders cover the remaining industries. Each founder
+ * also watches one earning direction beyond client texts, so selection can compare them.
+ */
 export function defaultParams(index: number): StrategyParams {
   if (index < founderParams.length) return founderParams[index]!
   const rest = taxonomyCategoryIds.filter(
@@ -248,6 +251,9 @@ export type AgentMetrics = {
   reserveKopecks: number
   delivered: number
   review: number
+  /** "Needs a person" ideas the owner launched and finished, and of those, the ones that worked. */
+  humanFinished: number
+  humanWorked: number
 }
 
 /** Paid providers reserve money for a scout; free providers do not, so cost is not compared. */
@@ -274,7 +280,7 @@ export async function agentMetrics(
   if (!strategyIds.length) return []
   // Demo ideas score agents only on a demo stand; real agents are never judged by them.
   const includeDemo = config().MODEL_PROVIDER === 'demo'
-  const [strategies, ideas, built, costs, orders] = await inOrder([
+  const [strategies, ideas, built, costs, orders, finished] = await inOrder([
     () => query(`SELECT id,created_at FROM strategies WHERE id=ANY($1::uuid[])`, [strategyIds], db),
     () =>
       query(
@@ -311,6 +317,15 @@ export async function agentMetrics(
         [generation, strategyIds],
         db,
       ),
+    () =>
+      query(
+        `SELECT strategy_id,count(*)::int AS finished,
+        count(*) FILTER(WHERE owner_outcome='worked')::int AS worked
+       FROM ideas WHERE generation=$1 AND strategy_id=ANY($2::uuid[]) AND ($3 OR NOT is_demo)
+       AND owner_status='done' GROUP BY strategy_id`,
+        [generation, strategyIds, includeDemo],
+        db,
+      ),
   ])
   const reserve = scoutReserveKopecks()
   return strategies.map((s) => {
@@ -327,6 +342,7 @@ export async function agentMetrics(
       return sum + Math.min(1000, Math.round((1000 * domains) / 3))
     }, 0)
     const order = orders.find((o) => o.strategy_id === s.id)
+    const owner = finished.find((o) => o.strategy_id === s.id)
     return {
       strategyId: s.id as string,
       createdAt: new Date(s.created_at).toISOString(),
@@ -340,6 +356,8 @@ export async function agentMetrics(
       reserveKopecks: reserve,
       delivered: (order?.delivered as number | undefined) ?? 0,
       review: (order?.review as number | undefined) ?? 0,
+      humanFinished: (owner?.finished as number | undefined) ?? 0,
+      humanWorked: (owner?.worked as number | undefined) ?? 0,
     }
   })
 }

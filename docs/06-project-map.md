@@ -7,7 +7,7 @@
 - Публичный сайт без пароля ([17-public-site.md](17-public-site.md)): `app/pages/index.vue` (витрина), `services/[slug].vue` (услуга и форма), `order/[token].vue` (заказ по секретной ссылке, оплата, результат), `terms.vue`; блоки в `app/components/public/`, помощники браузера в `app/utils/public-site.ts`.
 - `core/public-orders.ts` — секретные ссылки, сумма счёта, вид заказа для покупателя; `core/rate-limit.ts` — лимиты публичного API; `server/utils/client.ts` — адрес покупателя для лимитов. Оплата криптой и сканер блоков — [18-crypto-payments.md](18-crypto-payments.md).
 - `app/pages/office.vue` — общая оболочка кабинета (`OfficeShell`): меню, шторка и нижние вкладки на телефоне, живой статус, состояние «нет связи».
-- `app/pages/office/` — разделы кабинета: `index` (Главная), `ideas/` (рейтинг, карточка идеи, отчёты руководителя), `agents`, `products`, `orders/`, `leads` (Клиенты), `money`, `settings` (режим, расписание, отбор, состояние сервера, техжурнал), `login`.
+- `app/pages/office/` — разделы кабинета: `index` (Обзор «Как ферма зарабатывает», данные `/api/office/income` из `core/income/`), `farm` (прежняя главная: ферма идей), `ideas/` (рейтинг, карточка идеи, отчёты руководителя), `agents`, `products`, `orders/`, `leads` (Клиенты), `money`, `settings` (режим, расписание, отбор, состояние сервера, техжурнал), `login`.
 - `app/components/office/` — общие блоки кабинета: лента, бейджи, балл, пустые состояния, режим работы, факты идеи, история версий продукта.
 - `app/composables/office/` — загрузка по типам `core/contracts/office.ts` (`data.ts`), общий опрос раз в 5 секунд с паузой в скрытой вкладке (`resource.ts`), действия владельца (`actions.ts`), подписи и форматирование.
 - `app/middleware/legacy.global.ts` и `routeRules` в `nuxt.config.ts` — 301 со старых `/login`, `/catalog`, `/orders/*`, `/?view=`, `/office?view=` в разделы кабинета.
@@ -42,6 +42,7 @@
 - `prompts/master.md` — общие инструкции всех модельных ролей. Разрешения и действия контролирует сервер.
 - Ферма ([19-farm-cycle.md](19-farm-cycle.md), [20-evolution.md](20-evolution.md)): `core/taxonomy.ts` (отрасли, темы, поисковые фразы), `core/ideas.ts` (отпечаток, повторы, балл, статусы), `core/agents.ts` (параметры, имена «Разведчик А2», метрики), `core/evolution.ts` (балл и раунд отбора), `core/jobs/{scout,report,lead,evolve}.ts`, расписание в `core/autonomy.ts`, лента в `core/activity-feed.ts`, данные кабинета в `core/office.ts` и `server/api/office/**`, подготовка показа `scripts/demo-prepare.ts`.
 
+- Компьютер ИИ ([32-computer-use.md](32-computer-use.md)): `core/computer-use/` (схемы действий, политика, цикл заданий, данные кабинета), `core/providers/openrouter-tools.ts` (единственный путь вызова с инструментами), `vm-agent/` (отдельный сервис браузера на ВМ), `server/api/computer-use/**`, страница `app/pages/office/computer.vue`, миграция `037`.
 - `core/storefront.ts` — серверный список цен (`priceList`, `priceIds`), цены типов услуг по умолчанию, `publicSlug`, `publicServiceProjection`, рубли и wei без плавающей точки.
 - `core/contracts/` — общие типы API: `common.ts`, `public.ts` (покупатель), `office.ts` (кабинет).
 

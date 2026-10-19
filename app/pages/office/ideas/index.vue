@@ -7,7 +7,7 @@ import {
   type IdeaView,
 } from '~/composables/office/data'
 import { count, dayWord, withCount } from '~/composables/office/format'
-import { ideaStatus, launchBadge, takenBadge } from '~/composables/office/labels'
+import { ideaStatus, launchBadge, outcomeBadge, takenBadge } from '~/composables/office/labels'
 
 useHead({ title: 'Идеи' })
 const route = useRoute()
@@ -18,7 +18,7 @@ const setTab = (next: 'rating' | 'reports') =>
 
 const { data: overview } = useOfficeOverview()
 // Old links (`?status=needs_human` from «Ждут вас») open the matching view.
-const views: IdeaView[] = ['farm', 'human', 'rejected', 'taken']
+const views: IdeaView[] = ['farm', 'human', 'rejected', 'taken', 'done']
 const startView = (): IdeaView => {
   const q = String(route.query.view || '')
   if ((views as string[]).includes(q)) return q as IdeaView
@@ -39,6 +39,8 @@ const viewChips = computed(() => {
   ]
   if (c?.taken || filters.value.view === 'taken')
     chips.push({ value: 'taken', label: 'В работе у меня', n: c?.taken })
+  if (c?.done || filters.value.view === 'done')
+    chips.push({ value: 'done', label: 'Завершено мной', n: c?.done })
   return chips
 })
 // Industries with at least two ideas get a chip; the rest hide behind «Ещё».
@@ -253,6 +255,9 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
               }}</span>
               <span v-else-if="idea.ownerStatus === 'taken'"
                 ><OfficeBadge :badge="takenBadge"
+              /></span>
+              <span v-else-if="idea.ownerStatus === 'done' && idea.ownerOutcome"
+                ><OfficeBadge :badge="outcomeBadge[idea.ownerOutcome]"
               /></span>
               <span v-else
                 ><OfficeBadge :badge="launchBadge(idea)" :dot="!idea.farmExecutable"

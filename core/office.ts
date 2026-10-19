@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { config, usesSourcePosts } from './config'
+import { config, paidModelId, usesSourcePosts } from './config'
 import { audit, query, transaction } from './db'
 import { budgetSummary } from './budget'
 import { enqueue } from './queue'
@@ -255,8 +255,12 @@ function ideaView(
         critique: String(c.critique?.reason ?? ''),
       })),
     ownerNote: row.owner_note,
-    ownerStatus: row.owner_status === 'taken' ? 'taken' : null,
+    ownerStatus:
+      row.owner_status === 'taken' || row.owner_status === 'done' ? row.owner_status : null,
     ownerTakenAt: iso(row.owner_taken_at),
+    ownerOutcome:
+      row.owner_outcome === 'worked' || row.owner_outcome === 'failed' ? row.owner_outcome : null,
+    ownerOutcomeAt: iso(row.owner_outcome_at),
     buildError: row.build_error ? buildErrorText(row.build_error) : null,
     buildFailedAt: iso(row.build_failed_at),
     product: product
@@ -302,8 +306,8 @@ export const ideaListSchema = z
       .transform((value) => taxonomyCategories.find((c) => c.label === value)?.id ?? value)
       .refine((id) => Object.hasOwn(categoryById, id))
       .optional(),
-    /** Who launches it: the farm, a person, rejected by the critic, or taken by the owner. */
-    view: z.enum(['farm', 'human', 'rejected', 'taken']).optional(),
+    /** Who launches it: the farm, a person, rejected by the critic, taken or finished by the owner. */
+    view: z.enum(['farm', 'human', 'rejected', 'taken', 'done']).optional(),
     offset: z.coerce.number().int().min(0).max(100000000).default(0),
   })
   .strict()
@@ -313,6 +317,7 @@ const ideaViews = {
   human: "NOT farm_executable AND status<>'rejected'",
   rejected: "status='rejected'",
   taken: "owner_status='taken'",
+  done: "owner_status='done'",
 } as const
 
 export async function officeIdeas(filter: unknown = {}): Promise<OfficeIdeaList> {
@@ -354,6 +359,7 @@ export async function officeIdeas(filter: unknown = {}): Promise<OfficeIdeaList>
       human: counts!.human,
       rejected: counts!.rejected,
       taken: counts!.taken,
+      done: counts!.done,
       byCategory: Object.fromEntries(byCategory.map((r) => [r.category, r.n])),
     },
   }
@@ -375,10 +381,16 @@ export const ideaUpdateSchema = z
       .refine((s) => !/[<>]/.test(s), 'HTML_FORBIDDEN')
       .optional(),
     status: z.enum(['needs_human', 'rejected']).optional(),
-    /** Take a "needs a person" idea into work (one at a time), or let it go. */
-    ownerStatus: z.enum(['taken']).nullable().optional(),
+    /** Take a "needs a person" idea into work (one at a time), finish it, or let it go. */
+    ownerStatus: z.enum(['taken', 'done']).nullable().optional(),
+    /** Required when finishing: the owner's own account of how the launch went. */
+    ownerOutcome: z.enum(['worked', 'failed']).optional(),
   })
   .strict()
+  .refine((input) => (input.ownerStatus === 'done') === (input.ownerOutcome !== undefined), {
+    message: 'OUTCOME_REQUIRES_DONE',
+    path: ['ownerOutcome'],
+  })
 
 /**
  * Owner note, moving a "needs a person" idea to rejected or back, and taking one such idea into
@@ -399,12 +411,36 @@ export async function updateIdea(id: string, value: unknown) {
           !idea.farm_executable)
       if (!allowed) throw new Error('IDEA_STATUS_CHANGE_FORBIDDEN')
       await query('UPDATE ideas SET status=$2 WHERE id=$1', [id, input.status], db)
-      // A rejected idea is no longer in the owner's work.
+      // A rejected idea is no longer in the owner's work. A finished one keeps its outcome.
+      if (input.status === 'rejected' && idea.owner_status === 'done')
+        throw new Error('IDEA_STATUS_CHANGE_FORBIDDEN')
       if (input.status === 'rejected' && idea.owner_status)
         await query('UPDATE ideas SET owner_status=NULL,owner_taken_at=NULL WHERE id=$1', [id], db)
     }
     if (input.ownerStatus !== undefined && input.ownerStatus !== idea.owner_status) {
-      if (input.ownerStatus === 'taken') {
+      // A recorded outcome is history: selection may already have counted it.
+      if (idea.owner_status === 'done') throw new Error('IDEA_OUTCOME_FINAL')
+      if (input.ownerStatus === 'done') {
+        if (idea.owner_status !== 'taken') throw new Error('IDEA_FINISH_REQUIRES_TAKEN')
+        await query(
+          "UPDATE ideas SET owner_status='done',owner_outcome=$2,owner_outcome_at=now() WHERE id=$1",
+          [id, input.ownerOutcome],
+          db,
+        )
+        await audit(
+          'idea_outcome',
+          input.ownerOutcome === 'worked'
+            ? `Владелец запустил идею «${idea.title}»: сработало.`
+            : `Владелец запустил идею «${idea.title}»: не сработало.`,
+          {
+            ideaId: id,
+            agentId: idea.strategy_id,
+            title: idea.title,
+            outcome: input.ownerOutcome,
+          },
+          db,
+        )
+      } else if (input.ownerStatus === 'taken') {
         if (idea.farm_executable || (input.status ?? idea.status) !== 'needs_human')
           throw new Error('IDEA_TAKE_FORBIDDEN')
         // Variant 2 of the brief: one hypothesis under the owner's control at a time.
@@ -421,14 +457,15 @@ export async function updateIdea(id: string, value: unknown) {
         )
       } else
         await query('UPDATE ideas SET owner_status=NULL,owner_taken_at=NULL WHERE id=$1', [id], db)
-      await audit(
-        input.ownerStatus === 'taken' ? 'idea_taken' : 'idea_released',
-        input.ownerStatus === 'taken'
-          ? 'Владелец взял идею в работу.'
-          : 'Владелец вернул идею в рейтинг.',
-        { ideaId: id, title: idea.title },
-        db,
-      )
+      if (input.ownerStatus !== 'done')
+        await audit(
+          input.ownerStatus === 'taken' ? 'idea_taken' : 'idea_released',
+          input.ownerStatus === 'taken'
+            ? 'Владелец взял идею в работу.'
+            : 'Владелец вернул идею в рейтинг.',
+          { ideaId: id, title: idea.title },
+          db,
+        )
     }
     if (input.ownerNote !== undefined)
       await query('UPDATE ideas SET owner_note=$2 WHERE id=$1', [id, input.ownerNote], db)
@@ -719,6 +756,7 @@ export async function officeMoney(): Promise<OfficeMoney> {
     lead: 0,
     report: 0,
     trading_manager: 0,
+    computer_use: 0,
   }
   for (const row of categories)
     if (Object.hasOwn(byCategory, row.category))
@@ -786,7 +824,7 @@ const modelLabels: Record<string, string> = {
 }
 const modelIds: Record<string, (c: ReturnType<typeof config>) => string> = {
   ollama: (c) => c.OLLAMA_MODEL,
-  openai: (c) => c.OPENAI_MODEL,
+  openai: paidModelId,
   openrouter: (c) => c.OPENROUTER_MODEL,
   yandex: (c) => c.YANDEX_MODEL,
 }
@@ -811,7 +849,10 @@ export async function officeSettings(): Promise<OfficeSettings> {
     leadsPerDay: state!.leads_per_day,
     scheduleHourUtc: state!.schedule_hour_utc ?? 0,
     providers: {
-      model: modelLabels[c.MODEL_PROVIDER] ?? 'Модель',
+      model:
+        c.MODEL_PROVIDER === 'openai' && c.OPENAI_TRANSPORT === 'openrouter'
+          ? 'OpenAI через OpenRouter, платная модель'
+          : (modelLabels[c.MODEL_PROVIDER] ?? 'Модель'),
       search: searchLabels[c.SEARCH_PROVIDER] ?? c.SEARCH_PROVIDER,
       payment:
         c.PAYMENT_MODE === 'sepolia'
@@ -1044,6 +1085,7 @@ const errorTexts: [RegExp, string][] = [
   [/^LEASE_(EXPIRED|LOST)$/, 'Сервер перезапустился, задача вернулась в очередь.'],
   [/^WORKER_DRAINING$/, 'Сервер остановлен штатно, задача продолжится.'],
   [/DAILY_BUDGET_WAIT$/, 'Ждёт следующего дня: дневной лимит исчерпан.'],
+  [/PACING_WAIT$/, 'Ждёт своего часа: бюджет модели распределяется по суткам.'],
   [/SLOT_EXPIRED$/, 'Пропущена: день уже прошёл.'],
   [/^SEARCH_INSUFFICIENT_SOURCES$/, 'Поиск вернул мало источников.'],
   [/^SEARCH_/, 'Поиск не ответил.'],

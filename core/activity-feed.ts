@@ -147,6 +147,13 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
     }
     case 'idea_taken':
       return item(`Вы взяли идею в работу: «${cleanText(d.title)}».`, `/office/ideas/${d.ideaId}`)
+    case 'idea_outcome':
+      return item(
+        d.outcome === 'worked'
+          ? `Вы запустили идею «${cleanText(d.title)}»: сработало.`
+          : `Вы запустили идею «${cleanText(d.title)}»: не сработало.`,
+        `/office/ideas/${d.ideaId}`,
+      )
     case 'idea_released':
       return item(
         `Идея «${cleanText(d.title)}» больше не в работе у вас.`,
@@ -295,6 +302,23 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
       return item('Вы изменили настройки фермы.', '/office/settings')
     case 'research_restarted':
       return item('Начался новый сезон на 28 дней.', '/office/settings')
+    case 'autopilot_decision': {
+      const key = String(d.key ?? '')
+      return item(
+        event.message,
+        key.startsWith('trading:')
+          ? '/office/trading'
+          : key.startsWith('execution:')
+            ? '/office/earnings'
+            : key === 'manager'
+              ? '/office/manager'
+              : key === 'schedule' || key === 'studio'
+                ? '/office/settings'
+                : null,
+      )
+    }
+    case 'worker_loop_stuck':
+      return item(event.message)
     default:
       return []
   }
@@ -309,6 +333,7 @@ export const feedKinds = [
   'idea_needs_human',
   'idea_build_failed',
   'idea_taken',
+  'idea_outcome',
   'idea_released',
   'product_published',
   'product_created',
@@ -332,6 +357,8 @@ export const feedKinds = [
   'control',
   'settings_changed',
   'research_restarted',
+  'autopilot_decision',
+  'worker_loop_stuck',
 ]
 
 /**

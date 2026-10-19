@@ -3,7 +3,8 @@ import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { activityContext, checkWorkerDrain, type CallActivity } from './activity'
 import { lockResearchWindow } from './research-window'
-import { MANAGER_POLICY } from './policy'
+import { managerLimits } from './manager/limits'
+import { usdToKopecks } from './providers/openai-cost'
 
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
@@ -29,7 +30,8 @@ export async function budgetSummary(db: Connection = pool) {
   }
 }
 
-export type BudgetCategory = 'research' | 'order' | 'scout' | 'lead' | 'report' | 'trading_manager'
+export type BudgetCategory =
+  'research' | 'order' | 'scout' | 'lead' | 'report' | 'trading_manager' | 'computer_use'
 /** Farm work stops with the research window and pauses; accepted orders do not. */
 export const farmCategories: readonly BudgetCategory[] = ['research', 'scout', 'lead', 'report']
 
@@ -37,7 +39,12 @@ export const farmCategories: readonly BudgetCategory[] = ['research', 'scout', '
 export function reserveFor(category: BudgetCategory) {
   const c = config()
   if (category === 'trading_manager')
-    return ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? MANAGER_POLICY.reserveKopecks : 0
+    return ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? managerLimits().reserveKopecks : 0
+  // One browser task: its dollar cap converted once, so the ledger shows the same envelope.
+  if (category === 'computer_use')
+    return c.MODEL_PROVIDER === 'openai'
+      ? usdToKopecks(c.COMPUTER_USE_TASK_CAP_MICROUSD, c.OPENAI_USD_KOPECKS)
+      : 0
   const paid =
     ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ||
     (category !== 'order' && c.SEARCH_PROVIDER === 'yandex')
@@ -184,8 +191,24 @@ export async function meteredCall<T>(args: {
     if (!state.research_enabled && farm) return { error: new Error('RESEARCH_WINDOW_CLOSED') }
     if (state.mode === 'emergency_stop') throw new Error('STOPPED')
     if (!reservation || reservation.status !== 'open') throw new Error('RESERVATION_CLOSED')
-    if (state.mode === 'paused' && (farm || reservation.category === 'trading_manager'))
+    if (
+      state.mode === 'paused' &&
+      (farm || ['trading_manager', 'computer_use'].includes(reservation.category))
+    )
       throw new Error('PAUSED')
+    if (reservation.category === 'computer_use') {
+      const [owner] = await query('SELECT enabled FROM computer_use WHERE id=true', [], db)
+      if (!owner?.enabled) throw new Error('COMPUTER_USE_PAUSED')
+      const [spent] = await query(
+        `SELECT coalesce(sum(t.charged_microusd),0)::bigint AS amount FROM tool_calls t
+         JOIN budget_reservations r ON r.id=t.reservation_id WHERE r.category='computer_use'
+         AND t.created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+        [],
+        db,
+      )
+      if (Number(spent!.amount) + maximumUsd > config().COMPUTER_USE_DAILY_CAP_MICROUSD)
+        throw new Error('COMPUTER_USE_DAILY_LIMIT')
+    }
     if (reservation.category === 'trading_manager') {
       const [manager] = await query('SELECT enabled FROM trading_manager WHERE id=true', [], db)
       if (!manager?.enabled) throw new Error('MANAGER_PAUSED')
@@ -196,7 +219,7 @@ export async function meteredCall<T>(args: {
         [],
         db,
       )
-      if (spent!.amount + args.maximum > MANAGER_POLICY.dailyKopecks)
+      if (spent!.amount + args.maximum > managerLimits().dailyKopecks)
         throw new Error('MANAGER_BUDGET_LIMIT')
     }
     if (

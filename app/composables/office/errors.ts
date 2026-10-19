@@ -28,13 +28,23 @@ const messages: Record<string, string> = {
   OPPORTUNITY_NOT_FOUND: 'Такого запроса нет.',
   EVOLUTION_NOT_READY: 'Для отбора пока мало идей.',
   IDEA_TAKE_FORBIDDEN: 'Взять в работу можно только идею, где нужен человек.',
-  IDEA_ALREADY_TAKEN: 'У вас уже есть идея в работе. Сначала верните её в рейтинг.',
+  IDEA_ALREADY_TAKEN: 'У вас уже есть идея в работе. Отметьте её итог или верните в рейтинг.',
+  IDEA_FINISH_REQUIRES_TAKEN: 'Отметить итог можно только у идеи, которая в работе у вас.',
+  IDEA_OUTCOME_FINAL: 'Итог уже записан и больше не меняется.',
   IDEA_STATUS_CHANGE_FORBIDDEN: 'Так поменять статус идеи нельзя.',
   LEAD_DRAFT_LIMIT: 'Для этого запроса отклик уже готовили три раза.',
   LEAD_SEARCH_LIMIT: 'На сегодня поиски клиентов закончились. Лимит в настройках.',
   PRODUCT_NOT_PUBLIC: 'Сначала покажите продукт на сайте.',
   INVALID_INPUT: 'Проверьте введённые данные.',
   RATE_LIMITED: 'Слишком часто. Подождите минуту.',
+  COMPUTER_USE_SCHEME_BLOCKED:
+    'Такое задание не берём: обход проверок, мультиаккаунты или чужие данные.',
+  COMPUTER_USE_GOAL_LENGTH: 'Опишите задание от 10 до 1000 символов без угловых скобок.',
+  COMPUTER_USE_QUEUE_FULL: 'Очередь заданий заполнена. Дождитесь выполнения.',
+  COMPUTER_USE_TASK_FINISHED: 'Задание уже завершено.',
+  COMPUTER_TASK_NOT_FOUND: 'Такого задания нет.',
+  COMPUTER_APPROVAL_NOT_FOUND: 'Этот запрос уже решён.',
+  POLICY_IDEA_TOPIC_BLOCKED: 'Такие темы ферма не берёт.',
 }
 
 export type OfficeError = { status: number; code: string; text: string }

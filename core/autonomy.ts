@@ -51,16 +51,20 @@ export function nextDailyRun(now: Date, hourUtc: number, ranToday: boolean) {
 /** The daily run waits for the owner's hour; the day key and limits stay per UTC day. */
 export const beforeDailyHour = (now: Date, hourUtc: number) => now.getUTCHours() < (hourUtc || 0)
 
-export async function setSchedule(enabled: boolean) {
+export async function setSchedule(enabled: boolean, actor: 'owner' | 'autopilot' = 'owner') {
   if (enabled && !config().AUTONOMY_ENABLED) throw new Error('SCHEDULE_DISABLED_ON_SERVER')
+  // The autopilot only turns the schedule on; turning it off stays the owner's decision.
+  if (actor === 'autopilot' && !enabled) throw new Error('AUTOPILOT_CANNOT_DISABLE')
   return transaction(async (db) => {
     await query('UPDATE system_state SET schedule_enabled=$1 WHERE id=true', [enabled], db)
     await audit(
       'schedule_changed',
-      enabled
-        ? 'Владелец включил суточное расписание.'
-        : 'Владелец выключил суточное расписание. Начатая работа может завершиться.',
-      { enabled },
+      actor === 'autopilot'
+        ? 'Автопилот включил суточное расписание.'
+        : enabled
+          ? 'Владелец включил суточное расписание.'
+          : 'Владелец выключил суточное расписание. Начатая работа может завершиться.',
+      { enabled, actor },
       db,
     )
     return { enabled }
@@ -241,13 +245,18 @@ async function scheduleFarm(db: Connection, state: FarmState, now: Date, weekNum
   )
   const assignments: { agentId: string; topicId: string; category: string }[] = []
   let scoutRoom = POLICY.maxIdeasPerDay - (await scoutsToday(db))
+  // One agent a day, in turn, explores: its first scout ignores its focus and takes the least
+  // recently scouted topic anywhere. New earning directions get scouted without rewriting the
+  // parameters of agents that already compete in a generation.
+  const explorer = Math.floor(dayStartOf(day).getTime() / 86400000) % Math.max(1, active.length)
   for (let n = 1; n <= state.scouts_per_strategy_per_day; n++)
-    for (const strategy of active) {
+    for (const [index, strategy] of active.entries()) {
       const key = `scout:${day}:${strategy.id}:${n}`
       if ((await query('SELECT id FROM jobs WHERE dedupe_key=$1', [key], db)).length) continue
       if (scoutRoom <= 0) continue
       scoutRoom--
-      const focus = parseParams(strategy.params)?.focusCategories ?? []
+      const focus =
+        n === 1 && index === explorer ? [] : (parseParams(strategy.params)?.focusCategories ?? [])
       const topic = await assignTopic(db, strategy.id, focus, day)
       await enqueue(
         'scout',

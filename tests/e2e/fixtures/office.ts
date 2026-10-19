@@ -14,6 +14,7 @@ import type {
   OfficeSettings,
 } from '../../../core/contracts/office'
 import { taxonomyCategories } from '../../../core/taxonomy'
+import { incomeFixture } from './income'
 
 /**
  * Typed office data for Playwright route stubs. Realistic Russian content: four scouts after one
@@ -67,7 +68,10 @@ export function officeFixtures(now = new Date()) {
         review: 1,
         costKopecks: 3150,
       },
-      score: { total: 842, components: { P: 778, E: 930, U: 1000, B: 1000, C: 860, D: 857 } },
+      score: {
+        total: 842,
+        components: { P: 778, E: 930, U: 1000, B: 1000, C: 860, D: 857, H: null },
+      },
       retired: null,
     },
     {
@@ -93,7 +97,10 @@ export function officeFixtures(now = new Date()) {
         review: 0,
         costKopecks: 3800,
       },
-      score: { total: 776, components: { P: 625, E: 880, U: 875, B: 1000, C: 860, D: null } },
+      score: {
+        total: 776,
+        components: { P: 625, E: 880, U: 875, B: 1000, C: 860, D: null, H: null },
+      },
       retired: null,
     },
     {
@@ -119,7 +126,10 @@ export function officeFixtures(now = new Date()) {
         review: 0,
         costKopecks: 3540,
       },
-      score: { total: 381, components: { P: 167, E: 610, U: 667, B: null, C: 760, D: null } },
+      score: {
+        total: 381,
+        components: { P: 167, E: 610, U: 667, B: null, C: 760, D: null, H: null },
+      },
       retired: {
         at: daysAgo(3, 9),
         reason: 'Критик принял 1 идею из 6, две повторяли старые.',
@@ -149,7 +159,10 @@ export function officeFixtures(now = new Date()) {
         review: 1,
         costKopecks: 4020,
       },
-      score: { total: 455, components: { P: 333, E: 540, U: 1000, B: null, C: 730, D: null } },
+      score: {
+        total: 455,
+        components: { P: 333, E: 540, U: 1000, B: null, C: 730, D: null, H: null },
+      },
       retired: {
         at: daysAgo(3, 9),
         reason: 'Критик принял 2 идеи из 6, источники слабые.',
@@ -185,7 +198,7 @@ export function officeFixtures(now = new Date()) {
       },
       score: {
         total: 713,
-        components: { P: 667, E: 890, U: 1000, B: null, C: 860, D: null },
+        components: { P: 667, E: 890, U: 1000, B: null, C: 860, D: null, H: null },
         lowData: true,
       },
       retired: null,
@@ -960,6 +973,7 @@ export function officeFixtures(now = new Date()) {
       lead: 1840,
       report: 1000,
       trading_manager: 0,
+      computer_use: 0,
     },
     testPayments: { count: 11, kopecks: 612000 },
     realRevenueKopecks: 0,
@@ -1317,6 +1331,7 @@ export function officeFixtures(now = new Date()) {
 
   return {
     overview,
+    income: incomeFixture(now, overview.feed),
     agents: officeAgents,
     ideas,
     categories,

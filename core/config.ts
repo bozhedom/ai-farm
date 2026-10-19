@@ -2,6 +2,12 @@ import { z } from 'zod'
 
 const flag = z.enum(['true', 'false']).transform((v) => v === 'true')
 const positive = (fallback: number) => z.coerce.number().int().positive().default(fallback)
+/** Unset or empty: the documented default applies. */
+const optionalInt = (min: number, max: number) =>
+  z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().min(min).max(max).optional(),
+  )
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
   APP_ORIGIN: z.url().default('http://localhost:3210'),
@@ -12,6 +18,8 @@ const schema = z.object({
   SEARCH_PROVIDER: z.enum(['demo', 'yandex', 'searxng']).default('demo'),
   OPENAI_API_KEY: z.string().default(''),
   OPENAI_MODEL: z.literal('gpt-6-astra').default('gpt-6-astra'),
+  // The same paid model and dollar limits, sent through OpenRouter with OPENROUTER_API_KEY.
+  OPENAI_TRANSPORT: z.enum(['openai', 'openrouter']).default('openai'),
   OPENAI_TOTAL_BUDGET_MICROUSD: z.coerce.number().int().min(0).max(1000000000).default(1000000),
   OPENAI_USD_KOPECKS: positive(12000).refine((n) => n <= 1000000),
   OPENROUTER_API_KEY: z.string().default(''),
@@ -68,7 +76,32 @@ const schema = z.object({
   LEAD_DRAFTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(3),
   IDEA_PRODUCTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(2),
   AUTONOMY_ENABLED: flag.default(true),
+  // Trading manager envelope. Ceilings match MANAGER_POLICY; global day/month limits still apply.
+  MANAGER_RESERVE_KOPECKS: optionalInt(0, 20000),
+  MANAGER_DAILY_KOPECKS: optionalInt(0, 100000),
+  MANAGER_RUNS_PER_DAY: optionalInt(1, 12),
+  // Spread paid farm work over the remaining UTC hours instead of spending the day at once.
+  PACING_ENABLED: flag.default(true),
+  // Server autopilot inside the worker: on start and every interval it turns on the autonomous
+  // loops through the office functions. It never clears a pause or stop, never enables Live and
+  // never changes money limits or owner-defined capital.
+  AUTOPILOT_ON_BOOT: flag.default(false),
+  AUTOPILOT_INTERVAL_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(600_000),
+  // Virtual USDT for a never-configured Paper execution book (arbitrage, funding, DeFi). 0: off.
+  AUTOPILOT_EXECUTION_PAPER_USDT: z.coerce.number().int().min(0).max(1_000_000).default(100),
+  // A loop that never returns makes the worker exit so the container restart policy recovers it.
+  WORKER_STUCK_RESTART: flag.default(true),
   POLL_INTERVAL_MS: positive(5000),
+  // Computer use: GPT-6 Astra (paid route through OpenRouter) drives a browser on a separate VM.
+  // Needs the office toggle as well. Models never get the VM token; only the worker does.
+  COMPUTER_USE_ENABLED: flag.default(false),
+  VM_AGENT_URL: z.string().default(''),
+  VM_AGENT_TOKEN: z.string().default(''),
+  COMPUTER_USE_STEP_LIMIT: positive(30).refine((n) => n <= 200),
+  // Integer microdollars ($1 = 1,000,000). The task cap is also the kopeck reserve of the task.
+  COMPUTER_USE_TASK_CAP_MICROUSD: positive(2000000).refine((n) => n <= 50000000),
+  COMPUTER_USE_DAILY_CAP_MICROUSD: positive(10000000).refine((n) => n <= 500000000),
+  COMPUTER_USE_SCREENSHOT_DIR: z.string().trim().min(1).default('output/computer-use'),
   // Separate credentials: a demo request can never fall back to a real account.
   TRADING_LIVE_ENABLED: flag.default(false),
   // The previous text-services experiment remains available with its preserved history.
@@ -115,8 +148,10 @@ export function config(): Config {
   const c = schema.parse(process.env)
   if ((c.MODEL_PROVIDER === 'demo') !== (c.SEARCH_PROVIDER === 'demo'))
     throw new Error('DEMO_PROVIDERS_MUST_MATCH')
-  if (c.MODEL_PROVIDER === 'openai' && !c.OPENAI_API_KEY)
+  if (c.MODEL_PROVIDER === 'openai' && c.OPENAI_TRANSPORT === 'openai' && !c.OPENAI_API_KEY)
     throw new Error('OPENAI_CREDENTIALS_REQUIRED')
+  if (c.MODEL_PROVIDER === 'openai' && c.OPENAI_TRANSPORT === 'openrouter' && !c.OPENROUTER_API_KEY)
+    throw new Error('OPENROUTER_CREDENTIALS_REQUIRED')
   if (c.MODEL_PROVIDER === 'openrouter') {
     if (!c.OPENROUTER_API_KEY) throw new Error('OPENROUTER_CREDENTIALS_REQUIRED')
     if (!isFreeOpenrouterModel(c.OPENROUTER_MODEL))
@@ -155,8 +190,32 @@ export function config(): Config {
     throw new Error('PUBLIC_INDEXING_REQUIRES_SELLER_TERMS')
   if (new URL(c.APP_ORIGIN).protocol === 'https:' && !c.SECURE_COOKIE)
     throw new Error('HTTPS_REQUIRES_SECURE_COOKIE')
+  if (c.VM_AGENT_URL) {
+    const u = URL.canParse(c.VM_AGENT_URL) ? new URL(c.VM_AGENT_URL) : null
+    if (
+      !u ||
+      !['http:', 'https:'].includes(u.protocol) ||
+      u.username ||
+      u.password ||
+      u.search ||
+      u.hash ||
+      u.pathname !== '/'
+    )
+      throw new Error('VM_AGENT_URL_INVALID')
+    if (c.VM_AGENT_TOKEN.length < 32) throw new Error('VM_AGENT_TOKEN_REQUIRED')
+  }
   cached = c
   return c
+}
+
+/** Whether the worker may drive the VM browser with the real model or the demo script. */
+export function computerUseReady(c: Config) {
+  if (!c.COMPUTER_USE_ENABLED) return 'COMPUTER_USE_DISABLED_ON_SERVER'
+  if (c.MODEL_PROVIDER === 'demo') return ''
+  if (c.MODEL_PROVIDER !== 'openai' || c.OPENAI_TRANSPORT !== 'openrouter')
+    return 'COMPUTER_USE_PROVIDER_UNSUPPORTED'
+  if (!c.VM_AGENT_URL || !c.VM_AGENT_TOKEN) return 'COMPUTER_USE_VM_NOT_CONFIGURED'
+  return ''
 }
 
 /** Loopback or a compose service name: only for SEPOLIA_LOCAL_NODE (anvil). */
@@ -174,6 +233,10 @@ export function isLocalRpc(c: Pick<Config, 'SEPOLIA_RPC_URL'>) {
 /** Free models distorted rewritten posts; their social service only lays out the full source text. */
 export function usesSourcePosts(provider: string) {
   return provider === 'ollama' || provider === 'openrouter'
+}
+/** Recorded model of the paid provider; a transport change mid-job is then refused. */
+export function paidModelId(c: Pick<Config, 'OPENAI_MODEL' | 'OPENAI_TRANSPORT'>) {
+  return c.OPENAI_TRANSPORT === 'openrouter' ? `openai/${c.OPENAI_MODEL}` : c.OPENAI_MODEL
 }
 export function isFreeOpenrouterModel(model: string) {
   return (

@@ -466,3 +466,37 @@ describe('account admission', () => {
     })
   }
 })
+
+describe('Bitget market rules', () => {
+  it('treats a zero quantity minimum as one lot and keeps the amount minimum', async () => {
+    const now = Date.now()
+    const minute = Math.floor(now / 60_000) * 60_000
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname
+      if (path.endsWith('/instruments'))
+        return wrap('bitget', [
+          {
+            symbol: 'ZECUSDT',
+            baseCoin: 'ZEC',
+            quoteCoin: 'USDT',
+            status: 'online',
+            pricePrecision: '2',
+            quantityPrecision: '3',
+            minOrderQty: '0',
+            minOrderAmount: '1',
+          },
+        ])
+      if (path.endsWith('/candles'))
+        return wrap(
+          'bitget',
+          [1, 2, 3].map((i) => [String(minute - i * 60_000), '1', '1', '1', '300.5', '1']),
+        )
+      return wrap('bitget', { a: [['300.6', '2']], b: [['300.4', '2']], ts: String(now) })
+    })
+    const market = await new BitgetVenue('paper', transport).market('ZEC-USDT')
+    expect(market.instrument.lot).toBe(units('0.001'))
+    expect(market.instrument.minQty).toBe(units('0.001'))
+    expect(market.instrument.minNotional).toBe(units('1'))
+    expect(market.candles).toHaveLength(3)
+  })
+})

@@ -5,7 +5,11 @@ import { reserveBudget, closeReservation } from '../core/budget'
 import { query, pool, audit } from '../core/db'
 
 // A fixed idempotency key makes accidental reruns reuse the result, never rebill the probe.
-const key = 'openai-connection-check-v1'
+// OpenRouter is a separate account, so its probe has its own key.
+const key =
+  process.env.OPENAI_TRANSPORT === 'openrouter'
+    ? 'openrouter-astra-connection-check-v1'
+    : 'openai-connection-check-v1'
 try {
   const c = config()
   if (

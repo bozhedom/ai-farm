@@ -9,6 +9,7 @@ import {
   type ManagerRow,
 } from './runtime'
 import type { TaskRow } from './tasks'
+import { managerLimits } from './limits'
 
 export async function managerView(): Promise<ManagerView> {
   await ensureManager()
@@ -40,13 +41,16 @@ export async function managerView(): Promise<ManagerView> {
   if (system?.mode !== 'running') blocked.push('MANAGER_SYSTEM_PAUSED')
   if (system?.provider_readiness?.model !== true) blocked.push('MANAGER_MODEL_UNAVAILABLE')
   if (budget.uncertain) blocked.push('MANAGER_COST_REVIEW')
-  if (budget.runs >= P.maxDailyRuns) blocked.push('MANAGER_DAILY_LIMIT')
-  if (budget.spent + budget.reserved >= P.dailyKopecks) blocked.push('MANAGER_BUDGET_LIMIT')
+  if (budget.runs >= managerLimits().maxDailyRuns) blocked.push('MANAGER_DAILY_LIMIT')
+  if (budget.spent + budget.reserved >= managerLimits().dailyKopecks)
+    blocked.push('MANAGER_BUDGET_LIMIT')
   const midnight = Date.parse(new Date(now).toISOString().slice(0, 10) + 'T00:00:00Z') + 86_400_000
   const nextAt = Math.max(
     now,
-    state.requested_at ? now : (state.attempted_at?.getTime() || 0) + P.intervalMs,
-    budget.runs >= P.maxDailyRuns || budget.spent >= P.dailyKopecks ? midnight : 0,
+    state.requested_at ? now : (state.attempted_at?.getTime() || 0) + managerLimits().intervalMs,
+    budget.runs >= managerLimits().maxDailyRuns || budget.spent >= managerLimits().dailyKopecks
+      ? midnight
+      : 0,
   )
   return {
     state: {
@@ -57,17 +61,17 @@ export async function managerView(): Promise<ManagerView> {
       nextReviewAt: state.enabled ? new Date(nextAt).toISOString() : null,
       blocked,
       lastError: state.last_error,
-      intervalHours: P.intervalMs / 3_600_000,
+      intervalHours: managerLimits().intervalMs / 3_600_000,
       manualCooldownMinutes: P.manualCooldownMs / 60_000,
       minEvaluationHours: P.evaluationMs / 3_600_000,
       minRoundTrips: P.minRoundTrips,
       maxObservationDays: P.observationLifetimeMs / 86_400_000,
-      maxDailyRuns: P.maxDailyRuns,
+      maxDailyRuns: managerLimits().maxDailyRuns,
       runsToday: budget.runs,
       ...provider,
       spentKopecks: budget.spent,
       reservedKopecks: budget.reserved,
-      dailyLimitKopecks: P.dailyKopecks,
+      dailyLimitKopecks: managerLimits().dailyKopecks,
     },
     runs: runs.map((r) => ({
       id: r.id,

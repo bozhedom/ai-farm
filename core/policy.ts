@@ -151,6 +151,13 @@ export const MANAGER_POLICY = Object.freeze({
   maxTasksPerRun: 4,
   reserveKopecks: 500,
   dailyKopecks: 2000,
+  // GPT-6 Astra: the bounded snapshot needs up to about 97 ₽ upper estimate per review.
+  astraReserveKopecks: 12000,
+  astraDailyKopecks: 48000,
+  // Hard ceilings for MANAGER_* environment overrides; the global limits apply as well.
+  maxReserveKopecks: 20000,
+  maxDailyKopecks: 100000,
+  maxRunsPerDay: 12,
   minAgentAgeMs: 24 * 60 * 60_000,
   evaluationMs: 24 * 60 * 60_000,
   minRoundTrips: 5,
@@ -498,6 +505,8 @@ const excludedIdeaTopics = [
   /(?:(?:продаж|перепродаж|аренд|покупк)[а-я]*\s+(?:готовых\s+)?аккаунт|аккаунт[а-я]*\s+на\s+продажу|(?:база|базы|баз)\s+(?:данных\s+)?(?:клиентов|контактов|номеров)|парсинг\s+(?:контакт|номер|почт))/iu,
   /(?:(?:медицинск|юридическ|инвестиционн|финансов)[а-я]*\s+(?:услуг|консультац|помощ|совет)|сигнал[а-я]*\s+для\s+трейд|трейдинг|криптовалютн[а-я]*\s+(?:инвест|сигнал)|микрозайм)/iu,
   /(?:обход[а-я]*\s+(?:блокиров|верификац|капч|captcha)|vpn\s+для\s+обход|рассылк|холодн[а-я]*\s+(?:звонк|письм|обзвон))/iu,
+  // Reward and account schemes: one honest account per person, own documents, no laundering.
+  /(?:мультиаккаунт|(?:много|нескольк|десят|сотн)[а-я]*\s+(?:аккаунт|кошельк)|ферм[а-я]*\s+(?:аккаунтов|кошельков)|сибил|(?<![\p{L}])дроп(?:ы|ов|ам|а)?(?![\p{L}])|обнал|подставн[а-я]*\s+(?:лиц|счет|счёт|паспорт|аккаунт)|чуж[а-я]*\s+(?:паспорт|документ|карт|счет|счёт)|(?:счет|счёт|карт[ауы]?)\s+(?:для|на)\s+(?:бота|агента|нейросет)|обход[а-я]*\s+(?:kyc|санкц|запрет|ограничени|правил\s+площад))/iu,
 ]
 export function validateIdeaTopic(text: string) {
   if (excludedIdeaTopics.some((pattern) => pattern.test(text)))

@@ -12,6 +12,7 @@ import type {
   OfficeReport,
   OfficeSettings,
 } from '../../../core/contracts/office'
+import type { OfficeIncome } from '../../../core/contracts/overview'
 import { officeFetch, useOfficeResource } from './resource'
 
 /**
@@ -77,6 +78,13 @@ export function useOfficeOverview() {
   return useOfficeResource('overview', () => officeFetch<OfficeOverview>('/api/office/overview'))
 }
 
+/** How the farm earns: `/api/office/income`, one aggregated snapshot for the main screen. */
+export function useOfficeIncome(interval = 10000) {
+  return useOfficeResource('income', () => officeFetch<OfficeIncome>('/api/office/income'), {
+    interval,
+  })
+}
+
 export function useOfficeAgents(interval = 5000) {
   return useOfficeResource('agents', () => officeFetch<OfficeAgents>('/api/office/agents'), {
     interval,
@@ -109,7 +117,7 @@ export function useOfficeReports() {
   )
 }
 
-export type IdeaView = '' | 'farm' | 'human' | 'rejected' | 'taken'
+export type IdeaView = '' | 'farm' | 'human' | 'rejected' | 'taken' | 'done'
 export type IdeaFilters = { status: IdeaStatus | ''; category: string; view?: IdeaView }
 
 export function useOfficeIdeas(filters: Ref<IdeaFilters>) {

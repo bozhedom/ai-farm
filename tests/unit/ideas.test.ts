@@ -196,6 +196,13 @@ describe('idea validation', () => {
       'Отзывы на заказ для карточек',
       'Сигналы для трейдинга криптовалют',
       'Холодные звонки по базе клиентов',
+      'Фарм аирдропов с сотни кошельков',
+      'Мультиаккаунты для наград тестовой сети',
+      'Дропы для вывода денег',
+      'Банковский счёт для агента без проверки',
+      'Регистрация на чужой паспорт',
+      'Обход KYC на бирже',
+      'Обход санкций при выводе',
     ])
       expect(() => validateIdea({ ...idea, title }, evidence, false, 'it-docs'), title).toThrow(
         'POLICY_IDEA_TOPIC_BLOCKED',
@@ -211,7 +218,7 @@ describe('idea validation', () => {
   })
 
   it('builds explicit demo ideas that pass the same validation', () => {
-    for (const topic of taxonomyTopics.slice(0, 8)) {
+    for (const topic of taxonomyTopics) {
       const found = [...demoScoutEvidence(topic.queries[0]), ...demoScoutEvidence(topic.queries[1])]
       const value = demoIdea({
         topic,

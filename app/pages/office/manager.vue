@@ -111,6 +111,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
         >Ферма<span>кабинет владельца</span></NuxtLink
       >
       <nav class="header-actions" aria-label="Основные разделы">
+        <NuxtLink class="t-link" to="/office">Обзор</NuxtLink>
         <NuxtLink class="t-link" to="/office/trading">Мои биржи</NuxtLink>
         <NuxtLink class="t-link" to="/office/earnings">Направления</NuxtLink>
       </nav>

@@ -1,341 +1,513 @@
 <script setup lang="ts">
+import type {
+  IncomeExchange,
+  IncomeMode,
+  IncomePeriod,
+  IncomeTotals,
+} from '../../../core/contracts/overview'
+import { useOfficeIncome, useOfficeOverview } from '~/composables/office/data'
+import { ago, count, rub, todayTitle, withCount } from '~/composables/office/format'
 import {
-  useOfficeAgents,
-  useOfficeMoney,
-  useOfficeOverview,
-  useOfficeSettings,
-} from '~/composables/office/data'
-import {
-  ago,
-  count,
-  day,
-  isToday,
-  percent,
-  rub,
-  splitSentence,
-  todayTitle,
-  upcoming,
-  withCount,
-} from '~/composables/office/format'
-import {
-  agentAvatar,
-  agentBadge,
-  agentShort,
-  modeBadge,
-  score100,
-} from '~/composables/office/labels'
+  amountText,
+  chartNumber,
+  decimalText,
+  exchangeColor,
+  exchangeTitle,
+  incomeMode,
+  isNegative,
+  isZeroDecimal,
+  resultText,
+  rubSigned,
+  sourceStatus,
+} from '~/composables/office/income'
+import { modeBadge } from '~/composables/office/labels'
+import { strategyName } from '~/utils/trading'
 
-useHead({ title: 'Главная' })
-const { data: o, status, pending, refresh } = useOfficeOverview()
-const { data: agents } = useOfficeAgents(10000)
-const { data: money } = useOfficeMoney(10000)
-const { data: settings } = useOfficeSettings(30000)
+useHead({ title: 'Как ферма зарабатывает' })
+const { data: v, status, pending, refresh } = useOfficeIncome()
+// The shell already polls the overview; reusing it keeps the stop button state in sync.
+const { data: office } = useOfficeOverview()
 
 const clock = ref(new Date())
 let tick: ReturnType<typeof setInterval> | undefined
-onMounted(() => (tick = setInterval(() => (clock.value = new Date()), 30000)))
+onMounted(() => (tick = setInterval(() => (clock.value = new Date()), 5000)))
 onBeforeUnmount(() => tick && clearInterval(tick))
 
-const activeScouts = computed(() => agents.value?.agents.filter((a) => a.status === 'active') || [])
-
-const now = computed(() => {
-  const v = o.value
-  if (!v) return null
-  if (v.mode === 'emergency_stop')
-    return {
-      title: 'Ферма остановлена',
-      detail: 'Новые задачи не берём. Нажмите «Продолжить», когда будете готовы.',
-      live: false,
-    }
-  if (!v.worker.alive) return { title: 'Сервер не отвечает', detail: v.worker.reason, live: false }
-  if (v.mode === 'paused')
-    return {
-      title: 'Ферма на паузе',
-      detail: 'Начатые заказы доделываем, новые поиски ждут.',
-      live: false,
-    }
-  if (v.now)
-    return {
-      title: v.now.title,
-      detail: `${v.now.detail} Шаг ${v.now.step} из ${v.now.steps}.`,
-      live: true,
-    }
-  const latest = v.feed[0]
-  const fresh = latest && clock.value.getTime() - new Date(latest.at).getTime() < 15 * 60000
-  if (fresh)
-    return {
-      title: splitSentence(latest.text).main,
-      detail: `${ago(latest.at, clock.value).replace(/^./, (c) => c.toUpperCase())}. ${todayLine.value}`,
-      live: true,
-    }
-  return {
-    title: v.worker.nextAt
-      ? `Ждём следующего запуска ${upcoming(v.worker.nextAt, clock.value)}`
-      : 'Ферма ждёт задач',
-    detail: v.worker.reason,
-    live: true,
-  }
-})
-
-const todayLine = computed(() => {
-  const t = o.value?.today
-  if (!t || !t.ideas) return 'Сегодня новых идей пока нет.'
-  return `Сегодня ${withCount(t.ideas, ['идея', 'идеи', 'идей'])}, критик принял ${t.ideasAccepted}.`
-})
-
-const scouting = computed(() => {
-  const perAgent = settings.value?.scoutsPerStrategyPerDay
-  if (!o.value || !perAgent || !activeScouts.value.length) return null
-  const planned = perAgent * activeScouts.value.length
-  const done = Math.min(o.value.today.ideas, planned)
-  return { planned, done, width: `${percent(done, planned)}%` }
-})
-
-const lastRound = computed(() => agents.value?.rounds[0] || null)
-const lastRoundText = computed(() => {
-  const round = lastRound.value
-  if (!round) return 'Ещё не было'
-  return round.decision === 'ROTATED'
-    ? `${day(round.at)}, ${withCount(round.archived.length, ['уволен', 'уволено', 'уволено'])}`
-    : `${day(round.at)}, ждём данных`
-})
-
-const team = computed(() => {
-  const list = agents.value?.agents || []
-  const active = list
-    .filter((a) => a.status === 'active')
-    .sort((a, b) => (b.score?.total ?? -1) - (a.score?.total ?? -1))
-  return active.map((agent) => ({
-    agent,
-    short: agentShort(agent.name),
-    avatar: agentAvatar(agent, list.indexOf(agent)),
-    badge: agentBadge(agent),
-    score: score100(agent.score?.total),
-    lowData: agent.status === 'active' && !!agent.score?.lowData,
-  }))
-})
-
-// Retired scouts fold into one line: «Уволено 2: В, Г».
-const retiredLine = computed(() => {
-  const retired = (agents.value?.agents || []).filter((a) => a.status === 'archived')
-  if (!retired.length) return ''
-  return `Уволено ${retired.length}: ${retired.map((a) => agentShort(a.name)).join(', ')}`
-})
-const todayFeed = computed(() => (o.value?.feed || []).filter((item) => isToday(item.at)))
-const feedItems = computed(() =>
-  todayFeed.value.length ? todayFeed.value : (o.value?.feed || []).slice(0, 8),
+type PeriodKey = IncomePeriod | 'all'
+const periods: { id: PeriodKey; label: string }[] = [
+  { id: 'today', label: 'Сегодня' },
+  { id: 'week', label: '7 дней' },
+  { id: 'month', label: '30 дней' },
+  { id: 'all', label: 'Всё время' },
+]
+const period = ref<PeriodKey>('month')
+const t = computed<IncomeTotals | null>(() =>
+  v.value ? (period.value === 'all' ? v.value.allTime : v.value.periods[period.value]) : null,
 )
-const isFresh = computed(() => !!o.value && o.value.totals.ideas === 0 && o.value.feed.length === 0)
-const subtitle = computed(() => {
-  const v = o.value
-  // The status and the next run live in the dark card below, not here.
-  return v ? todayTitle(clock.value) : todayTitle(clock.value) + '.'
+const realExtra = computed(() => {
+  const x = t.value
+  if (!x) return []
+  return [
+    ...(isZeroDecimal(x.liveTradingUsdt)
+      ? []
+      : [`${decimalText(x.liveTradingUsdt, 2, true)} USDT на биржах`]),
+    ...x.liveExecution.filter((a) => !isZeroDecimal(a.amount)).map((a) => amountText(a)),
+  ]
 })
+const testLines = computed(() => {
+  const x = t.value
+  if (!x) return []
+  return [
+    { label: 'Тренировка', value: `${decimalText(x.paperTradingUsdt, 2, true)} USDT` },
+    { label: 'Тест биржи', value: `${decimalText(x.demoTradingUsdt, 2, true)} USDT` },
+    ...x.testExecution.map((a) => ({ label: 'Направления', value: amountText(a) })),
+    { label: 'Тестовые оплаты', value: rub(x.testPaymentsKopecks) },
+  ]
+})
+
+const updated = computed(() =>
+  v.value ? ago(v.value.generatedAt, clock.value).replace(/^./, (c) => c.toUpperCase()) : '',
+)
+const working = computed(
+  () => v.value?.sources.filter((s) => s.status === 'autonomous').length ?? 0,
+)
+const headline = computed(() => {
+  const x = v.value
+  if (!x) return ''
+  if (x.mode === 'emergency_stop') return 'Ферма остановлена владельцем'
+  if (!x.workerAlive) return 'Фоновый процесс не отвечает'
+  if (x.mode === 'paused') return 'Ферма на паузе'
+  return `Сами работают ${working.value} из ${x.sources.length} направлений`
+})
+
+// ---- trading analytics -----------------------------------------------------------------
+const chartModes: { id: IncomeMode; label: string }[] = [
+  { id: 'paper', label: 'Тренировка' },
+  { id: 'demo', label: 'Тест биржи' },
+  { id: 'live', label: 'Реальные' },
+]
+const chartMode = ref<IncomeMode | null>(null)
+const modesWithData = computed(
+  () => new Set((v.value?.equity ?? []).filter((s) => s.points.length).map((s) => s.mode)),
+)
+const activeChartMode = computed<IncomeMode>(
+  () =>
+    chartMode.value ??
+    (modesWithData.value.has('live')
+      ? 'live'
+      : modesWithData.value.has('paper') || !modesWithData.value.has('demo')
+        ? 'paper'
+        : 'demo'),
+)
+const days = computed(() => v.value?.daily.map((d) => d.day) ?? [])
+const equitySeries = computed(() =>
+  (v.value?.equity ?? [])
+    .filter((s) => s.mode === activeChartMode.value && s.points.length)
+    .map((s) => {
+      const first = chartNumber(s.points[0]!.equity)
+      return {
+        id: `${s.exchange}:${s.mode}`,
+        label: exchangeTitle[s.exchange],
+        color: exchangeColor[s.exchange],
+        points: s.points.map((p) => ({
+          x: p.day,
+          y: Math.round((chartNumber(p.equity) - first) * 100) / 100,
+        })),
+      }
+    }),
+)
+const tradingRows = computed(() =>
+  (v.value?.trading ?? []).filter(
+    (r) =>
+      r.status !== 'idle' || r.trades30d > 0 || !isZeroDecimal(r.realized) || r.activeAgents > 0,
+  ),
+)
+const tradeTotals = computed(() => {
+  const rows = v.value?.trading ?? []
+  const trades = rows.reduce((n, r) => n + r.trades30d, 0)
+  const wins = rows.reduce((n, r) => n + r.wins30d, 0)
+  return { trades, wins, rate: trades ? Math.round((wins / trades) * 100) : null }
+})
+const winRate = (wins: number, trades: number) =>
+  trades ? `${Math.round((wins / trades) * 100)}%` : '—'
+const tradingStatus: Record<string, string> = {
+  idle: 'Не запущена',
+  running: 'Работает',
+  paused: 'Пауза',
+  stopped: 'Остановлена',
+}
+
+// ---- money and spend -----------------------------------------------------------------------
+const categoryName: Record<string, string> = {
+  research: 'Сборка продуктов',
+  order: 'Выполнение заказов',
+  scout: 'Разведка идей',
+  lead: 'Поиск клиентов',
+  report: 'Отчёты руководителя',
+  trading_manager: 'ИИ-менеджер торговли',
+}
+const spendTotal = computed(() => v.value?.spendByCategory.reduce((n, c) => n + c.kopecks, 0) ?? 0)
+
+// ---- funnel ---------------------------------------------------------------------------------
+const funnel = computed(() => {
+  const f = v.value?.funnel
+  if (!f) return []
+  const steps = [
+    { label: 'Идей найдено', n: f.ideas },
+    { label: 'Критик принял', n: f.accepted },
+    { label: 'Стали продуктом', n: f.productized },
+    { label: 'В продаже', n: f.publicProducts },
+    { label: 'Заказов', n: f.orders },
+    { label: 'Выдано', n: f.delivered },
+    { label: 'Оплачено деньгами', n: f.paidReal },
+  ]
+  const top = Math.max(1, steps[0]!.n)
+  return steps.map((s) => ({ ...s, width: s.n ? Math.max(3, Math.round((s.n / top) * 100)) : 0 }))
+})
+
+// ---- strategies ------------------------------------------------------------------------------
+const strategyGroups = computed(() => {
+  const groups = new Map<string, { exchange: IncomeExchange; mode: IncomeMode; kinds: string[] }>()
+  for (const s of v.value?.strategies ?? []) {
+    const key = `${s.exchange}:${s.mode}`
+    if (!groups.has(key)) groups.set(key, { exchange: s.exchange, mode: s.mode, kinds: [] })
+    const name = strategyName[s.kind as keyof typeof strategyName] ?? s.kind
+    groups.get(key)!.kinds.push(s.count > 1 ? `${name} ×${s.count}` : name)
+  }
+  return [...groups.values()]
+})
+const priceText = (kopecks: number) => rub(kopecks)
 </script>
 <template>
-  <div>
+  <div class="income">
     <div class="page-head">
       <div>
-        <h1>Главная</h1>
-        <p>{{ subtitle }}</p>
+        <h1>Как ферма зарабатывает</h1>
+        <p>
+          <ClientOnly>{{ todayTitle(clock) }}.</ClientOnly>
+          <span v-if="v" class="live updated"><i class="live-dot" />{{ updated }}</span>
+        </p>
       </div>
       <div class="row head-actions">
-        <OfficeModeControls :mode="o?.mode" />
-        <OfficeFindIdeas :mode="o?.mode" />
+        <OfficeModeControls :mode="office?.mode ?? v?.mode" />
       </div>
     </div>
 
-    <OfficeState v-if="!o" :status="status" :pending="pending" :rows="4" @retry="refresh" />
+    <OfficeState v-if="!v" :status="status" :pending="pending" :rows="5" @retry="refresh" />
     <template v-else>
-      <section class="card card-ink card-pad-lg rise now-card" aria-label="Сейчас">
-        <div class="now">
-          <div>
-            <span class="live now-live" :class="{ 'is-still': !now?.live }"
-              ><i class="live-dot" :class="{ 'is-wait': !now?.live }" />Сейчас.
-              {{ modeBadge[o.mode].label }}</span
-            >
-            <h2>{{ now?.title }}</h2>
-            <p class="muted now-detail">{{ now?.detail }}</p>
-            <div v-if="scouting" class="now-progress">
-              <div class="bar bar-lg" :class="{ 'is-live': now?.live }">
-                <i :style="{ width: scouting.width }" />
-              </div>
-              <span class="small muted"
-                >Разведок сегодня: {{ scouting.done }} из {{ scouting.planned }}</span
-              >
-            </div>
-            <div class="now-actions">
-              <NuxtLink class="btn btn-sm" to="/office/ideas">Идеи</NuxtLink>
-              <NuxtLink class="btn btn-sm" to="/office/settings#journal">Техжурнал</NuxtLink>
-            </div>
-          </div>
-          <dl class="now-side">
-            <div>
-              <dt>Следующий запуск</dt>
-              <dd>{{ o.worker.nextAt ? upcoming(o.worker.nextAt, clock) : 'Не назначен' }}</dd>
-            </div>
-            <div>
-              <dt>Расходы сегодня</dt>
-              <dd>
-                {{ rub(money?.daySpentKopecks ?? o.today.spentKopecks) }}
-                <template v-if="money">из {{ rub(money.limits.dailyKopecks) }}</template>
-              </dd>
-            </div>
-            <div v-if="settings">
-              <dt>Модель</dt>
-              <dd>{{ settings.providers.model }}</dd>
-            </div>
-            <div>
-              <dt>Последний отбор</dt>
-              <dd>{{ agents ? lastRoundText : 'Загружаем' }}</dd>
+      <!-- Headline and period -->
+      <section class="summary rise" aria-label="Итог">
+        <div class="summary-line">
+          <OfficeBadge :badge="modeBadge[v.mode]" />
+          <strong>{{ headline }}</strong>
+          <span class="muted small">Реальные деньги и тесты считаются раздельно.</span>
+        </div>
+        <div class="chips period" role="group" aria-label="Период">
+          <button
+            v-for="p in periods"
+            :key="p.id"
+            type="button"
+            class="chip"
+            :class="{ 'is-active': period === p.id }"
+            :aria-pressed="period === p.id"
+            @click="period = p.id"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+      </section>
+
+      <section v-if="t" class="stat-grid kpis" aria-label="Деньги за период">
+        <div class="stat is-money rise">
+          <span class="stat-label">Реальный доход</span>
+          <span class="num">{{ rub(t.realOrdersKopecks) }}</span>
+          <span v-for="line in realExtra" :key="line" class="kpi-extra">{{ line }}</span>
+          <span class="stat-note">{{
+            t.realOrdersKopecks || realExtra.length
+              ? 'оплаченные заказы и реальная торговля'
+              : 'настоящих денег пока нет: торговля не в Live, оплаты тестовые'
+          }}</span>
+        </div>
+        <div class="stat rise">
+          <span class="stat-label">Расходы на модели</span>
+          <span class="num">{{ rub(t.spendKopecks) }}</span>
+          <span class="stat-note">OpenRouter, Astra, поиск: по журналу вызовов</span>
+        </div>
+        <div class="stat rise" :class="{ 'is-loss': t.netKopecks < 0 }">
+          <span class="stat-label">Итог в рублях</span>
+          <span class="num">{{ rubSigned(t.netKopecks) }}</span>
+          <span class="stat-note">доход минус расходы; USDT не пересчитываем в рубли</span>
+        </div>
+        <div class="stat is-test rise">
+          <span class="stat-label"
+            >Тренировка и тесты <span class="badge badge-test">Не выручка</span></span
+          >
+          <dl class="test-lines">
+            <div v-for="line in testLines" :key="line.label + line.value">
+              <dt>{{ line.label }}</dt>
+              <dd>{{ line.value }}</dd>
             </div>
           </dl>
         </div>
       </section>
 
-      <section class="stat-grid home-stats" aria-label="Ключевые цифры">
-        <div class="stat rise">
-          <span class="stat-label">Идей найдено</span
-          ><span class="num">{{ count(o.totals.ideas) }}</span
-          ><span class="stat-note"
-            ><span v-if="o.today.ideas" class="delta">+{{ o.today.ideas }} сегодня</span
-            ><template v-else>сегодня пока нет</template></span
-          >
-        </div>
-        <div class="stat rise">
-          <span class="stat-label">В продаже</span
-          ><span class="num">{{ count(o.totals.publicProducts) }}</span
-          ><span class="stat-note"
-            ><span v-if="o.today.productsPublished" class="delta"
-              >+{{ o.today.productsPublished }} сегодня</span
-            ><template v-else
-              >из
-              {{ withCount(o.totals.products, ['продукта', 'продуктов', 'продуктов']) }}</template
-            ></span
-          >
-        </div>
-        <div class="stat rise">
-          <span class="stat-label">Заказов</span
-          ><span class="num">{{ count(o.totals.orders) }}</span
-          ><span class="stat-note"
-            ><span v-if="o.today.ordersDelivered" class="delta"
-              >{{ o.today.ordersDelivered }} готово сегодня</span
-            ><template v-else>сегодня готовых нет</template></span
-          >
-        </div>
-        <div class="stat rise">
-          <span class="stat-label">{{ money ? 'Расходы за месяц' : 'Расходы сегодня' }}</span
-          ><span class="num">{{ rub(money ? money.monthSpentKopecks : o.today.spentKopecks) }}</span
-          ><span class="stat-note">{{
-            money ? `модели и поиск, лимит ${rub(money.limits.monthlyKopecks)}` : 'модели и поиск'
-          }}</span>
-        </div>
-        <div class="stat rise is-money">
-          <span class="stat-label">Реальная выручка</span
-          ><span class="num">{{ rub(o.totals.realRevenueKopecks) }}</span
-          ><span class="stat-note">{{
-            o.totals.realRevenueKopecks ? 'настоящие оплаты' : 'продаж за деньги пока нет'
-          }}</span>
-        </div>
-        <div class="stat rise is-test">
-          <span class="stat-label">Тестовые платежи</span
-          ><span class="num">{{
-            money ? rub(money.testPayments.kopecks) : count(o.totals.testPayments)
-          }}</span
-          ><span class="stat-note"><span class="badge badge-test">Не выручка</span></span>
-        </div>
-      </section>
-
-      <section v-if="isFresh" class="card start rise" aria-label="С чего начать">
-        <h2>С чего начать</h2>
-        <div class="how">
-          <article>
-            <h3>Найдите идеи</h3>
-            <p>Нажмите «Найти идеи сейчас». Разведчики поищут, на чём можно заработать.</p>
-          </article>
-          <article>
-            <h3>Критик отберёт лучшие</h3>
-            <p>Слабые идеи отсеются. То, что ферма умеет сама, станет продуктом на сайте.</p>
-          </article>
-          <article>
-            <h3>Следите за результатом</h3>
-            <p>Заказы, найденные клиенты и расходы появятся здесь.</p>
-          </article>
-        </div>
-      </section>
-
-      <div class="two">
-        <section class="card rise" aria-labelledby="feed-title">
+      <div class="grid-main">
+        <!-- Sources -->
+        <section class="card rise" aria-labelledby="sources-title">
           <div class="card-head">
-            <h2 id="feed-title">
-              {{ todayFeed.length ? 'Что произошло сегодня' : 'Последние события' }}
-            </h2>
-            <NuxtLink class="btn btn-ghost btn-sm" to="/office/settings#journal"
-              >Весь журнал</NuxtLink
-            >
+            <h2 id="sources-title">Источники заработка</h2>
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/earnings">Все направления</NuxtLink>
           </div>
-          <OfficeFeed v-if="feedItems.length" :items="feedItems" :limit="10" />
-          <p v-else class="muted">Пока тихо. События появятся после первого поиска.</p>
+          <ul class="sources">
+            <li v-for="s in v.sources" :key="s.id" :class="`is-${s.status}`">
+              <NuxtLink :to="s.link" class="source">
+                <span class="source-main">
+                  <span class="source-title">{{ s.title }}</span>
+                  <span class="source-detail">{{ s.detail }}</span>
+                </span>
+                <span class="source-badges">
+                  <OfficeBadge :badge="sourceStatus[s.status]" />
+                  <OfficeBadge v-if="s.mode" :badge="incomeMode[s.mode]" :dot="false" />
+                </span>
+                <span class="source-result">
+                  <b
+                    :class="{
+                      'is-neg': s.result && isNegative(s.result.value),
+                      'is-test': s.result?.test,
+                    }"
+                    >{{ resultText(s.result) }}</b
+                  >
+                  <small v-if="s.result">{{ s.result.label }}</small>
+                  <small v-if="s.lastAt" class="source-when">{{ ago(s.lastAt, clock) }}</small>
+                </span>
+              </NuxtLink>
+            </li>
+          </ul>
         </section>
 
-        <div class="stack side-col">
-          <section class="card rise" aria-labelledby="team-title">
-            <div class="card-head">
-              <h2 id="team-title">Команда</h2>
-              <NuxtLink class="btn btn-ghost btn-sm" to="/office/agents">Все агенты</NuxtLink>
-            </div>
-            <div class="team-list">
-              <div class="agent">
-                <span class="avatar is-lead">Р</span>
-                <div>
-                  <div class="name">Руководитель</div>
-                  <div class="focus">Раздаёт задания, ставит баллы, пишет отчёт</div>
-                </div>
-                <OfficeBadge :badge="modeBadge[o.mode]" />
-              </div>
-              <div
-                v-for="row in team"
-                :key="row.agent.id"
-                class="agent"
-                :class="{ 'is-off': row.agent.status === 'archived' }"
-              >
-                <span class="avatar" :class="row.avatar">{{ row.short }}</span>
-                <div>
-                  <div class="name">
-                    {{ row.agent.name }}
-                    <span class="muted xs">пок. {{ row.agent.generation }}</span>
-                  </div>
-                  <OfficeScore
-                    :value="row.score"
-                    :muted="row.agent.status === 'archived'"
-                    :low-data="row.lowData"
-                  />
-                </div>
-                <OfficeBadge :badge="row.badge" />
-              </div>
-              <NuxtLink v-if="retiredLine" class="retired-line small muted" to="/office/agents">{{
-                retiredLine
-              }}</NuxtLink>
-              <p v-if="!agents" class="muted small">Загружаем команду</p>
-            </div>
-            <div v-if="agents" class="card-foot">
-              <span class="small muted">{{
-                agents.evolution.ready ? 'Можно провести отбор' : agents.evolution.reason
-              }}</span>
-              <NuxtLink class="small" to="/office/agents#score">Как считается балл</NuxtLink>
-            </div>
-          </section>
+        <!-- Live feed -->
+        <section class="card rise feed-card" aria-labelledby="feed-title">
+          <div class="card-head">
+            <h2 id="feed-title">Что сейчас делают агенты</h2>
+            <span class="live small on-air"><i class="live-dot" />в эфире</span>
+          </div>
+          <OfficeFeed v-if="v.feed.length" :items="v.feed" :limit="14" />
+          <p v-else class="muted">Пока тихо. События появятся, как только агенты начнут работу.</p>
+          <div class="card-foot">
+            <span class="small muted">Обновляется каждые 10 секунд</span>
+            <NuxtLink class="small" to="/office/farm">Ферма идей</NuxtLink>
+          </div>
+        </section>
+      </div>
 
-          <section class="card card-tint-sun rise waiting" aria-labelledby="waiting-title">
-            <h3 id="waiting-title">Ждут вас</h3>
-            <ul v-if="o.needsOwner.length">
-              <li v-for="(item, i) in o.needsOwner" :key="i">
-                <NuxtLink :to="item.link">{{ item.text }}</NuxtLink>
-              </li>
-            </ul>
-            <p v-else class="small">Ничего не ждёт. Ферма справляется сама.</p>
-          </section>
+      <!-- Needs a person -->
+      <section
+        v-if="v.needsHuman.length"
+        class="card card-tint-sun rise needs"
+        aria-labelledby="needs-title"
+      >
+        <div class="card-head">
+          <h2 id="needs-title">Нужен человек</h2>
+          <span class="small">{{
+            withCount(v.needsHuman.length, ['пункт', 'пункта', 'пунктов'])
+          }}</span>
         </div>
+        <ul class="needs-list">
+          <li v-for="n in v.needsHuman" :key="n.id" :class="`is-${n.severity}`">
+            <NuxtLink :to="n.link">
+              <strong>{{ n.title }}</strong>
+              <span>{{ n.detail }}</span>
+            </NuxtLink>
+          </li>
+        </ul>
+      </section>
+
+      <!-- Trading analytics -->
+      <section class="card rise" aria-labelledby="trading-title">
+        <div class="card-head wrap">
+          <div>
+            <h2 id="trading-title">Торговля по биржам</h2>
+            <p class="small muted">
+              Изменение капитала за 30 дней, USDT.
+              <template v-if="tradeTotals.trades"
+                >Сделок {{ count(tradeTotals.trades) }}, в плюс {{ tradeTotals.rate }}%.</template
+              >
+            </p>
+          </div>
+          <div class="chips" role="group" aria-label="Режим торговли">
+            <button
+              v-for="m in chartModes"
+              :key="m.id"
+              type="button"
+              class="chip"
+              :class="{ 'is-active': activeChartMode === m.id }"
+              :aria-pressed="activeChartMode === m.id"
+              @click="chartMode = m.id"
+            >
+              {{ m.label }}<span v-if="!modesWithData.has(m.id)" class="n">нет данных</span>
+            </button>
+          </div>
+        </div>
+        <OfficeLineChart
+          v-if="equitySeries.length"
+          :series="equitySeries"
+          :xs="days"
+          unit="USDT"
+          :format="(n: number) => decimalText(String(n), 2, true)"
+        />
+        <p v-else class="empty-chart muted">
+          В режиме «{{ chartModes.find((m) => m.id === activeChartMode)?.label }}» за 30 дней нет
+          отметок капитала.
+        </p>
+        <div v-if="tradingRows.length" class="trade-rows" role="table" aria-label="Биржи и режимы">
+          <div class="trade-row trade-head" role="row">
+            <span role="columnheader">Биржа</span><span role="columnheader">Статус</span
+            ><span role="columnheader">Капитал</span><span role="columnheader">Результат</span
+            ><span role="columnheader">Зафиксировано</span
+            ><span role="columnheader">Сделок, в плюс</span>
+          </div>
+          <div
+            v-for="r in tradingRows"
+            :key="`${r.exchange}:${r.mode}`"
+            class="trade-row"
+            role="row"
+          >
+            <span role="cell" class="trade-name"
+              ><i :style="{ background: exchangeColor[r.exchange] }" />{{
+                exchangeTitle[r.exchange]
+              }}
+              <OfficeBadge :badge="incomeMode[r.mode]" :dot="false"
+            /></span>
+            <span role="cell" data-label="Статус">{{ tradingStatus[r.status] }}</span>
+            <span role="cell" data-label="Капитал" class="mono">{{ decimalText(r.equity) }}</span>
+            <span
+              role="cell"
+              data-label="Результат"
+              class="mono"
+              :class="{ 'is-neg': isNegative(r.pnl) }"
+              >{{ decimalText(r.pnl, 2, true) }}</span
+            >
+            <span
+              role="cell"
+              data-label="Зафиксировано"
+              class="mono"
+              :class="{ 'is-neg': isNegative(r.realized) }"
+              >{{ decimalText(r.realized, 2, true) }}</span
+            >
+            <span role="cell" data-label="Сделок, в плюс" class="mono"
+              >{{ r.trades30d }} · {{ winRate(r.wins30d, r.trades30d) }}</span
+            >
+          </div>
+        </div>
+        <p v-else class="small muted">Ни одна биржа ещё не запускалась.</p>
+      </section>
+
+      <div class="grid-two">
+        <section class="card rise" aria-labelledby="money-title">
+          <div class="card-head">
+            <h2 id="money-title">Доход и расходы по дням</h2>
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/money">Деньги</NuxtLink>
+          </div>
+          <OfficeDayBars :days="v.daily" />
+          <ul v-if="v.spendByCategory.length" class="spend">
+            <li v-for="c in v.spendByCategory" :key="c.category">
+              <span>{{ categoryName[c.category] ?? c.category }}</span>
+              <span class="spend-bar"
+                ><i
+                  :style="{
+                    width: `${spendTotal ? Math.max(2, Math.round((c.kopecks / spendTotal) * 100)) : 0}%`,
+                  }"
+              /></span>
+              <b>{{ rub(c.kopecks) }}</b>
+            </li>
+          </ul>
+          <p v-else class="small muted spend-empty">За 30 дней платных вызовов не было.</p>
+        </section>
+
+        <section class="card rise" aria-labelledby="agents-title">
+          <div class="card-head">
+            <h2 id="agents-title">Лучшие и худшие агенты</h2>
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/trading">Торговля</NuxtLink>
+          </div>
+          <template v-if="v.agents.best.length || v.agents.worst.length">
+            <h3 v-if="v.agents.best.length" class="eyebrow">В плюсе</h3>
+            <ol v-if="v.agents.best.length" class="ranks">
+              <li v-for="a in v.agents.best" :key="a.id">
+                <span class="rank-name"
+                  >{{ a.name }}
+                  <small
+                    >{{ exchangeTitle[a.exchange] }} · {{ incomeMode[a.mode].label }} ·
+                    {{ strategyName[a.kind as keyof typeof strategyName] ?? a.kind }} ·
+                    {{ a.symbol.replace('-USDT', '') }}</small
+                  ></span
+                >
+                <b class="mono" :class="{ 'is-neg': isNegative(a.realized) }"
+                  >{{ decimalText(a.realized, 2, true) }} USDT</b
+                >
+              </li>
+            </ol>
+            <template v-if="v.agents.worst.length">
+              <h3 class="eyebrow">В минусе</h3>
+              <ol class="ranks">
+                <li v-for="a in v.agents.worst" :key="a.id">
+                  <span class="rank-name"
+                    >{{ a.name }}
+                    <small
+                      >{{ exchangeTitle[a.exchange] }} · {{ incomeMode[a.mode].label }} ·
+                      {{ strategyName[a.kind as keyof typeof strategyName] ?? a.kind }}</small
+                    ></span
+                  >
+                  <b class="mono is-neg">{{ decimalText(a.realized, 2, true) }} USDT</b>
+                </li>
+              </ol>
+            </template>
+          </template>
+          <p v-else class="muted small">Ещё ни один агент не закрыл сделку.</p>
+        </section>
+      </div>
+
+      <div class="grid-two">
+        <section class="card rise" aria-labelledby="funnel-title">
+          <div class="card-head">
+            <h2 id="funnel-title">Путь идеи до денег</h2>
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/ideas">Идеи</NuxtLink>
+          </div>
+          <ol class="funnel">
+            <li v-for="step in funnel" :key="step.label">
+              <span>{{ step.label }}</span>
+              <span class="funnel-bar"><i :style="{ width: `${step.width}%` }" /></span>
+              <b class="mono">{{ count(step.n) }}</b>
+            </li>
+          </ol>
+        </section>
+
+        <section class="card rise" aria-labelledby="products-title">
+          <div class="card-head">
+            <h2 id="products-title">Продукты и цены</h2>
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/products">Все продукты</NuxtLink>
+          </div>
+          <ul v-if="v.products.length" class="products">
+            <li v-for="p in v.products" :key="p.id">
+              <span class="product-name">{{ p.name }}</span>
+              <span class="small muted">заказов {{ p.orders }}, выдано {{ p.delivered }}</span>
+              <b class="mono">{{ priceText(p.priceKopecks) }}</b>
+            </li>
+          </ul>
+          <p v-else class="small muted">На сайте пока нет услуг.</p>
+          <p class="small muted prices">
+            Цены витрины: {{ v.priceList.map(priceText).join(' · ') }}. Оплата тестовая, пока не
+            подключён настоящий приём платежей.
+          </p>
+          <h3 class="eyebrow">Стратегии в работе</h3>
+          <ul v-if="strategyGroups.length" class="strategies">
+            <li v-for="g in strategyGroups" :key="`${g.exchange}:${g.mode}`">
+              <b>{{ exchangeTitle[g.exchange] }}</b>
+              <OfficeBadge :badge="incomeMode[g.mode]" :dot="false" />
+              <span>{{ g.kinds.join(', ') }}</span>
+            </li>
+          </ul>
+          <p v-else class="small muted">Торговые стратегии не запущены.</p>
+        </section>
       </div>
     </template>
   </div>
@@ -345,146 +517,440 @@ const subtitle = computed(() => {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.now {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: var(--s-8);
-  align-items: start;
-}
-.now h2 {
-  font-size: var(--text-2xl);
-  margin-top: var(--s-2);
-  max-width: 30ch;
-  overflow-wrap: anywhere;
-}
-.now-live {
-  color: #9fe3bf;
-}
-.now-live.is-still {
-  color: #f3d58a;
-}
-.now-detail {
-  margin-top: var(--s-2);
-}
-.now-progress {
-  margin-top: var(--s-5);
-  max-width: 520px;
-  display: grid;
-  gap: 8px;
-}
-.now-side {
-  display: grid;
-  gap: var(--s-3);
-  margin: 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.14);
-  padding-left: var(--s-6);
-}
-.now-side dt {
+.updated {
+  margin-left: 6px;
   font-size: var(--text-sm);
-  color: #b7bac3;
 }
-.now-side dd {
-  margin: 0;
-  font: 700 var(--text-lg) / 1.25 var(--font-display);
-  color: #fff;
-}
-.now-actions {
+.summary {
   display: flex;
-  gap: var(--s-2);
-  margin-top: var(--s-5);
-}
-.card-ink .btn {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
-  color: #fff;
-}
-.card-ink .btn:hover {
-  background: rgba(255, 255, 255, 0.16);
-}
-.card-ink .bar {
-  background: rgba(255, 255, 255, 0.14);
-}
-.card-ink .bar > i {
-  background: var(--sun);
-}
-.home-stats {
-  margin-top: var(--s-5);
-}
-@media (min-width: 1280px) {
-  .home-stats {
-    grid-template-columns: repeat(6, 1fr);
-  }
-}
-@media (min-width: 1024px) and (max-width: 1279px) {
-  .home-stats {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-.start {
-  margin-top: var(--s-5);
-}
-.start h2 {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-5);
   margin-bottom: var(--s-4);
 }
-.two {
+.summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.summary-line strong {
+  font: 700 var(--text-lg) / 1.25 var(--font-display);
+}
+.kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.kpis .num {
+  overflow-wrap: anywhere;
+}
+.kpi-extra {
+  font: 600 var(--text-sm) / 1.3 var(--font-mono);
+  color: var(--brand-ink);
+}
+.stat.is-loss .num {
+  color: var(--st-err-ink);
+}
+.stat .stat-label .badge {
+  margin-left: 4px;
+  vertical-align: 1px;
+}
+.test-lines {
+  margin: 4px 0 0;
   display: grid;
-  grid-template-columns: 1.4fr 1fr;
+  gap: 4px;
+}
+.test-lines div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  font-size: var(--text-sm);
+}
+.test-lines dt {
+  color: var(--muted);
+}
+.test-lines dd {
+  margin: 0;
+  font: 600 var(--text-sm) / 1.3 var(--font-mono);
+  color: var(--st-test-ink);
+  text-align: right;
+}
+.grid-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
   gap: var(--s-5);
   margin-top: var(--s-5);
   align-items: start;
 }
-.retired-line {
-  display: block;
-  padding: var(--s-2) 0 0;
+.grid-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-5);
+  margin-top: var(--s-5);
+  align-items: start;
 }
-.retired-line:hover {
+.income > .card,
+.income > section.card {
+  margin-top: var(--s-5);
+}
+.card-head.wrap {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.card-head p {
+  margin: 4px 0 0;
+}
+
+/* Sources */
+.sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.sources li + li {
+  border-top: 1px solid var(--line);
+}
+.source {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 150px;
+  gap: var(--s-3) var(--s-4);
+  align-items: center;
+  padding: 12px 4px;
+  color: inherit;
+  border-left: 3px solid transparent;
+  padding-left: 10px;
+}
+.source:hover {
+  text-decoration: none;
+  background: var(--surface-2);
+}
+.is-autonomous .source {
+  border-left-color: var(--st-ok);
+}
+.is-needs_human .source {
+  border-left-color: var(--st-human);
+}
+.is-paper_only .source {
+  border-left-color: var(--st-test);
+}
+.is-disabled .source {
+  border-left-color: var(--line-strong);
+}
+.is-disabled .source-title {
   color: var(--ink-2);
 }
-.team-list {
+.source-main {
   display: grid;
-  gap: 14px;
-}
-.team-list .agent .score {
+  gap: 2px;
   min-width: 0;
-  width: 100%;
 }
-.team-list .name {
+.source-title {
   font-weight: 600;
 }
-.team-list .focus {
+.source-detail {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.source-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.source-result {
+  display: grid;
+  justify-items: end;
+  text-align: right;
+  gap: 1px;
+}
+.source-result b {
+  font: 700 var(--text-md) / 1.2 var(--font-mono);
+  color: var(--brand-ink);
+}
+.source-result b.is-test {
+  color: var(--st-test-ink);
+}
+.source-result small {
   font-size: var(--text-xs);
   color: var(--muted);
 }
-.waiting ul {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  line-height: 1.7;
+.is-neg,
+.source-result b.is-neg {
+  color: var(--st-err-ink);
 }
-.waiting p {
-  margin-top: 6px;
+
+/* Dark theme: the shared active chip keeps readable text. */
+.chip.is-active {
+  color: var(--surface);
+}
+
+/* Feed */
+.on-air {
+  white-space: nowrap;
+}
+.feed-card :deep(.feed) {
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+/* Needs a person */
+.needs {
+  margin-top: var(--s-5);
+}
+.needs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s-3);
+}
+.needs-list a {
+  display: grid;
+  gap: 4px;
+  height: 100%;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: inherit;
+  border-left: 3px solid var(--st-wait);
+}
+.needs-list .is-block a {
+  border-left-color: var(--st-err);
+}
+.needs-list a:hover {
+  text-decoration: none;
+  box-shadow: var(--shadow-md);
+}
+.needs-list span {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+/* Trading */
+.empty-chart {
+  padding: var(--s-8) 0;
+  text-align: center;
+}
+.trade-rows {
+  margin-top: var(--s-5);
+  display: grid;
+  font-size: var(--text-sm);
+}
+.trade-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) 1fr 1fr 1fr 1fr 1fr;
+  gap: var(--s-3);
+  align-items: center;
+  padding: 10px 4px;
+  border-top: 1px solid var(--line);
+}
+.trade-head {
+  border-top: 0;
+  font: 600 var(--text-xs) / 1.2 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.trade-row .mono {
+  font-family: var(--font-mono);
+}
+.trade-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-weight: 600;
+}
+.trade-name i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+/* Spend */
+.spend,
+.funnel,
+.ranks,
+.products,
+.strategies {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.spend {
+  margin-top: var(--s-5);
+  display: grid;
+  gap: 8px;
+}
+.spend li,
+.funnel li {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: var(--s-3);
+  align-items: center;
+  font-size: var(--text-sm);
+}
+.spend-bar,
+.funnel-bar {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--canvas-deep);
+  overflow: hidden;
+}
+.spend-bar i,
+.funnel-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+.spend-bar i {
+  background: var(--clay);
+}
+.funnel-bar i {
+  background: var(--brand);
+}
+.spend b,
+.funnel b {
+  font-family: var(--font-mono);
+  min-width: 64px;
+  text-align: right;
+}
+.spend-empty {
+  margin-top: var(--s-4);
+}
+.funnel {
+  display: grid;
+  gap: 12px;
+}
+.funnel li:last-child .funnel-bar i {
+  background: var(--sun);
+}
+
+/* Ranks */
+.eyebrow {
+  margin: var(--s-4) 0 var(--s-2);
+}
+.card-head + .eyebrow {
+  margin-top: 0;
+}
+.ranks {
+  display: grid;
+}
+.ranks li,
+.products li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--s-3);
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.ranks li:first-child,
+.products li:first-child {
+  border-top: 0;
+}
+.rank-name {
+  display: grid;
+  font-weight: 600;
+}
+.rank-name small {
+  font-weight: 400;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.ranks b {
+  color: var(--brand-ink);
+}
+.ranks b.is-neg {
+  color: var(--st-err-ink);
+}
+
+/* Products */
+.products li {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+.product-name {
+  font-weight: 600;
+}
+.prices {
+  margin-top: var(--s-3);
+}
+.strategies {
+  display: grid;
+  gap: 8px;
+}
+.strategies li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 1279px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @media (max-width: 1023px) {
-  .now {
-    grid-template-columns: 1fr;
-    gap: var(--s-5);
+  .grid-main,
+  .grid-two {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .now-side {
-    border-left: 0;
-    padding-left: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.14);
-    padding-top: var(--s-4);
-    grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 760px) {
+  .source {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
-  .two {
-    grid-template-columns: 1fr;
+  .source-badges {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .source-result {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .trade-head {
+    display: none;
+  }
+  .trade-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px var(--s-3);
+  }
+  .trade-name {
+    grid-column: 1 / -1;
+  }
+  .trade-row [data-label]::before {
+    content: attr(data-label) ': ';
+    font-family: var(--font-body);
+    color: var(--muted);
+  }
+  .products li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .products li .small {
+    grid-column: 1;
+    grid-row: 2;
   }
 }
 @media (max-width: 639px) {
   .head-actions {
     justify-content: flex-start;
   }
-  .now h2 {
-    font-size: var(--text-xl);
+  .kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kpis .num {
+    font-size: var(--text-2xl);
+  }
+  .spend li,
+  .funnel li {
+    grid-template-columns: minmax(0, 1fr) 70px auto;
   }
 }
 </style>

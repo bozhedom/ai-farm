@@ -13,7 +13,7 @@ async function login() {
   error.value = ''
   try {
     await officeApi.login(password.value)
-    await navigateTo('/office/trading')
+    await navigateTo('/office')
   } catch (e) {
     error.value = errorMessage(e)
   } finally {

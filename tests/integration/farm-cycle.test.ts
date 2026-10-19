@@ -154,6 +154,29 @@ describe('farm day in demo mode', () => {
     expect(overview.worker.nextAt === null || typeof overview.worker.nextAt === 'string').toBe(true)
   })
 
+  it('lets one agent a day explore the least scouted topic outside its focus', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({ ...settings.config(), AUTONOMY_ENABLED: true })
+    const now = new Date()
+    // Prime the topic list, then mark every topic but one new direction as scouted earlier.
+    await scheduleWork(new Date(now.getTime() - 3 * 86400000))
+    await query('DELETE FROM jobs')
+    await query(
+      "UPDATE topic_scouting SET last_scouted_at=now()-interval '2 days' WHERE topic_id<>'media-channel'",
+    )
+    await query(
+      "UPDATE topic_scouting SET last_scouted_at=NULL,scout_count=0 WHERE topic_id='media-channel'",
+    )
+    await scheduleWork(now)
+    const scouts = await query("SELECT payload FROM jobs WHERE kind='scout'")
+    expect(scouts).toHaveLength(4)
+    const explored = scouts.filter((s) => s.payload.topicId === 'media-channel')
+    expect(explored).toHaveLength(1)
+    const [agent] = await query('SELECT params FROM strategies WHERE id=$1', [
+      explored[0]!.payload.strategyId,
+    ])
+    expect(agent!.params.focusCategories).not.toContain('own-media')
+  })
+
   it('keeps scheduled farm work idle while paused, stopped or with the schedule off', async () => {
     const config = vi
       .spyOn(settings, 'config')
