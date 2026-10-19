@@ -51,16 +51,20 @@ export function nextDailyRun(now: Date, hourUtc: number, ranToday: boolean) {
 /** The daily run waits for the owner's hour; the day key and limits stay per UTC day. */
 export const beforeDailyHour = (now: Date, hourUtc: number) => now.getUTCHours() < (hourUtc || 0)
 
-export async function setSchedule(enabled: boolean) {
+export async function setSchedule(enabled: boolean, actor: 'owner' | 'autopilot' = 'owner') {
   if (enabled && !config().AUTONOMY_ENABLED) throw new Error('SCHEDULE_DISABLED_ON_SERVER')
+  // The autopilot only turns the schedule on; turning it off stays the owner's decision.
+  if (actor === 'autopilot' && !enabled) throw new Error('AUTOPILOT_CANNOT_DISABLE')
   return transaction(async (db) => {
     await query('UPDATE system_state SET schedule_enabled=$1 WHERE id=true', [enabled], db)
     await audit(
       'schedule_changed',
-      enabled
-        ? 'Владелец включил суточное расписание.'
-        : 'Владелец выключил суточное расписание. Начатая работа может завершиться.',
-      { enabled },
+      actor === 'autopilot'
+        ? 'Автопилот включил суточное расписание.'
+        : enabled
+          ? 'Владелец включил суточное расписание.'
+          : 'Владелец выключил суточное расписание. Начатая работа может завершиться.',
+      { enabled, actor },
       db,
     )
     return { enabled }

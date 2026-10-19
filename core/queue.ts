@@ -176,7 +176,7 @@ async function deferForDailyBudget(job: Job, db: Connection) {
 }
 
 /** Today's spending split at the current UTC hour, and the trading manager's remaining need. */
-async function pacingNumbers(db: Connection) {
+export async function pacingNumbers(db: Connection = pool) {
   const [row] = await query(
     `WITH day AS (SELECT date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS at),
     hour AS (SELECT date_trunc('hour',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS at)

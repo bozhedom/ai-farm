@@ -302,6 +302,23 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
       return item('Вы изменили настройки фермы.', '/office/settings')
     case 'research_restarted':
       return item('Начался новый сезон на 28 дней.', '/office/settings')
+    case 'autopilot_decision': {
+      const key = String(d.key ?? '')
+      return item(
+        event.message,
+        key.startsWith('trading:')
+          ? '/office/trading'
+          : key.startsWith('execution:')
+            ? '/office/earnings'
+            : key === 'manager'
+              ? '/office/manager'
+              : key === 'schedule' || key === 'studio'
+                ? '/office/settings'
+                : null,
+      )
+    }
+    case 'worker_loop_stuck':
+      return item(event.message)
     default:
       return []
   }
@@ -340,6 +357,8 @@ export const feedKinds = [
   'control',
   'settings_changed',
   'research_restarted',
+  'autopilot_decision',
+  'worker_loop_stuck',
 ]
 
 /**

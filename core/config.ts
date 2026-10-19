@@ -82,6 +82,15 @@ const schema = z.object({
   MANAGER_RUNS_PER_DAY: optionalInt(1, 12),
   // Spread paid farm work over the remaining UTC hours instead of spending the day at once.
   PACING_ENABLED: flag.default(true),
+  // Server autopilot inside the worker: on start and every interval it turns on the autonomous
+  // loops through the office functions. It never clears a pause or stop, never enables Live and
+  // never changes money limits or owner-defined capital.
+  AUTOPILOT_ON_BOOT: flag.default(false),
+  AUTOPILOT_INTERVAL_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(600_000),
+  // Virtual USDT for a never-configured Paper execution book (arbitrage, funding, DeFi). 0: off.
+  AUTOPILOT_EXECUTION_PAPER_USDT: z.coerce.number().int().min(0).max(1_000_000).default(100),
+  // A loop that never returns makes the worker exit so the container restart policy recovers it.
+  WORKER_STUCK_RESTART: flag.default(true),
   POLL_INTERVAL_MS: positive(5000),
   // Separate credentials: a demo request can never fall back to a real account.
   TRADING_LIVE_ENABLED: flag.default(false),

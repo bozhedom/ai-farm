@@ -64,7 +64,11 @@ export async function managerBudget(db?: Connection) {
   )
   return row as { runs: number; spent: number; reserved: number; uncertain: boolean }
 }
-export async function controlManager(action: 'enable' | 'pause' | 'review') {
+export async function controlManager(
+  action: 'enable' | 'pause' | 'review',
+  actor: 'owner' | 'autopilot' = 'owner',
+) {
+  if (actor === 'autopilot' && action !== 'enable') throw new Error('AUTOPILOT_CANNOT_DISABLE')
   await ensureManager()
   await transaction(async (db) => {
     const [row] = await query<ManagerRow>(
@@ -104,7 +108,14 @@ export async function controlManager(action: 'enable' | 'pause' | 'review') {
         db,
       )
     }
-    await audit('trading_manager_control', 'Изменена работа торгового менеджера.', { action }, db)
+    await audit(
+      'trading_manager_control',
+      actor === 'autopilot'
+        ? 'Автопилот включил торгового менеджера.'
+        : 'Изменена работа торгового менеджера.',
+      { action, actor },
+      db,
+    )
   })
 }
 function safeError(error: unknown) {
