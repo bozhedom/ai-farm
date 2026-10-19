@@ -151,6 +151,13 @@ export const MANAGER_POLICY = Object.freeze({
   maxTasksPerRun: 4,
   reserveKopecks: 500,
   dailyKopecks: 2000,
+  // GPT-6 Astra: the bounded snapshot needs up to about 97 ₽ upper estimate per review.
+  astraReserveKopecks: 12000,
+  astraDailyKopecks: 48000,
+  // Hard ceilings for MANAGER_* environment overrides; the global limits apply as well.
+  maxReserveKopecks: 20000,
+  maxDailyKopecks: 100000,
+  maxRunsPerDay: 12,
   minAgentAgeMs: 24 * 60 * 60_000,
   evaluationMs: 24 * 60 * 60_000,
   minRoundTrips: 5,

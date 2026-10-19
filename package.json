@@ -13,6 +13,7 @@
     "worker": "tsx --env-file=.env worker/index.ts",
     "execution:local": "tsx --env-file=.env scripts/execution-local.ts",
     "autopilot:local": "tsx --env-file=.env scripts/autopilot-local.ts",
+    "autopilot:check": "tsx --env-file-if-exists=.env scripts/server-autopilot-check.ts",
     "execution:aave:local": "tsx scripts/execution-aave-local.ts",
     "trading:check": "tsx --env-file=.env scripts/trading-check.ts",
     "cloud:check": "tsx --env-file=.env scripts/cloud-check.ts",

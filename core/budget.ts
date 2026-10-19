@@ -3,7 +3,7 @@ import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { activityContext, checkWorkerDrain, type CallActivity } from './activity'
 import { lockResearchWindow } from './research-window'
-import { MANAGER_POLICY } from './policy'
+import { managerLimits } from './manager/limits'
 
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
@@ -37,7 +37,7 @@ export const farmCategories: readonly BudgetCategory[] = ['research', 'scout', '
 export function reserveFor(category: BudgetCategory) {
   const c = config()
   if (category === 'trading_manager')
-    return ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? MANAGER_POLICY.reserveKopecks : 0
+    return ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? managerLimits().reserveKopecks : 0
   const paid =
     ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ||
     (category !== 'order' && c.SEARCH_PROVIDER === 'yandex')
@@ -196,7 +196,7 @@ export async function meteredCall<T>(args: {
         [],
         db,
       )
-      if (spent!.amount + args.maximum > MANAGER_POLICY.dailyKopecks)
+      if (spent!.amount + args.maximum > managerLimits().dailyKopecks)
         throw new Error('MANAGER_BUDGET_LIMIT')
     }
     if (
