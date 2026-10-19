@@ -25,7 +25,7 @@ import {
   score100,
 } from '~/composables/office/labels'
 
-useHead({ title: 'Главная' })
+useHead({ title: 'Ферма идей' })
 const { data: o, status, pending, refresh } = useOfficeOverview()
 const { data: agents } = useOfficeAgents(10000)
 const { data: money } = useOfficeMoney(10000)
@@ -136,8 +136,10 @@ const subtitle = computed(() => {
   <div>
     <div class="page-head">
       <div>
-        <h1>Главная</h1>
-        <p>{{ subtitle }}</p>
+        <h1>Ферма идей</h1>
+        <p>
+          <ClientOnly>{{ subtitle }}</ClientOnly>
+        </p>
       </div>
       <div class="row head-actions">
         <OfficeModeControls :mode="o?.mode" />
