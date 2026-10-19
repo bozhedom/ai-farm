@@ -2,6 +2,12 @@ import { z } from 'zod'
 
 const flag = z.enum(['true', 'false']).transform((v) => v === 'true')
 const positive = (fallback: number) => z.coerce.number().int().positive().default(fallback)
+/** Unset or empty: the documented default applies. */
+const optionalInt = (min: number, max: number) =>
+  z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().min(min).max(max).optional(),
+  )
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
   APP_ORIGIN: z.url().default('http://localhost:3210'),
@@ -70,6 +76,10 @@ const schema = z.object({
   LEAD_DRAFTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(3),
   IDEA_PRODUCTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(2),
   AUTONOMY_ENABLED: flag.default(true),
+  // Trading manager envelope. Ceilings match MANAGER_POLICY; global day/month limits still apply.
+  MANAGER_RESERVE_KOPECKS: optionalInt(0, 20000),
+  MANAGER_DAILY_KOPECKS: optionalInt(0, 100000),
+  MANAGER_RUNS_PER_DAY: optionalInt(1, 12),
   POLL_INTERVAL_MS: positive(5000),
   // Separate credentials: a demo request can never fall back to a real account.
   TRADING_LIVE_ENABLED: flag.default(false),

@@ -15,6 +15,7 @@ import {
 } from './plan'
 import { managerSnapshot } from './snapshot'
 import { advanceManagerTasks } from './tasks'
+import { managerLimits } from './limits'
 
 export interface ManagerRow {
   enabled: boolean
@@ -94,12 +95,12 @@ export async function controlManager(action: 'enable' | 'pause' | 'review') {
         row!.attempted_at && Date.now() - row!.attempted_at.getTime() < P.manualCooldownMs
       if (action === 'review' && recent && !running && !row!.requested_at)
         throw new Error('MANAGER_COOLDOWN')
-      if (action === 'review' && budget.runs >= P.maxDailyRuns)
+      if (action === 'review' && budget.runs >= managerLimits().maxDailyRuns)
         throw new Error('MANAGER_DAILY_LIMIT')
       await query(
         `UPDATE trading_manager SET enabled=true,
         requested_at=CASE WHEN $1 THEN coalesce(requested_at,now()) ELSE requested_at END WHERE id=true`,
-        [!running && !recent && budget.runs < P.maxDailyRuns],
+        [!running && !recent && budget.runs < managerLimits().maxDailyRuns],
         db,
       )
     }
@@ -169,17 +170,21 @@ async function claimRun(providerReady: boolean) {
       )
       return null
     }
-    if (!row.requested_at && row.attempted_at && now - row.attempted_at.getTime() < P.intervalMs)
+    if (
+      !row.requested_at &&
+      row.attempted_at &&
+      now - row.attempted_at.getTime() < managerLimits().intervalMs
+    )
       return null
     const budget = await managerBudget(db)
     if (
-      budget.runs >= P.maxDailyRuns ||
+      budget.runs >= managerLimits().maxDailyRuns ||
       budget.uncertain ||
-      budget.spent + budget.reserved >= P.dailyKopecks
+      budget.spent + budget.reserved >= managerLimits().dailyKopecks
     ) {
       const reason = budget.uncertain
         ? 'MANAGER_COST_REVIEW'
-        : budget.runs >= P.maxDailyRuns
+        : budget.runs >= managerLimits().maxDailyRuns
           ? 'MANAGER_DAILY_LIMIT'
           : 'MANAGER_BUDGET_LIMIT'
       await query(
@@ -260,11 +265,13 @@ export function managerModelBlocker() {
     { at: '', portfolios: [], recentTasks: [] },
     { id: 'preflight', reservationId: '' },
   )
-  return prepareModelRequest(args).maximum > P.reserveKopecks ? 'MANAGER_MODEL_TOO_EXPENSIVE' : ''
+  return prepareModelRequest(args).maximum > managerLimits().reserveKopecks
+    ? 'MANAGER_MODEL_TOO_EXPENSIVE'
+    : ''
 }
 export const planWithModel: ManagerPlanner = async (snapshot, run) => {
   const args = managerModelArgs(snapshot, run)
-  if (prepareModelRequest(args).maximum > P.reserveKopecks)
+  if (prepareModelRequest(args).maximum > managerLimits().reserveKopecks)
     throw new Error('MANAGER_MODEL_TOO_EXPENSIVE')
   return model(args)
 }
