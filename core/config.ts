@@ -80,6 +80,8 @@ const schema = z.object({
   MANAGER_RESERVE_KOPECKS: optionalInt(0, 20000),
   MANAGER_DAILY_KOPECKS: optionalInt(0, 100000),
   MANAGER_RUNS_PER_DAY: optionalInt(1, 12),
+  // Spread paid farm work over the remaining UTC hours instead of spending the day at once.
+  PACING_ENABLED: flag.default(true),
   POLL_INTERVAL_MS: positive(5000),
   // Separate credentials: a demo request can never fall back to a real account.
   TRADING_LIVE_ENABLED: flag.default(false),

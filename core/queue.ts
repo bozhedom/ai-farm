@@ -11,6 +11,8 @@ import {
 } from './budget'
 import { WorkerDraining } from './activity'
 import { lockResearchWindow } from './research-window'
+import { managerFloor, pacingDecision } from './pacing'
+import { managerLimits } from './manager/limits'
 
 export type JobKind = 'research' | 'fulfill' | 'evaluate' | 'scout' | 'lead' | 'report' | 'evolve'
 /** Model-using farm work: one at a time across workers, stopped by pause and the closed window. */
@@ -69,7 +71,7 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
       return
     const [claimed] = await query<Job>(
       `UPDATE jobs SET status='running', attempts=attempts+1,started_at=COALESCE(started_at,now()),
-      error_code=CASE WHEN error_code IN ('RESEARCH_DAILY_BUDGET_WAIT','FARM_DAILY_BUDGET_WAIT','WORKER_DRAINING') THEN null ELSE error_code END,
+      error_code=CASE WHEN error_code IN ('RESEARCH_DAILY_BUDGET_WAIT','FARM_DAILY_BUDGET_WAIT','FARM_PACING_WAIT','WORKER_DRAINING') THEN null ELSE error_code END,
       locked_until=now()+interval '2 minutes', lease_token=$2 WHERE id=$1 RETURNING *`,
       [row.id, randomUUID()],
       db,
@@ -112,6 +114,37 @@ async function deferForDailyBudget(job: Job, db: Connection) {
   )
     return false
   if (budget.daySpent + outstanding <= c.DAILY_BUDGET_KOPECKS) {
+    if (c.PACING_ENABLED) {
+      const pace = pacingDecision({
+        ...(await pacingNumbers(db)),
+        category,
+        limit: reserve,
+        dailyKopecks: c.DAILY_BUDGET_KOPECKS,
+        now: new Date(),
+      })
+      if (!pace.allowed) {
+        const [previous] = await query('SELECT error_code FROM jobs WHERE id=$1', [job.id], db)
+        await query(
+          "UPDATE jobs SET error_code='FARM_PACING_WAIT',run_after=$2 WHERE id=$1",
+          [job.id, pace.retryAt],
+          db,
+        )
+        if (previous?.error_code !== 'FARM_PACING_WAIT')
+          await audit(
+            'farm_pacing_wait',
+            'Задача ждёт своего часа: бюджет модели распределяется равномерно по суткам.',
+            {
+              jobId: job.id,
+              kind: job.kind,
+              nextAt: pace.retryAt,
+              allowanceKopecks: pace.allowanceKopecks,
+              reserveKopecks: reserve,
+            },
+            db,
+          )
+        return true
+      }
+    }
     // Allocate under the same budget lock: a simultaneous order cannot consume the
     // checked room between this preflight and the worker's first reservation request.
     await reserveBudget(`${category}:${job.id}`, category, db)
@@ -140,6 +173,40 @@ async function deferForDailyBudget(job: Job, db: Connection) {
     db,
   )
   return true
+}
+
+/** Today's spending split at the current UTC hour, and the trading manager's remaining need. */
+async function pacingNumbers(db: Connection) {
+  const [row] = await query(
+    `WITH day AS (SELECT date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS at),
+    hour AS (SELECT date_trunc('hour',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS at)
+    SELECT
+      COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at>=(SELECT at FROM day) AND created_at<(SELECT at FROM hour)),0)::int AS before_hour,
+      COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at>=(SELECT at FROM hour)),0)::int AS this_hour,
+      COALESCE((SELECT sum(limit_kopecks-spent_kopecks) FROM budget_reservations WHERE status='open'),0)::int AS outstanding,
+      COALESCE((SELECT enabled FROM trading_manager WHERE id=true),false) AND
+        COALESCE((SELECT mode='running' FROM system_state WHERE id=true),false) AS manager_enabled,
+      (SELECT count(*)::int FROM trading_manager_runs WHERE created_at>=(SELECT at FROM day)) AS manager_runs,
+      COALESCE((SELECT sum(t.charged_kopecks) FROM tool_calls t JOIN budget_reservations r ON r.id=t.reservation_id
+        WHERE r.category='trading_manager' AND t.created_at>=(SELECT at FROM day)),0)::int AS manager_spent,
+      COALESCE((SELECT sum(limit_kopecks-spent_kopecks) FROM budget_reservations WHERE category='trading_manager' AND status='open'),0)::int AS manager_reserved`,
+    [],
+    db,
+  )
+  const limits = managerLimits()
+  return {
+    spentBeforeHour: row!.before_hour as number,
+    usedThisHour: (row!.this_hour as number) + (row!.outstanding as number),
+    managerFloor: managerFloor({
+      enabled: !!row!.manager_enabled && reserveFor('trading_manager') > 0,
+      reserveKopecks: limits.reserveKopecks,
+      dailyKopecks: limits.dailyKopecks,
+      maxDailyRuns: limits.maxDailyRuns,
+      runsToday: row!.manager_runs as number,
+      spentToday: row!.manager_spent as number,
+      reservedOpen: row!.manager_reserved as number,
+    }),
+  }
 }
 
 /** Owners may start a new run when the previous one ends; parallel clicks share the active job. */
