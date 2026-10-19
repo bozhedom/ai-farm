@@ -11,6 +11,7 @@ import { exchanges, type TradingExchange } from '../core/trading/types'
 import { earningsTick } from '../core/earnings/monitor'
 import { managerTick } from '../core/manager/runtime'
 import { executionTick } from '../core/execution/engine'
+import { computerUseTick } from '../core/computer-use/runtime'
 import { EXECUTION_POLICY } from '../core/policy'
 
 let stopping = false
@@ -20,6 +21,7 @@ let paymentsBusy = false
 let earningsBusy = false
 let managerBusy = false
 let executionBusy = false
+let computerBusy = false
 let lastExecutionAt = 0
 const tradingBusy = new Set<TradingExchange>()
 let unavailableProviders = ''
@@ -145,6 +147,18 @@ while (!stopping) {
           running.delete(managerTask)
         })
       running.add(managerTask)
+    }
+    if (!computerBusy && !stopping && config().COMPUTER_USE_ENABLED) {
+      // Fourth lane: one browser task on the separate VM, screenshot by screenshot.
+      computerBusy = true
+      const computerTask = computerUseTick(undefined, isStopping)
+        .then(() => {})
+        .catch(() => console.error('COMPUTER_USE_FAILED'))
+        .finally(() => {
+          computerBusy = false
+          running.delete(computerTask)
+        })
+      running.add(computerTask)
     }
     if (!farmBusy && config().WORKSPACE_MODE === 'studio') {
       // Three lanes: orders, farm and payment reconciliation. The farm lane runs one job at a

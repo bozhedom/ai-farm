@@ -110,6 +110,7 @@ export const budgetCategories: Record<BudgetCategory, string> = {
   lead: 'Поиск клиентов',
   report: 'Отчёты руководителя',
   trading_manager: 'Менеджер торговли',
+  computer_use: 'Компьютер ИИ',
 }
 
 export const scoreComponents: Record<ScoreComponent, { label: string; hint: string }> = {

@@ -18,6 +18,8 @@ export default defineConfig({
       PAYMENT_MODE: 'sandbox',
       SECURE_COOKIE: 'false',
       AUTONOMY_ENABLED: 'false',
+      COMPUTER_USE_ENABLED: 'true',
+      COMPUTER_USE_SCREENSHOT_DIR: 'output/test/computer-use',
     },
   },
 })

@@ -71,6 +71,16 @@ const schema = z.object({
   IDEA_PRODUCTS_PER_DAY: z.coerce.number().int().min(0).max(12).default(2),
   AUTONOMY_ENABLED: flag.default(true),
   POLL_INTERVAL_MS: positive(5000),
+  // Computer use: GPT-6 Astra (paid route through OpenRouter) drives a browser on a separate VM.
+  // Needs the office toggle as well. Models never get the VM token; only the worker does.
+  COMPUTER_USE_ENABLED: flag.default(false),
+  VM_AGENT_URL: z.string().default(''),
+  VM_AGENT_TOKEN: z.string().default(''),
+  COMPUTER_USE_STEP_LIMIT: positive(30).refine((n) => n <= 200),
+  // Integer microdollars ($1 = 1,000,000). The task cap is also the kopeck reserve of the task.
+  COMPUTER_USE_TASK_CAP_MICROUSD: positive(2000000).refine((n) => n <= 50000000),
+  COMPUTER_USE_DAILY_CAP_MICROUSD: positive(10000000).refine((n) => n <= 500000000),
+  COMPUTER_USE_SCREENSHOT_DIR: z.string().trim().min(1).default('output/computer-use'),
   // Separate credentials: a demo request can never fall back to a real account.
   TRADING_LIVE_ENABLED: flag.default(false),
   // The previous text-services experiment remains available with its preserved history.
@@ -159,8 +169,32 @@ export function config(): Config {
     throw new Error('PUBLIC_INDEXING_REQUIRES_SELLER_TERMS')
   if (new URL(c.APP_ORIGIN).protocol === 'https:' && !c.SECURE_COOKIE)
     throw new Error('HTTPS_REQUIRES_SECURE_COOKIE')
+  if (c.VM_AGENT_URL) {
+    const u = URL.canParse(c.VM_AGENT_URL) ? new URL(c.VM_AGENT_URL) : null
+    if (
+      !u ||
+      !['http:', 'https:'].includes(u.protocol) ||
+      u.username ||
+      u.password ||
+      u.search ||
+      u.hash ||
+      u.pathname !== '/'
+    )
+      throw new Error('VM_AGENT_URL_INVALID')
+    if (c.VM_AGENT_TOKEN.length < 32) throw new Error('VM_AGENT_TOKEN_REQUIRED')
+  }
   cached = c
   return c
+}
+
+/** Whether the worker may drive the VM browser with the real model or the demo script. */
+export function computerUseReady(c: Config) {
+  if (!c.COMPUTER_USE_ENABLED) return 'COMPUTER_USE_DISABLED_ON_SERVER'
+  if (c.MODEL_PROVIDER === 'demo') return ''
+  if (c.MODEL_PROVIDER !== 'openai' || c.OPENAI_TRANSPORT !== 'openrouter')
+    return 'COMPUTER_USE_PROVIDER_UNSUPPORTED'
+  if (!c.VM_AGENT_URL || !c.VM_AGENT_TOKEN) return 'COMPUTER_USE_VM_NOT_CONFIGURED'
+  return ''
 }
 
 /** Loopback or a compose service name: only for SEPOLIA_LOCAL_NODE (anvil). */
