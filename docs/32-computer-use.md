@@ -92,6 +92,16 @@ COMPUTER_USE_SCREENSHOT_DIR=output/computer-use
    ufw enable
    ```
 
+   Правила `ufw deny out` действуют для процессов самой ВМ, но не для контейнера: его трафик идёт через цепочку FORWARD, которой Docker управляет сам. Для контейнера добавьте те же запреты в `DOCKER-USER`:
+
+   ```bash
+   for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10; do
+     iptables -I DOCKER-USER -d $net -j DROP
+   done
+   ```
+
+   Независимо от межсетевого экрана агент защищает сеть сам: Chromium ходит только через встроенный прокси на loopback (`vm-agent/src/proxy.ts`), который резолвит имя, отклоняет частные адреса и подключается ровно к проверенному публичному адресу. Поэтому подмена DNS между проверкой и подключением (rebinding), редиректы и WebSocket не ведут во внутреннюю сеть.
+
    В панели Timeweb продублировать правило для 8787 на уровне сети. Трафик между сервером и ВМ идёт по HTTP внутри одного оператора; для публичного интернета ставьте перед агентом Caddy с HTTPS или WireGuard.
 
 5. На сервере фермы: `VM_AGENT_URL=http://<ip-вм>:8787/`, `VM_AGENT_TOKEN=<токен>`, `COMPUTER_USE_ENABLED=true`. В `compose.yaml` для службы `worker` добавить том `./output/computer-use:/app/output/computer-use` (и такой же для `web`, который отдаёт снимки), затем перезапустить `web` и `worker`. Каталог на хосте должен быть доступен на запись пользователю `node` контейнера (uid 1000); без него шаги идут дальше, но снимки в кабинете не показываются. Проверка связи: `curl -H "Authorization: Bearer <токен>" -X POST -H 'Content-Type: application/json' -d '{}' http://<ip-вм>:8787/sessions`.
@@ -111,4 +121,5 @@ COMPUTER_USE_SCREENSHOT_DIR=output/computer-use
 - Unit: `tests/unit/computer-use-policy.test.ts` (классификация, цели, частные адреса), `tests/unit/computer-use-schema.test.ts` (схемы и список функций), `tests/unit/openrouter-tools.test.ts` (путь с инструментами: состав запроса, учёт, отказ от повторов), `tests/unit/vm-agent-guard.test.ts` (сетевой guard ВМ и её схемы действий).
 - Integration: `tests/integration/computer-use.test.ts` - демо-задание целиком с подтверждением, отклонение и его отражение в истории, запреты без обращения к ВМ, резерв платного вызова и остановка по потолку задания (с подменой ответа OpenRouter), пауза/стоп/возобновление, сбои ВМ и счётчик, API с сессией, Origin и выдачей снимка.
 - Playwright: `/office/computer` на 1440 и 390 px с демо-данными, нажатия «Отклонить» и «Поставить в очередь»; снимки `output/playwright/computer-use/`.
-- Не проверено: настоящий ответ Astra с инструментами через OpenRouter (формат `tool_calls` принят по документации OpenAI-совместимого API OpenRouter), настоящая ВМ с Chromium и реальные сайты, поведение площадок при автоматизации, точность оценки токенов снимка.
+- Unit: `tests/unit/vm-agent-proxy.test.ts` - прокси ВМ подключается только к проверенному адресу (plain http, CONNECT, отказ частным и rebinding-целям без подключения).
+- Не проверено: настоящий ответ Astra с инструментами через OpenRouter (формат `tool_calls` принят по документации OpenAI-совместимого API OpenRouter), настоящая ВМ с Chromium и реальные сайты (в том числе запуск Chromium через встроенный прокси с `bypass: '<-loopback>'`), поведение площадок при автоматизации, точность оценки токенов снимка.

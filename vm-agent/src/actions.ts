@@ -39,7 +39,17 @@ export const actionSchema = z.discriminatedUnion('name', [
       y: coordinate(VIEWPORT.height - 1),
     })
     .strict(),
-  z.object({ name: z.literal('type'), text: z.string().min(1).max(2000) }).strict(),
+  // Line breaks and tabs would press Enter or Tab: those are separate `key` actions.
+  z
+    .object({
+      name: z.literal('type'),
+      text: z
+        .string()
+        .min(1)
+        .max(2000)
+        .regex(/^[^\p{Cc}]+$/u),
+    })
+    .strict(),
   z.object({ name: z.literal('key'), key: z.enum(keyNames) }).strict(),
   z
     .object({

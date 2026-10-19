@@ -101,5 +101,27 @@ describe('VM browser network guard', () => {
     expect(actionSchema.safeParse({ name: 'navigate', url: 'file:///x' }).success).toBe(false)
     expect(actionSchema.safeParse({ name: 'eval', code: '1' }).success).toBe(false)
     expect(actionSchema.safeParse({ name: 'wait', ms: 5001 }).success).toBe(false)
+    // A line break in typed text would press Enter without the approval path of `key`.
+    expect(actionSchema.safeParse({ name: 'type', text: 'гранты 2026' }).success).toBe(true)
+    for (const text of ['login\n', 'a\rb', 'a\tb', 'x\u001b'])
+      expect(actionSchema.safeParse({ name: 'type', text }).success).toBe(false)
+  })
+  it('normalises decimal, octal, hex and short IPv4 hosts before the check', async () => {
+    for (const url of [
+      'http://2130706433/',
+      'http://0x7f000001/',
+      'http://0177.0.0.1/',
+      'http://127.1/',
+      'http://0/',
+      'http://[::ffff:7f00:1]/',
+      'http://[0:0:0:0:0:ffff:127.0.0.1]/',
+      'http://[fe80::1]/',
+      'http://[fc00::1]/',
+      'http://[ff02::1]/',
+      'http://[::]/',
+      'ws://example.com/',
+    ])
+      expect([url, await targetAllowed(url, resolver)]).toEqual([url, false])
+    expect(await targetAllowed('http://[2606:4700::1111]/', resolver)).toBe(true)
   })
 })

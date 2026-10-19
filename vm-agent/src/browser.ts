@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as pause } from 'node:timers/promises'
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
 import { targetAllowed } from './guard'
+import { startProxy, type Proxy } from './proxy'
 import { VIEWPORT, type Action } from './actions'
 
 /**
  * One headless Chromium per process, one context per session, one page per context. Pop-ups
  * are folded into the main page, dialogs are dismissed, downloads are cancelled and every
- * request passes the network guard. Nothing here knows about the farm or holds its secrets.
+ * request passes the network guard twice: the route hook refuses by name, and the loopback
+ * proxy connects only to the public address it resolved itself (no DNS rebinding, WebSockets
+ * included). Nothing here knows about the farm or holds its secrets.
  */
 export type Element = {
   tag: string
@@ -44,15 +47,22 @@ const elementScript = `(target) => {
   return active && active !== document.body ? pick(active) : null
 }`
 
+/** Pages the model may stay on after an action; anything else goes back to a blank page. */
+export const pageSchemeAllowed = (url: string) => /^https?:/.test(url) || url === 'about:blank'
+
 export class Sessions {
   private browser: Browser | null = null
+  private proxy: Proxy | null = null
   private readonly sessions = new Map<string, Session>()
 
   private async launch() {
     if (this.browser?.isConnected()) return this.browser
+    this.proxy ??= await startProxy()
     this.browser = await chromium.launch({
       headless: true,
       args: ['--disable-dev-shm-usage', '--disable-background-networking'],
+      // Everything, loopback included, goes through the guarding proxy.
+      proxy: { server: `http://127.0.0.1:${this.proxy.port}`, bypass: '<-loopback>' },
     })
     return this.browser
   }
@@ -118,6 +128,8 @@ export class Sessions {
     for (const id of [...this.sessions.keys()]) await this.end(id)
     await this.browser?.close().catch(() => undefined)
     this.browser = null
+    await this.proxy?.close().catch(() => undefined)
+    this.proxy = null
   }
 
   async state(session: Session): Promise<PageState> {
@@ -175,6 +187,11 @@ export class Sessions {
         case 'wait':
           await pause(action.ms)
           break
+      }
+      if (!pageSchemeAllowed(page.url())) {
+        // A link into file:, data:, blob: or a browser page: leave it before the next snapshot.
+        await page.goto('about:blank').catch(() => undefined)
+        return { ok: false, error: 'TARGET_BLOCKED' }
       }
       return { ok: true, error: '' }
     } catch (error) {
