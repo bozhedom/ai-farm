@@ -212,7 +212,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     ),
     query(
       `SELECT id,name,exchange,mode,kind,symbol,realized::text,round_trips,status FROM trading_agents
-       WHERE round_trips>0 ORDER BY realized DESC,id LIMIT 5`,
+       WHERE round_trips>0 AND realized>0 ORDER BY realized DESC,id LIMIT 5`,
     ),
     query(
       `SELECT id,name,exchange,mode,kind,symbol,realized::text,round_trips,status FROM trading_agents
@@ -616,7 +616,8 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       link: '/office/computer',
       severity: 'warn',
     })
-  for (const item of office.needsOwner)
+  // The worker line is already above with an instruction.
+  for (const item of office.needsOwner.filter((n) => n.kind !== 'worker'))
     add({
       id: `office:${item.kind}`,
       title: item.text,
