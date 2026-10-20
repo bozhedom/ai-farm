@@ -147,6 +147,29 @@ export class Sessions {
     return (element as Element | null) ?? null
   }
 
+  /** Visible text and links of the page, trimmed: the model reads instead of clicking around. */
+  async reading(
+    session: Session,
+  ): Promise<{ text: string; links: { text: string; href: string }[] }> {
+    const data = await session.page
+      .evaluate(() => {
+        const text = (document.body?.innerText || '')
+          .replace(/\s+\n/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+        const links = Array.from(document.querySelectorAll('a[href]'))
+          .map((a) => ({
+            text: ((a as HTMLElement).innerText || a.getAttribute('aria-label') || '')
+              .trim()
+              .slice(0, 120),
+            href: (a as HTMLAnchorElement).href,
+          }))
+          .filter((l) => l.text && /^https?:/.test(l.href))
+        return { text: text.slice(0, 6000), links: links.slice(0, 60) }
+      })
+      .catch(() => ({ text: '', links: [] }))
+    return data
+  }
+
   async screenshot(session: Session) {
     const png = await session.page.screenshot({ type: 'png', scale: 'css', animations: 'disabled' })
     return png.toString('base64')

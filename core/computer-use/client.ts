@@ -13,7 +13,7 @@ export interface VmAgentClient {
   readonly demo: boolean
   startSession(): Promise<string>
   state(sessionId: string): Promise<PageState>
-  screenshot(sessionId: string): Promise<{ png: Buffer } & PageState>
+  screenshot(sessionId: string): Promise<{ png: Buffer } & PageState & Partial<PageReading>>
   inspect(sessionId: string, x: number, y: number): Promise<ElementInfo | null>
   act(sessionId: string, action: BrowserAction): Promise<ActionResult>
   endSession(sessionId: string): Promise<void>
@@ -38,7 +38,14 @@ const actionSchema = stateSchema.extend({
   ok: z.boolean(),
   error: z.string().max(200).default(''),
 })
-const screenshotSchema = stateSchema.extend({ png: z.string().max(4_000_000) })
+const linkSchema = z.object({ text: z.string().max(200), href: z.string().max(2000) })
+const screenshotSchema = stateSchema.extend({
+  png: z.string().max(4_000_000),
+  // Older agents send no reading; the model then works from the screenshot alone.
+  text: z.string().max(8000).default(''),
+  links: z.array(linkSchema).max(80).default([]),
+})
+export type PageReading = { text: string; links: z.infer<typeof linkSchema>[] }
 
 /** Errors of the VM link itself; the task stops and the owner sees the reason. */
 export class VmAgentUnavailable extends Error {
@@ -109,7 +116,14 @@ export class HttpVmAgent implements VmAgentClient {
     const size = pngSize(png)
     if (!size || png.length > P.maxScreenshotBytes || size.width > VIEWPORT.width * 2)
       throw new VmAgentUnavailable('COMPUTER_USE_SCREENSHOT_INVALID')
-    return { png, url: data.url, title: data.title, focused: data.focused }
+    return {
+      png,
+      url: data.url,
+      title: data.title,
+      focused: data.focused,
+      text: data.text,
+      links: data.links,
+    }
   }
   inspect(sessionId: string, x: number, y: number) {
     return this.request(

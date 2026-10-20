@@ -106,6 +106,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       200,
       await serialized(session.id, async () => ({
         png: await sessions.screenshot(session),
+        ...(await sessions.reading(session)),
         ...(await sessions.state(session)),
       })),
     )

@@ -665,6 +665,7 @@ async function runStep(
     history,
     page,
     png: shot.png,
+    reading: { text: shot.text ?? '', links: shot.links ?? [] },
     opportunities: found!.n as number,
   }
   if (!task.is_demo) {
