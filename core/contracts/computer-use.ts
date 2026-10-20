@@ -1,4 +1,9 @@
-import type { OpportunityKind, ToolCall } from '../computer-use/schema'
+import type {
+  DocumentKind,
+  OpportunityDecision,
+  OpportunityKind,
+  ToolCall,
+} from '../computer-use/schema'
 
 export type ComputerTaskStatus =
   'queued' | 'running' | 'waiting_approval' | 'done' | 'failed' | 'cancelled'
@@ -60,6 +65,46 @@ export interface ComputerOpportunityView {
   demo: boolean
   status: 'new' | 'saved' | 'dismissed'
   createdAt: string
+  /** Self-assessment; `skip` is forced by the server when the job forbids AI. */
+  decision: OpportunityDecision
+  fit: number
+  aiForbidden: boolean
+  /** Integer minor units of `estimatedCurrency`, or null. */
+  estimatedValueMinor: number | null
+  estimatedCurrency: string | null
+  reason: string
+  platformDomain: string
+}
+export interface ComputerProposalView {
+  id: string
+  taskId: string
+  platformDomain: string
+  opportunityUrl: string
+  opportunityTitle: string
+  text: string
+  priceAmount: number | null
+  priceCurrency: string | null
+  status: 'draft' | 'sent' | 'failed' | 'expired'
+  demo: boolean
+  sentUrl: string
+  createdAt: string
+  sentAt: string | null
+}
+export interface ComputerDocumentView {
+  id: string
+  taskId: string
+  title: string
+  brief: string
+  kind: DocumentKind
+  text: string
+  demo: boolean
+  createdAt: string
+}
+export interface ComputerPlatformView {
+  domain: string
+  loggedIn: boolean
+  proposalsToday: number
+  sentToday: number
 }
 export interface ComputerUseView {
   state: {
@@ -80,9 +125,18 @@ export interface ComputerUseView {
     queuedOwnerGoals: number
     failures: number
     rotationGoals: number
+    /** Autonomous sending on logged-in platforms: the office switch and the env gate. */
+    autoProposals: boolean
+    autoProposalsAllowed: boolean
+    proposalsPerDay: number
+    /** The owner's remote-control lease, if active. */
+    manualUntil: string | null
   }
   current: ComputerTaskView | null
   approvals: ComputerApprovalView[]
   history: ComputerTaskView[]
   opportunities: ComputerOpportunityView[]
+  proposals: ComputerProposalView[]
+  documents: ComputerDocumentView[]
+  platforms: ComputerPlatformView[]
 }

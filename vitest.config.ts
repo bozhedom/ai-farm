@@ -20,6 +20,7 @@ export default defineConfig({
       AUTONOMY_ENABLED: 'false',
       COMPUTER_USE_ENABLED: 'true',
       COMPUTER_USE_SCREENSHOT_DIR: 'output/test/computer-use',
+      COMPUTER_USE_AUTO_PROPOSALS: 'true',
     },
   },
 })

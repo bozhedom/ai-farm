@@ -28,6 +28,15 @@ export const COMPUTER_USE_POLICY = Object.freeze({
   maxQueuedOwnerGoals: 20,
   screenshotRetentionDays: 14,
   rotationPauseMs: 60_000,
+  // Freelance work: a send permit lives 15 minutes and covers exactly one outward action.
+  permitLifetimeMs: 15 * 60_000,
+  // Deliveries and replies per platform per UTC day, proposals included (the proposal limit
+  // itself comes from COMPUTER_USE_PROPOSALS_PER_DAY).
+  maxSendPermitsPerDomainPerDay: 40,
+  maxDocumentsPerTask: 5,
+  documentOutputTokens: 2500,
+  // The owner's remote control of the browser: the model does not run while it lasts.
+  manualLeaseMs: 15 * 60_000,
 })
 
 export type ElementInfo = {
@@ -47,6 +56,12 @@ export type PageContext = {
   target?: ElementInfo | null
   /** Text of the directly preceding `type` steps: card data typed in pieces is still card data. */
   typedBefore?: string
+  /**
+   * An open single-use send permit of this task: one outward click or Enter on that platform
+   * (the send button of a proposal, delivery or reply) runs without owner approval. Payment
+   * sites, credentials, card and code fields and forbidden schemes are never covered by it.
+   */
+  permit?: { domain: string } | null
 }
 export type Verdict = { verdict: 'allow' | 'approval' | 'blocked'; reason: string }
 
@@ -197,12 +212,30 @@ const sensitiveElement = (element: ElementInfo | null | undefined) =>
     sensitiveField.test(`${element.name} ${element.autocomplete}`))
 const pathOf = (url: string) => (URL.canParse(url) ? new URL(url).pathname : '')
 
+const permitCovers = (host: string, permit: PageContext['permit']) =>
+  !!permit && !!host && (host === permit.domain || host.endsWith(`.${permit.domain}`))
+/** Reasons a send permit may replace: the outward send itself, nothing about money or access. */
+const permitReasons = new Set(['COMPUTER_USE_OUTWARD_ACTION', 'COMPUTER_USE_OUTWARD_PAGE'])
+
 /**
  * Browsing, reading, searching and filling research forms run on their own. Money, credentials,
  * accounts, publishing, messages and agreements wait for the owner. Verification bypass and
- * fraud are refused.
+ * fraud are refused. One outward click or Enter on a platform with an open send permit runs
+ * instead of waiting; the caller consumes the permit.
  */
 export function classifyAction(action: BrowserAction, page: PageContext): Verdict {
+  const verdict = classifyWithoutPermit(action, page)
+  if (
+    verdict.verdict === 'approval' &&
+    permitReasons.has(verdict.reason) &&
+    (action.name === 'click' || action.name === 'key') &&
+    permitCovers(hostOf(page.url), page.permit)
+  )
+    return { verdict: 'allow', reason: 'COMPUTER_USE_SEND_PERMIT' }
+  return verdict
+}
+
+function classifyWithoutPermit(action: BrowserAction, page: PageContext): Verdict {
   const host = hostOf(page.url)
   if (action.name === 'navigate') {
     const target = hostOf(action.url)

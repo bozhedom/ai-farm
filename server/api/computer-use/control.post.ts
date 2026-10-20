@@ -8,7 +8,11 @@ export default defineEventHandler((event) =>
     const input = await body(
       event,
       z.discriminatedUnion('action', [
-        z.object({ action: z.enum(['enable', 'pause']) }).strict(),
+        z
+          .object({
+            action: z.enum(['enable', 'pause', 'auto_proposals_on', 'auto_proposals_off']),
+          })
+          .strict(),
         z.object({ action: z.literal('cancel'), taskId: z.uuid() }).strict(),
       ]),
     )
