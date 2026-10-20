@@ -600,7 +600,16 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       link: '/office/trading',
       severity: 'warn',
     })
-  if (c.MODEL_PROVIDER !== 'openrouter' || !c.OPENROUTER_API_KEY)
+  // Free OpenRouter models, or paid Astra over OpenRouter or the direct OpenAI key.
+  const modelReady =
+    c.MODEL_PROVIDER === 'openrouter'
+      ? !!c.OPENROUTER_API_KEY
+      : c.MODEL_PROVIDER === 'openai'
+        ? c.OPENAI_TRANSPORT === 'openrouter'
+          ? !!c.OPENROUTER_API_KEY
+          : !!c.OPENAI_API_KEY
+        : c.MODEL_PROVIDER !== 'demo'
+  if (!modelReady)
     add({
       id: 'openrouter',
       title:
@@ -608,7 +617,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
           ? 'Модель не подключена: работает демо'
           : 'Ключ OpenRouter не задан',
       detail:
-        'Для постоянной работы агентов задайте MODEL_PROVIDER=openrouter и OPENROUTER_API_KEY в .env. ' +
+        'Для постоянной работы агентов задайте MODEL_PROVIDER=openai, OPENAI_TRANSPORT=openrouter и OPENROUTER_API_KEY в .env. ' +
         `Сейчас: ${c.MODEL_PROVIDER}.`,
       link: '/office/settings',
       severity: c.MODEL_PROVIDER === 'demo' ? 'block' : 'warn',

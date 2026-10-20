@@ -145,6 +145,7 @@ const categoryName: Record<string, string> = {
   lead: 'Поиск клиентов',
   report: 'Отчёты руководителя',
   trading_manager: 'ИИ-менеджер торговли',
+  computer_use: 'Компьютер ИИ',
 }
 const spendTotal = computed(() => v.value?.spendByCategory.reduce((n, c) => n + c.kopecks, 0) ?? 0)
 
