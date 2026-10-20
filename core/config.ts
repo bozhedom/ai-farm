@@ -118,6 +118,13 @@ const schema = z.object({
   COMPUTER_USE_TASK_CAP_MICROUSD: positive(2000000).refine((n) => n <= 50000000),
   COMPUTER_USE_DAILY_CAP_MICROUSD: positive(10000000).refine((n) => n <= 500000000),
   COMPUTER_USE_SCREENSHOT_DIR: z.string().trim().min(1).default('output/computer-use'),
+  // Freelance platforms (owner decision of 20.10.2026): the model may send proposals, replies
+  // and deliveries on logged-in platforms only when this gate and the office switch are on.
+  COMPUTER_USE_AUTO_PROPOSALS: flag.default(false),
+  // Proposals per platform domain per UTC day, drafts included.
+  COMPUTER_USE_PROPOSALS_PER_DAY: positive(15).refine((n) => n <= 100),
+  // Extra platform domains, comma-separated; the built-in list is in core/computer-use/platforms.ts.
+  COMPUTER_USE_PLATFORM_DOMAINS: z.string().trim().default(''),
   // Separate credentials: a demo request can never fall back to a real account.
   TRADING_LIVE_ENABLED: flag.default(false),
   // The previous text-services experiment remains available with its preserved history.

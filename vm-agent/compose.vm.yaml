@@ -12,6 +12,10 @@ services:
       VM_AGENT_TOKEN: ${VM_AGENT_TOKEN:?Set a random token of at least 32 characters}
       VM_AGENT_PORT: '8787'
       VM_AGENT_HOST: 0.0.0.0
+      VM_AGENT_PROFILE_DIR: /agent/profile
+    # The browser profile (cookies, platform logins the owner made) survives restarts and rebuilds.
+    volumes:
+      - vm-profile:/agent/profile
     ports:
       - '8787:8787'
     # Chromium needs more shared memory than the Docker default.
@@ -27,3 +31,5 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+volumes:
+  vm-profile:

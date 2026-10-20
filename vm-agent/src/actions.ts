@@ -61,6 +61,18 @@ export const actionSchema = z.discriminatedUnion('name', [
     .strict(),
   z.object({ name: z.literal('back') }).strict(),
   z.object({ name: z.literal('wait'), ms: z.number().int().min(100).max(5000) }).strict(),
+  // Stored text goes in through insertText: a line break stays a line break in the field and
+  // never becomes a submitting Enter. Other control characters are still refused.
+  z
+    .object({
+      name: z.literal('insert_text'),
+      text: z
+        .string()
+        .min(1)
+        .max(2000)
+        .regex(/^(?:[^\p{Cc}]|\n)+$/u),
+    })
+    .strict(),
 ])
 export type Action = z.infer<typeof actionSchema>
 export const inspectSchema = z

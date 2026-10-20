@@ -14,23 +14,57 @@ import {
   validateGoal,
   type PageContext,
 } from './policy'
-import { browserActionNames, parseToolCall, type BrowserAction, type ToolCall } from './schema'
+import {
+  browserActionNames,
+  chunkStoredText,
+  parseToolCall,
+  type BrowserAction,
+  type ToolCall,
+  type VmAction,
+} from './schema'
 import { VmAgentUnavailable, vmAgentFromConfig, type VmAgentClient } from './client'
 import {
+  astraDocument,
   astraStep,
   demoScript,
+  prepareDocumentRequest,
   prepareStepRequest,
   type ComputerUseModel,
+  type DocumentWriter,
   type StepHistory,
+  type StoredForModel,
 } from './model'
+import {
+  aiForbiddenReason,
+  forbiddenClaimReason,
+  isFreelancePlatform,
+  platformGoals,
+  platformOf,
+} from './platforms'
 
 export interface ComputerUseRow {
   enabled: boolean
+  auto_proposals: boolean
   rotation_index: number
   failures: number
   lease_id: string | null
   lease_until: Date | null
+  manual_until: Date | null
+  manual_session_id: string | null
   last_error: string
+}
+export interface PermitRow {
+  id: string
+  task_id: string
+  platform_domain: string
+  purpose: 'proposal' | 'delivery' | 'reply'
+  proposal_id: string | null
+  status: 'open' | 'used' | 'expired' | 'superseded'
+  created_at: Date
+  expires_at: Date
+  used_at: Date | null
+  used_step_no: number | null
+  used_url: string
 }
 export interface TaskRow {
   id: string
@@ -96,7 +130,15 @@ export async function dailySpend(db?: Connection) {
 // ---------------------------------------------------------------------------------------------
 // Owner actions. Models never call these; the office API validates the input first.
 
-export async function controlComputerUse(action: 'enable' | 'pause') {
+export type ControlAction = 'enable' | 'pause' | 'auto_proposals_on' | 'auto_proposals_off'
+const controlWords: Record<ControlAction, string> = {
+  enable: 'Владелец включил работу модели в браузере на отдельной машине.',
+  pause: 'Владелец выключил работу модели в браузере. Начатое задание ждёт.',
+  auto_proposals_on:
+    'Владелец разрешил модели самой отправлять отклики, ответы и результаты на площадках, где выполнен вход.',
+  auto_proposals_off: 'Владелец запретил самостоятельную отправку откликов и ответов.',
+}
+export async function controlComputerUse(action: ControlAction) {
   await ensureComputerUse()
   await transaction(async (db) => {
     await query('SELECT * FROM computer_use WHERE id=true FOR UPDATE', [], db)
@@ -106,16 +148,47 @@ export async function controlComputerUse(action: 'enable' | 'pause') {
         [],
         db,
       )
-    else await query('UPDATE computer_use SET enabled=false,updated_at=now() WHERE id=true', [], db)
-    await audit(
-      'computer_use_control',
-      action === 'enable'
-        ? 'Владелец включил работу модели в браузере на отдельной машине.'
-        : 'Владелец выключил работу модели в браузере. Начатое задание ждёт.',
-      { action },
-      db,
-    )
+    else if (action === 'pause')
+      await query('UPDATE computer_use SET enabled=false,updated_at=now() WHERE id=true', [], db)
+    else
+      await query(
+        'UPDATE computer_use SET auto_proposals=$1,updated_at=now() WHERE id=true',
+        [action === 'auto_proposals_on'],
+        db,
+      )
+    await audit('computer_use_control', controlWords[action], { action }, db)
   })
+}
+
+/** The owner marks where the browser profile is logged in; only known platforms are accepted. */
+export async function setPlatformLogin(domain: string, loggedIn: boolean) {
+  const name = domain.trim().toLowerCase()
+  if (!isFreelancePlatform(name)) throw new Error('COMPUTER_USE_PLATFORM_UNKNOWN')
+  await query(
+    `INSERT INTO computer_use_platforms(domain,logged_in) VALUES($1,$2)
+     ON CONFLICT (domain) DO UPDATE SET logged_in=EXCLUDED.logged_in,updated_at=now()`,
+    [name, loggedIn],
+  )
+  await audit(
+    'computer_use_platform',
+    loggedIn
+      ? 'Владелец отметил площадку как открытую под его аккаунтом.'
+      : 'Владелец снял отметку входа на площадке.',
+    { domain: name, loggedIn },
+  )
+}
+export async function loggedInPlatforms(db?: Connection) {
+  const rows = await query<{ domain: string }>(
+    'SELECT domain FROM computer_use_platforms WHERE logged_in ORDER BY domain',
+    [],
+    db,
+  )
+  return rows.map((row) => row.domain).filter(isFreelancePlatform)
+}
+/** Goals in rotation order: logged-in platforms first, then the research themes. */
+export async function currentRotationGoals(db?: Connection) {
+  const platforms = await loggedInPlatforms(db)
+  return [...platformGoals(platforms, config().COMPUTER_USE_PROPOSALS_PER_DAY), ...rotationGoals]
 }
 
 export async function addOwnerGoal(text: string) {
@@ -224,7 +297,36 @@ async function endTask(
     [task.id],
     db,
   )
+  await query(
+    "UPDATE computer_use_send_permits SET status='expired' WHERE task_id=$1 AND status='open'",
+    [task.id],
+    db,
+  )
+  await query(
+    "UPDATE computer_use_proposals SET status='expired' WHERE task_id=$1 AND status='draft'",
+    [task.id],
+    db,
+  )
   if (task.reservation_id) await closeReservation(task.reservation_id, db)
+}
+
+/** A permit nobody used in 15 minutes closes with its draft; the model sees the status. */
+async function expirePermits() {
+  await transaction(async (db) => {
+    const expired = await query<PermitRow>(
+      `UPDATE computer_use_send_permits SET status='expired'
+       WHERE status='open' AND expires_at <= now() RETURNING *`,
+      [],
+      db,
+    )
+    for (const permit of expired)
+      if (permit.proposal_id)
+        await query(
+          "UPDATE computer_use_proposals SET status='expired' WHERE id=$1 AND status='draft'",
+          [permit.proposal_id],
+          db,
+        )
+  })
 }
 
 /** Nothing restarts an approval the owner has not seen for a day; the model learns it expired. */
@@ -310,6 +412,8 @@ async function claimTask(): Promise<Claim | null> {
     if (owner.lease_until && owner.lease_until.getTime() > now) return null
     if (owner.lease_id)
       await query('UPDATE computer_use SET lease_id=NULL,lease_until=NULL WHERE id=true', [], db)
+    // The owner is at the browser: no model step until the manual lease ends.
+    if (owner.manual_until && owner.manual_until.getTime() > now) return null
     const c = config()
     if (!owner.enabled || system?.mode !== 'running' || computerUseReady(c)) return null
     if (owner.failures >= P.maxFailuresInRow) return null
@@ -352,7 +456,8 @@ async function claimTask(): Promise<Claim | null> {
         if (age < P.rotationPauseMs) return null
       }
       const provider = computerUseProvider()
-      const goal = rotationGoals[owner.rotation_index % rotationGoals.length]!
+      const goals = await currentRotationGoals(db)
+      const goal = goals[owner.rotation_index % goals.length]!
       const id = randomUUID()
       await query(
         `INSERT INTO computer_use_tasks(id,goal,source,status,step_limit,cost_cap_microusd,provider,model,is_demo)
@@ -416,7 +521,8 @@ async function claimTask(): Promise<Claim | null> {
 async function renewLease(leaseId: string) {
   const rows = await query(
     `UPDATE computer_use SET lease_until=now()+$2*interval '1 millisecond'
-     WHERE id=true AND lease_id=$1 AND enabled RETURNING id`,
+     WHERE id=true AND lease_id=$1 AND enabled AND (manual_until IS NULL OR manual_until <= now())
+     RETURNING id`,
     [leaseId, P.leaseMs],
   )
   return rows.length > 0
@@ -545,7 +651,7 @@ async function ensureSession(task: TaskRow, agent: VmAgentClient) {
 async function perform(
   task: TaskRow,
   agent: VmAgentClient,
-  action: BrowserAction,
+  action: VmAction,
 ): Promise<{ ok: boolean; error: string; url: string; title: string }> {
   const sessionId = await ensureSession(task, agent)
   return agent.act(sessionId, action)
@@ -626,10 +732,375 @@ async function requestApproval(
   })
 }
 
+// ---------------------------------------------------------------------------------------------
+// Freelance work: self-assessment, proposals, stored text, deliverables and send permits.
+
+const utcDay = "created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"
+
+async function openPermit(taskId: string, db?: Connection) {
+  const [permit] = await query<PermitRow>(
+    "SELECT * FROM computer_use_send_permits WHERE task_id=$1 AND status='open' AND expires_at > now()",
+    [taskId],
+    db,
+  )
+  return permit ?? null
+}
+
+/** What the model may refer to by id: this task's proposals, documents and the open permit. */
+async function storedFor(taskId: string): Promise<StoredForModel> {
+  const [proposals, documents, permit] = await Promise.all([
+    query(
+      'SELECT id,status,platform_domain,opportunity_url,length(text)::int AS chars FROM computer_use_proposals WHERE task_id=$1 ORDER BY created_at DESC LIMIT 5',
+      [taskId],
+    ),
+    query(
+      'SELECT id,title,kind,length(text)::int AS chars,left(text,1500) AS preview FROM computer_use_documents WHERE task_id=$1 ORDER BY created_at DESC LIMIT 5',
+      [taskId],
+    ),
+    openPermit(taskId),
+  ])
+  return {
+    proposals: proposals.map((p) => ({
+      id: p.id,
+      status: p.status,
+      domain: p.platform_domain,
+      url: p.opportunity_url,
+      chars: p.chars,
+    })),
+    documents: documents.map((d, index) => ({
+      id: d.id,
+      title: d.title,
+      kind: d.kind,
+      chars: d.chars,
+      // The newest document carries its preview; older ones are known by id and title.
+      preview: index === 0 ? d.preview : '',
+    })),
+    permit: permit
+      ? {
+          id: permit.id,
+          domain: permit.platform_domain,
+          purpose: permit.purpose,
+          expiresAt: permit.expires_at.toISOString(),
+        }
+      : null,
+  }
+}
+
+/**
+ * Issues a single-use permit inside the caller's transaction. A previous open permit of the task
+ * is superseded with its draft; the daily per-platform count is enforced here, not in prompts.
+ */
+async function grantPermit(
+  db: Connection,
+  task: TaskRow,
+  domain: string,
+  purpose: PermitRow['purpose'],
+  proposalId: string | null,
+) {
+  const [count] = await query(
+    `SELECT count(*)::int AS n FROM computer_use_send_permits WHERE platform_domain=$1 AND ${utcDay}`,
+    [domain],
+    db,
+  )
+  if (count!.n >= P.maxSendPermitsPerDomainPerDay)
+    return { id: null, reason: 'COMPUTER_USE_SEND_LIMIT' }
+  const superseded = await query<PermitRow>(
+    "UPDATE computer_use_send_permits SET status='superseded' WHERE task_id=$1 AND status='open' RETURNING proposal_id",
+    [task.id],
+    db,
+  )
+  for (const old of superseded)
+    if (old.proposal_id)
+      await query(
+        "UPDATE computer_use_proposals SET status='expired' WHERE id=$1 AND status='draft'",
+        [old.proposal_id],
+        db,
+      )
+  const id = randomUUID()
+  await query(
+    `INSERT INTO computer_use_send_permits(id,task_id,platform_domain,purpose,proposal_id,expires_at)
+     VALUES($1,$2,$3,$4,$5,now()+$6*interval '1 millisecond')`,
+    [id, task.id, domain, purpose, proposalId, P.permitLifetimeMs],
+    db,
+  )
+  await audit(
+    'computer_use_permit',
+    'Сервер выдал модели разрешение на одну отправку на площадке.',
+    { taskId: task.id, permitId: id, domain, purpose, proposalId },
+    db,
+  )
+  return { id, reason: '' }
+}
+
+/** The checks shared by draft_proposal and prepare_send; the first failing code wins. */
+async function sendingAllowed(domain: string, db?: Connection) {
+  const c = config()
+  if (!isFreelancePlatform(domain)) return 'COMPUTER_USE_PLATFORM_UNKNOWN'
+  const [owner] = await query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true', [], db)
+  if (!c.COMPUTER_USE_AUTO_PROPOSALS || !owner?.auto_proposals)
+    return 'COMPUTER_USE_AUTO_PROPOSALS_OFF'
+  if (!(await loggedInPlatforms(db)).includes(domain)) return 'COMPUTER_USE_PLATFORM_NOT_LOGGED_IN'
+  return ''
+}
+
+type DraftCall = Extract<ToolCall, { name: 'draft_proposal' }>
+async function draftProposal(task: TaskRow, stepNo: number, call: DraftCall, base: StepRecord) {
+  const c = config()
+  const domain = call.platform_domain
+  const reason =
+    (await sendingAllowed(domain)) ||
+    (platformOf(call.opportunity_url) !== domain ? 'COMPUTER_USE_PLATFORM_MISMATCH' : '') ||
+    forbiddenTextReason(call.text) ||
+    forbiddenClaimReason(call.text)
+  if (reason) {
+    await recordStep(task, stepNo, { ...base, decision: 'blocked', reason })
+    return
+  }
+  const result = await transaction(async (db) => {
+    await query('SELECT id FROM computer_use WHERE id=true FOR UPDATE', [], db)
+    const [opportunity] = await query(
+      'SELECT id,decision,ai_forbidden FROM computer_use_opportunities WHERE task_id=$1 AND url=$2',
+      [task.id, call.opportunity_url],
+      db,
+    )
+    if (!opportunity) return 'COMPUTER_USE_OPPORTUNITY_REQUIRED'
+    if (opportunity.ai_forbidden) return 'COMPUTER_USE_AI_FORBIDDEN'
+    if (opportunity.decision !== 'take') return 'COMPUTER_USE_DECISION_NOT_TAKE'
+    const [count] = await query(
+      `SELECT count(*)::int AS n FROM computer_use_proposals WHERE platform_domain=$1 AND ${utcDay}`,
+      [domain],
+      db,
+    )
+    if (count!.n >= c.COMPUTER_USE_PROPOSALS_PER_DAY) return 'COMPUTER_USE_PROPOSAL_LIMIT'
+    const [sends] = await query(
+      `SELECT count(*)::int AS n FROM computer_use_send_permits WHERE platform_domain=$1 AND ${utcDay}`,
+      [domain],
+      db,
+    )
+    if (sends!.n >= P.maxSendPermitsPerDomainPerDay) return 'COMPUTER_USE_SEND_LIMIT'
+    const id = randomUUID()
+    await query(
+      `INSERT INTO computer_use_proposals(id,task_id,step_no,opportunity_id,opportunity_url,platform_domain,text,price_amount,price_currency,is_demo)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        id,
+        task.id,
+        stepNo,
+        opportunity.id,
+        call.opportunity_url,
+        domain,
+        call.text,
+        call.price_amount,
+        call.price_currency,
+        task.is_demo,
+      ],
+      db,
+    )
+    const permit = await grantPermit(db, task, domain, 'proposal', id)
+    if (!permit.id) throw new Error(permit.reason)
+    await recordStep(task, stepNo, { ...base, reason: 'COMPUTER_USE_PERMIT_GRANTED' }, db)
+    return ''
+  })
+  if (result) await recordStep(task, stepNo, { ...base, decision: 'blocked', reason: result })
+}
+
+type PrepareCall = Extract<ToolCall, { name: 'prepare_send' }>
+async function prepareSend(task: TaskRow, stepNo: number, call: PrepareCall, base: StepRecord) {
+  const reason = await sendingAllowed(call.domain)
+  if (reason) {
+    await recordStep(task, stepNo, { ...base, decision: 'blocked', reason })
+    return
+  }
+  await transaction(async (db) => {
+    await query('SELECT id FROM computer_use WHERE id=true FOR UPDATE', [], db)
+    const permit = await grantPermit(db, task, call.domain, call.purpose, null)
+    await recordStep(
+      task,
+      stepNo,
+      permit.id
+        ? { ...base, reason: 'COMPUTER_USE_PERMIT_GRANTED' }
+        : { ...base, decision: 'blocked', reason: permit.reason },
+      db,
+    )
+  })
+}
+
+/** Stored text of this task only: a proposal or a document, by id. */
+async function storedText(taskId: string, id: string) {
+  const [proposal] = await query(
+    'SELECT text FROM computer_use_proposals WHERE id=$1 AND task_id=$2',
+    [id, taskId],
+  )
+  if (proposal) return { kind: 'proposal' as const, text: proposal.text as string }
+  const [document] = await query(
+    'SELECT text FROM computer_use_documents WHERE id=$1 AND task_id=$2',
+    [id, taskId],
+  )
+  if (document) return { kind: 'document' as const, text: document.text as string }
+  return null
+}
+
+type TypeStoredCall = Extract<ToolCall, { name: 'type_stored' }>
+async function typeStored(
+  task: TaskRow,
+  agent: VmAgentClient,
+  stepNo: number,
+  call: TypeStoredCall,
+  page: PageContext,
+  base: StepRecord,
+) {
+  const stored = await storedText(task.id, call.id)
+  if (!stored) {
+    await recordStep(task, stepNo, {
+      ...base,
+      decision: 'blocked',
+      reason: 'COMPUTER_USE_STORED_NOT_FOUND',
+    })
+    return
+  }
+  // The same field rules as `type`: never into a password, card, code or payment field.
+  const verdict = classifyAction(
+    { name: 'type', text: stored.text.replace(/\n/g, ' ').slice(0, 2000) },
+    page,
+  )
+  if (verdict.verdict !== 'allow') {
+    await recordStep(task, stepNo, { ...base, decision: 'blocked', reason: verdict.reason })
+    return
+  }
+  let result = { ok: true, error: '', url: page.url, title: page.title }
+  for (const text of chunkStoredText(stored.text)) {
+    result = await perform(task, agent, { name: 'insert_text', text })
+    if (!result.ok) break
+  }
+  await recordStep(task, stepNo, {
+    ...base,
+    action: { ...call, kind: stored.kind, chars: stored.text.length },
+    decision: result.ok ? 'allowed' : 'failed',
+    reason: result.ok ? '' : result.error.slice(0, 200),
+    urlAfter: result.url,
+    title: result.title,
+  })
+}
+
+type DocumentCall = Extract<ToolCall, { name: 'write_document' }>
+async function writeDocument(
+  task: TaskRow,
+  stepNo: number,
+  call: DocumentCall,
+  base: StepRecord,
+  writer: DocumentWriter,
+) {
+  const c = config()
+  const [count] = await query(
+    'SELECT count(*)::int AS n FROM computer_use_documents WHERE task_id=$1',
+    [task.id],
+  )
+  const reason =
+    forbiddenTextReason(`${call.title} ${call.brief}`) ||
+    (count!.n >= P.maxDocumentsPerTask ? 'COMPUTER_USE_DOCUMENT_LIMIT' : '')
+  if (reason) {
+    await recordStep(task, stepNo, { ...base, decision: 'blocked', reason })
+    return
+  }
+  const input = {
+    taskId: task.id,
+    reservationId: task.reservation_id!,
+    stepNo,
+    goal: task.goal,
+    title: call.title,
+    brief: call.brief,
+    kind: call.kind,
+  }
+  if (!task.is_demo) {
+    const estimate = prepareDocumentRequest(input).maximumMicrousd
+    const spent = await taskSpend(task.reservation_id)
+    const day = await dailySpend()
+    const over =
+      spent.microusd + estimate > task.cost_cap_microusd
+        ? 'COMPUTER_USE_TASK_CAP'
+        : day.microusd + estimate > c.COMPUTER_USE_DAILY_CAP_MICROUSD
+          ? 'COMPUTER_USE_DAILY_LIMIT'
+          : ''
+    if (over) {
+      await recordStep(task, stepNo, { ...base, decision: 'blocked', reason: over })
+      return
+    }
+  }
+  const { text } = await writer(input)
+  const id = randomUUID()
+  await transaction(async (db) => {
+    await recordStep(task, stepNo, { ...base, action: { ...call, id } }, db)
+    await query(
+      `INSERT INTO computer_use_documents(id,task_id,step_no,title,brief,kind,text,is_demo)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, task.id, stepNo, call.title, call.brief, call.kind, text.slice(0, 12000), task.is_demo],
+      db,
+    )
+  })
+}
+
+/**
+ * Marks the permit used before the VM acts (at most one send per permit even if the worker
+ * dies), performs the action and records the proposal as sent or failed with the page it ended on.
+ */
+async function performPermitted(
+  task: TaskRow,
+  agent: VmAgentClient,
+  stepNo: number,
+  action: BrowserAction,
+  permit: PermitRow,
+  base: StepRecord,
+) {
+  const [used] = await query<PermitRow>(
+    `UPDATE computer_use_send_permits SET status='used',used_at=now(),used_step_no=$2
+     WHERE id=$1 AND status='open' AND expires_at > now() RETURNING *`,
+    [permit.id, stepNo],
+  )
+  if (!used) return false
+  const result = await perform(task, agent, action)
+  await transaction(async (db) => {
+    await recordStep(
+      task,
+      stepNo,
+      {
+        ...base,
+        decision: result.ok ? 'allowed' : 'failed',
+        reason: result.ok ? 'COMPUTER_USE_SEND_PERMIT' : result.error.slice(0, 200),
+        urlAfter: result.url,
+        title: result.title,
+      },
+      db,
+    )
+    await query(
+      'UPDATE computer_use_send_permits SET used_url=$2 WHERE id=$1',
+      [permit.id, result.url.slice(0, 2000)],
+      db,
+    )
+    if (permit.proposal_id)
+      await query(
+        result.ok
+          ? "UPDATE computer_use_proposals SET status='sent',sent_at=now(),sent_url=$2 WHERE id=$1 AND status='draft'"
+          : "UPDATE computer_use_proposals SET status='failed',sent_url=$2 WHERE id=$1 AND status='draft'",
+        [permit.proposal_id, result.url.slice(0, 2000)],
+        db,
+      )
+    await audit(
+      'computer_use_send',
+      result.ok
+        ? 'Модель отправила текст на площадке по разрешению на одну отправку.'
+        : 'Отправка по разрешению не удалась; разрешение использовано.',
+      { taskId: task.id, permitId: permit.id, purpose: permit.purpose, ok: result.ok },
+      db,
+    )
+  })
+  return true
+}
+
 async function runStep(
   claim: Claim,
   agent: VmAgentClient,
   model: ComputerUseModel,
+  writer: DocumentWriter,
 ): Promise<Outcome> {
   const [task] = await query<TaskRow>('SELECT * FROM computer_use_tasks WHERE id=$1', [
     claim.task.id,
@@ -656,6 +1127,7 @@ async function runStep(
     'SELECT count(*)::int AS n FROM computer_use_opportunities WHERE task_id=$1',
     [task.id],
   )
+  const [owner] = await query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true')
   const input = {
     taskId: task.id,
     reservationId: task.reservation_id!,
@@ -667,6 +1139,12 @@ async function runStep(
     png: shot.png,
     reading: { text: shot.text ?? '', links: shot.links ?? [] },
     opportunities: found!.n as number,
+    stored: await storedFor(task.id),
+    platforms: {
+      loggedIn: await loggedInPlatforms(),
+      autoProposals: c.COMPUTER_USE_AUTO_PROPOSALS && !!owner?.auto_proposals,
+      proposalsPerDay: c.COMPUTER_USE_PROPOSALS_PER_DAY,
+    },
   }
   if (!task.is_demo) {
     const estimate = prepareStepRequest(input).maximumMicrousd
@@ -727,7 +1205,7 @@ async function runStep(
     const reason =
       !host || isPrivateHost(host)
         ? 'COMPUTER_USE_URL_SCHEME'
-        : forbiddenTextReason(`${call.title} ${call.summary}`) ||
+        : forbiddenTextReason(`${call.title} ${call.summary} ${call.reason}`) ||
           ((found!.n as number) >= P.maxOpportunitiesPerTask
             ? 'COMPUTER_USE_OPPORTUNITY_LIMIT'
             : '')
@@ -735,11 +1213,20 @@ async function runStep(
       await recordStep(task, stepNo, { ...base, decision: 'blocked', reason })
       return { kind: 'continue' }
     }
+    // The server decides what a ban on AI means: such a job is skipped whatever the model said.
+    const aiForbidden =
+      call.ai_forbidden || !!aiForbiddenReason(`${call.title}\n${call.summary}\n${call.reason}`)
+    const decision = aiForbidden ? 'skip' : call.decision
+    const record: StepRecord = {
+      ...base,
+      action: { ...call, ai_forbidden: aiForbidden, decision },
+      reason: aiForbidden ? 'COMPUTER_USE_AI_FORBIDDEN' : '',
+    }
     await transaction(async (db) => {
-      await recordStep(task, stepNo, base, db)
+      await recordStep(task, stepNo, record, db)
       await query(
-        `INSERT INTO computer_use_opportunities(id,task_id,step_no,title,url,summary,kind,requires_human,is_demo)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (task_id,url) DO NOTHING`,
+        `INSERT INTO computer_use_opportunities(id,task_id,step_no,title,url,summary,kind,requires_human,is_demo,decision,fit,ai_forbidden,estimated_value_minor,estimated_currency,reason,platform_domain)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (task_id,url) DO NOTHING`,
         [
           randomUUID(),
           task.id,
@@ -748,12 +1235,35 @@ async function runStep(
           call.url,
           call.summary,
           call.kind,
-          call.requiresHuman,
+          call.requiresHuman || decision === 'human',
           task.is_demo,
+          decision,
+          call.fit,
+          aiForbidden,
+          call.estimated_value?.amount ?? null,
+          call.estimated_value?.currency ?? null,
+          call.reason,
+          platformOf(call.url),
         ],
         db,
       )
     })
+    return { kind: 'continue' }
+  }
+  if (call.name === 'draft_proposal') {
+    await draftProposal(task, stepNo, call, base)
+    return { kind: 'continue' }
+  }
+  if (call.name === 'prepare_send') {
+    await prepareSend(task, stepNo, call, base)
+    return { kind: 'continue' }
+  }
+  if (call.name === 'type_stored') {
+    await typeStored(task, agent, stepNo, call, page, base)
+    return { kind: 'continue' }
+  }
+  if (call.name === 'write_document') {
+    await writeDocument(task, stepNo, call, base, writer)
     return { kind: 'continue' }
   }
   if (call.name === 'request_approval') {
@@ -771,13 +1281,23 @@ async function runStep(
   }
   if (!browserActionNames.includes(call.name)) throw new Error('COMPUTER_USE_TOOL_CALL_INVALID')
   const action = call as BrowserAction
-  const context: PageContext =
-    action.name === 'click'
-      ? { ...page, target: await agent.inspect(sessionId, action.x, action.y) }
+  const permit = await openPermit(task.id)
+  const context: PageContext = {
+    ...page,
+    permit: permit ? { domain: permit.platform_domain } : null,
+    ...(action.name === 'click'
+      ? { target: await agent.inspect(sessionId, action.x, action.y) }
       : action.name === 'type'
-        ? { ...page, typedBefore: typedBefore(history) }
-        : page
-  const verdict = classifyAction(action, context)
+        ? { typedBefore: typedBefore(history) }
+        : {}),
+  }
+  let verdict = classifyAction(action, context)
+  if (verdict.reason === 'COMPUTER_USE_SEND_PERMIT') {
+    if (permit && (await performPermitted(task, agent, stepNo, action, permit, base)))
+      return { kind: 'continue' }
+    // The permit went away between the check and the claim: the ordinary rules apply.
+    verdict = classifyAction(action, { ...context, permit: null })
+  }
   if (verdict.verdict === 'blocked') {
     await recordStep(task, stepNo, { ...base, decision: 'blocked', reason: verdict.reason })
     return { kind: 'continue' }
@@ -804,6 +1324,7 @@ async function runStep(
 export type ComputerUseDeps = {
   agent?: VmAgentClient
   model?: ComputerUseModel
+  document?: DocumentWriter
   now?: () => number
 }
 
@@ -815,17 +1336,19 @@ export type ComputerUseDeps = {
 export async function computerUseTick(deps: ComputerUseDeps = {}, isStopping = () => false) {
   await ensureComputerUse()
   await expireApprovals()
+  await expirePermits()
   await cleanupScreenshots()
   if (isStopping()) return false
   const claim = await claimTask()
   if (!claim) return false
   const agent = deps.agent ?? vmAgentFromConfig()
   const model = deps.model ?? astraStep(demoScript)
+  const writer = deps.document ?? astraDocument
   const now = deps.now ?? Date.now
   const startedAt = now()
   try {
     while (!isStopping() && now() - startedAt < P.tickBudgetMs) {
-      const outcome = await runStep(claim, agent, model)
+      const outcome = await runStep(claim, agent, model, writer)
       if (outcome.kind !== 'continue') break
     }
   } catch (error) {

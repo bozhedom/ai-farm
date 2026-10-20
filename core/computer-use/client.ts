@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { config } from '../config'
 import { COMPUTER_USE_POLICY as P, type ElementInfo } from './policy'
-import { VIEWPORT, type BrowserAction } from './schema'
+import { VIEWPORT, type VmAction } from './schema'
 import { pngSize, solidPng } from './png'
 
 /** What the VM reports about the open page. The element fields are untrusted page data. */
@@ -15,7 +15,7 @@ export interface VmAgentClient {
   state(sessionId: string): Promise<PageState>
   screenshot(sessionId: string): Promise<{ png: Buffer } & PageState & Partial<PageReading>>
   inspect(sessionId: string, x: number, y: number): Promise<ElementInfo | null>
-  act(sessionId: string, action: BrowserAction): Promise<ActionResult>
+  act(sessionId: string, action: VmAction): Promise<ActionResult>
   endSession(sessionId: string): Promise<void>
 }
 
@@ -133,7 +133,7 @@ export class HttpVmAgent implements VmAgentClient {
       { x, y },
     ).then((r) => r.element)
   }
-  act(sessionId: string, action: BrowserAction) {
+  act(sessionId: string, action: VmAction) {
     return this.request('POST', `/sessions/${sessionId}/actions`, actionSchema, action)
   }
   async endSession(sessionId: string) {
@@ -150,12 +150,12 @@ export class HttpVmAgent implements VmAgentClient {
 export class FakeVmAgent implements VmAgentClient {
   readonly demo = true
   readonly sessions = new Map<string, { url: string; history: string[] }>()
-  readonly actions: { sessionId: string; action: BrowserAction }[] = []
+  readonly actions: { sessionId: string; action: VmAction }[] = []
   constructor(
     private readonly options: {
       focused?: ElementInfo | null
       target?: ElementInfo | null
-      fail?: (action: BrowserAction) => string
+      fail?: (action: VmAction) => string
     } = {},
   ) {}
   async startSession() {
@@ -183,7 +183,7 @@ export class FakeVmAgent implements VmAgentClient {
     this.session(sessionId)
     return this.options.target ?? null
   }
-  async act(sessionId: string, action: BrowserAction) {
+  async act(sessionId: string, action: VmAction) {
     const session = this.session(sessionId)
     this.actions.push({ sessionId, action })
     const error = this.options.fail?.(action) || ''

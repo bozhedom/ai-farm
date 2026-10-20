@@ -32,8 +32,50 @@ describe('computer-use tool calls are validated strictly on the server', () => {
         summary: 'Приз за лучшего агента.',
         kind: 'bounty',
         requiresHuman: true,
+        decision: 'human',
+        fit: 55,
+        ai_forbidden: false,
+        estimated_value: { amount: 500000, currency: 'rub' },
+        reason: 'Нужна регистрация.',
       }),
-    ).toMatchObject({ name: 'note_opportunity', kind: 'bounty' })
+    ).toMatchObject({
+      name: 'note_opportunity',
+      kind: 'bounty',
+      estimated_value: { amount: 500000, currency: 'RUB' },
+    })
+    expect(
+      parseToolCall('draft_proposal', {
+        opportunity_url: 'https://www.fl.ru/projects/1/',
+        platform_domain: 'FL.ru',
+        text: 'Здравствуйте! '.repeat(20),
+        price_amount: 250000,
+        price_currency: 'RUB',
+      }),
+    ).toMatchObject({ name: 'draft_proposal', platform_domain: 'fl.ru' })
+    expect(
+      parseToolCall('draft_proposal', {
+        opportunity_url: 'https://www.fl.ru/projects/1/',
+        platform_domain: 'fl.ru',
+        text: 'Первый абзац.\nВторой абзац. '.repeat(12),
+        price_amount: null,
+        price_currency: null,
+      }),
+    ).toMatchObject({ name: 'draft_proposal', price_amount: null })
+    expect(
+      parseToolCall('type_stored', { id: '00000000-0000-4000-8000-000000000000' }),
+    ).toMatchObject({ name: 'type_stored' })
+    expect(
+      parseToolCall('write_document', {
+        title: 'Описание дивана',
+        brief: 'Три абзаца о диване для каталога мебели, без цен.',
+        kind: 'product_description',
+      }),
+    ).toMatchObject({ name: 'write_document', kind: 'product_description' })
+    expect(parseToolCall('prepare_send', { domain: 'kwork.ru', purpose: 'reply' })).toEqual({
+      name: 'prepare_send',
+      domain: 'kwork.ru',
+      purpose: 'reply',
+    })
   })
   it('refuses unknown tools, extra fields, bad coordinates, schemes and markup', () => {
     for (const [name, args] of [
@@ -54,6 +96,56 @@ describe('computer-use tool calls are validated strictly on the server', () => {
         'note_opportunity',
         { title: 'x', url: 'https://a.b', summary: 's', kind: 'scam', requiresHuman: true },
       ],
+      // Self-assessment fields are required; fit stays within 0-100.
+      [
+        'note_opportunity',
+        {
+          title: 'Задание',
+          url: 'https://a.b',
+          summary: 's',
+          kind: 'freelance',
+          requiresHuman: true,
+        },
+      ],
+      [
+        'note_opportunity',
+        {
+          title: 'Задание',
+          url: 'https://a.b',
+          summary: 's',
+          kind: 'freelance',
+          requiresHuman: true,
+          decision: 'take',
+          fit: 101,
+          ai_forbidden: false,
+          estimated_value: null,
+          reason: 'r',
+        },
+      ],
+      [
+        'draft_proposal',
+        {
+          opportunity_url: 'https://fl.ru/p/1',
+          platform_domain: 'fl.ru',
+          text: 'коротко',
+          price_amount: null,
+          price_currency: null,
+        },
+      ],
+      [
+        'draft_proposal',
+        {
+          opportunity_url: 'https://fl.ru/p/1',
+          platform_domain: 'fl.ru',
+          text: 'a\tb '.repeat(60),
+          price_amount: 10.5,
+          price_currency: null,
+        },
+      ],
+      ['type_stored', { id: 'not-a-uuid' }],
+      ['write_document', { title: 'Текст', brief: 'мало', kind: 'article' }],
+      ['prepare_send', { domain: 'fl.ru', purpose: 'proposal' }],
+      ['insert_text', { text: 'прямой вызов запрещён' }],
       ['request_approval', { reason: 'r', action: { name: 'finish', report: 'x' } }],
       ['navigate', null],
       ['navigate', 'https://a.b'],
@@ -62,7 +154,16 @@ describe('computer-use tool calls are validated strictly on the server', () => {
   })
   it('declares exactly the server tool list with strict JSON schemas', () => {
     const names = computerUseTools.map((tool) => tool.name)
-    expect(names).toEqual([...browserActionNames, 'finish', 'request_approval', 'note_opportunity'])
+    expect(names).toEqual([
+      ...browserActionNames,
+      'finish',
+      'request_approval',
+      'note_opportunity',
+      'draft_proposal',
+      'type_stored',
+      'write_document',
+      'prepare_send',
+    ])
     for (const tool of computerUseTools) {
       const parameters = tool.parameters as {
         properties: Record<string, unknown>

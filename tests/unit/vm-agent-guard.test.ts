@@ -105,6 +105,12 @@ describe('VM browser network guard', () => {
     expect(actionSchema.safeParse({ name: 'type', text: 'гранты 2026' }).success).toBe(true)
     for (const text of ['login\n', 'a\rb', 'a\tb', 'x\u001b'])
       expect(actionSchema.safeParse({ name: 'type', text }).success).toBe(false)
+    // Stored text is inserted, not typed: a line break stays a line break, other controls are out.
+    expect(
+      actionSchema.safeParse({ name: 'insert_text', text: 'Здравствуйте!\n\nГотов.' }).success,
+    ).toBe(true)
+    for (const text of ['a\rb', 'a\tb', 'x\u001b', '', 'x'.repeat(2001)])
+      expect(actionSchema.safeParse({ name: 'insert_text', text }).success).toBe(false)
   })
   it('normalises decimal, octal, hex and short IPv4 hosts before the check', async () => {
     for (const url of [

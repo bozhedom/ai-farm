@@ -2,12 +2,16 @@ import { config, computerUseReady } from '../config'
 import { query } from '../db'
 import type {
   ComputerApprovalView,
+  ComputerDocumentView,
   ComputerOpportunityView,
+  ComputerPlatformView,
+  ComputerProposalView,
   ComputerStepView,
   ComputerTaskView,
   ComputerUseView,
 } from '../contracts/computer-use'
 import { rotationGoals } from './goals'
+import { platformDomains } from './platforms'
 import { COMPUTER_USE_POLICY as P } from './policy'
 import {
   computerUseProvider,
@@ -23,6 +27,7 @@ const taskSql = `SELECT t.*,
   coalesce((SELECT sum(c.charged_microusd) FROM tool_calls c WHERE c.reservation_id=t.reservation_id),0)::bigint AS spent_microusd,
   coalesce((SELECT sum(c.charged_kopecks) FROM tool_calls c WHERE c.reservation_id=t.reservation_id),0)::int AS spent_kopecks
   FROM computer_use_tasks t`
+const utcDay = "created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"
 
 function taskView(
   row: TaskCostRow,
@@ -55,24 +60,47 @@ function taskView(
 export async function computerUseView(): Promise<ComputerUseView> {
   await ensureComputerUse()
   const c = config()
-  const [states, systems, spent, current, approvals, history, opportunities, queued] =
-    await Promise.all([
-      query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true'),
-      query('SELECT mode,worker_heartbeat FROM system_state WHERE id=true'),
-      dailySpend(),
-      query<TaskCostRow>(
-        `${taskSql} WHERE t.status IN ('running','waiting_approval') ORDER BY t.created_at LIMIT 1`,
-      ),
-      query(
-        `SELECT a.*,t.goal FROM computer_use_approvals a JOIN computer_use_tasks t ON t.id=a.task_id
+  const [
+    states,
+    systems,
+    spent,
+    current,
+    approvals,
+    history,
+    opportunities,
+    queued,
+    proposals,
+    documents,
+    platformRows,
+    daily,
+  ] = await Promise.all([
+    query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true'),
+    query('SELECT mode,worker_heartbeat FROM system_state WHERE id=true'),
+    dailySpend(),
+    query<TaskCostRow>(
+      `${taskSql} WHERE t.status IN ('running','waiting_approval') ORDER BY t.created_at LIMIT 1`,
+    ),
+    query(
+      `SELECT a.*,t.goal FROM computer_use_approvals a JOIN computer_use_tasks t ON t.id=a.task_id
          WHERE a.status='pending' ORDER BY a.created_at`,
-      ),
-      query<TaskCostRow>(
-        `${taskSql} WHERE t.status NOT IN ('running','waiting_approval') ORDER BY t.created_at DESC LIMIT 20`,
-      ),
-      query('SELECT * FROM computer_use_opportunities ORDER BY created_at DESC LIMIT 60'),
-      query("SELECT count(*)::int AS n FROM computer_use_tasks WHERE status='queued'"),
-    ])
+    ),
+    query<TaskCostRow>(
+      `${taskSql} WHERE t.status NOT IN ('running','waiting_approval') ORDER BY t.created_at DESC LIMIT 20`,
+    ),
+    query('SELECT * FROM computer_use_opportunities ORDER BY created_at DESC LIMIT 60'),
+    query("SELECT count(*)::int AS n FROM computer_use_tasks WHERE status='queued'"),
+    query(
+      `SELECT p.*,coalesce(o.title,'') AS opportunity_title FROM computer_use_proposals p
+       LEFT JOIN computer_use_opportunities o ON o.id=p.opportunity_id
+       ORDER BY p.created_at DESC LIMIT 40`,
+    ),
+    query('SELECT * FROM computer_use_documents ORDER BY created_at DESC LIMIT 20'),
+    query('SELECT domain,logged_in FROM computer_use_platforms'),
+    query(
+      `SELECT platform_domain,count(*)::int AS n,count(*) FILTER (WHERE status='sent')::int AS sent
+       FROM computer_use_proposals WHERE ${utcDay} GROUP BY platform_domain`,
+    ),
+  ])
   const state = states[0]!
   const system = systems[0]
   const now = Date.now()
@@ -87,6 +115,8 @@ export async function computerUseView(): Promise<ComputerUseView> {
   if (state.failures >= P.maxFailuresInRow) blocked.push('COMPUTER_USE_FAILURES')
   if (!provider.demo && spent.microusd >= c.COMPUTER_USE_DAILY_CAP_MICROUSD)
     blocked.push('COMPUTER_USE_DAILY_LIMIT')
+  const manualActive = !!state.manual_until && state.manual_until.getTime() > now
+  if (manualActive) blocked.push('COMPUTER_USE_MANUAL_CONTROL')
   let currentView: ComputerTaskView | null = null
   if (current[0]) {
     const steps = await query(
@@ -108,6 +138,14 @@ export async function computerUseView(): Promise<ComputerUseView> {
     }))
     currentView = taskView(current[0], views, views.find((s) => s.hasScreenshot)?.id ?? null)
   }
+  const loggedIn = new Map(platformRows.map((row) => [row.domain as string, !!row.logged_in]))
+  const counts = new Map(daily.map((row) => [row.platform_domain as string, row]))
+  const platforms: ComputerPlatformView[] = platformDomains().map((domain) => ({
+    domain,
+    loggedIn: loggedIn.get(domain) ?? false,
+    proposalsToday: counts.get(domain)?.n ?? 0,
+    sentToday: counts.get(domain)?.sent ?? 0,
+  }))
   return {
     state: {
       enabled: state.enabled,
@@ -123,7 +161,11 @@ export async function computerUseView(): Promise<ComputerUseView> {
       spentTodayKopecks: spent.kopecks,
       queuedOwnerGoals: queued[0]!.n,
       failures: state.failures,
-      rotationGoals: rotationGoals.length,
+      rotationGoals: rotationGoals.length + 2 * [...loggedIn.values()].filter(Boolean).length,
+      autoProposals: state.auto_proposals,
+      autoProposalsAllowed: c.COMPUTER_USE_AUTO_PROPOSALS,
+      proposalsPerDay: c.COMPUTER_USE_PROPOSALS_PER_DAY,
+      manualUntil: manualActive ? state.manual_until!.toISOString() : null,
     },
     current: currentView,
     approvals: approvals.map((a): ComputerApprovalView => ({
@@ -147,6 +189,40 @@ export async function computerUseView(): Promise<ComputerUseView> {
       demo: o.is_demo,
       status: o.status,
       createdAt: o.created_at.toISOString(),
+      decision: o.decision,
+      fit: o.fit,
+      aiForbidden: o.ai_forbidden,
+      estimatedValueMinor:
+        o.estimated_value_minor === null ? null : Number(o.estimated_value_minor),
+      estimatedCurrency: o.estimated_currency,
+      reason: o.reason,
+      platformDomain: o.platform_domain,
     })),
+    proposals: proposals.map((p): ComputerProposalView => ({
+      id: p.id,
+      taskId: p.task_id,
+      platformDomain: p.platform_domain,
+      opportunityUrl: p.opportunity_url,
+      opportunityTitle: p.opportunity_title,
+      text: p.text,
+      priceAmount: p.price_amount === null ? null : Number(p.price_amount),
+      priceCurrency: p.price_currency,
+      status: p.status,
+      demo: p.is_demo,
+      sentUrl: p.sent_url,
+      createdAt: p.created_at.toISOString(),
+      sentAt: p.sent_at?.toISOString() || null,
+    })),
+    documents: documents.map((d): ComputerDocumentView => ({
+      id: d.id,
+      taskId: d.task_id,
+      title: d.title,
+      brief: d.brief,
+      kind: d.kind,
+      text: d.text,
+      demo: d.is_demo,
+      createdAt: d.created_at.toISOString(),
+    })),
+    platforms,
   }
 }

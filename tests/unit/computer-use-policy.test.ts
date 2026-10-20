@@ -9,7 +9,12 @@ import { rotationGoals } from '../../core/computer-use/goals'
 
 const page = (
   url: string,
-  extra: Partial<{ focused: ElementInfo; target: ElementInfo; typedBefore: string }> = {},
+  extra: Partial<{
+    focused: ElementInfo
+    target: ElementInfo
+    typedBefore: string
+    permit: { domain: string }
+  }> = {},
 ) => ({
   url,
   title: 'Страница',
@@ -182,6 +187,74 @@ describe('computer-use policy: browsing runs, outward actions wait, fraud is ref
         page('https://a.b', { target: element({ tag: 'a', href: 'https://anti-captcha.com/x' }) }),
       ),
     ).toEqual({ verdict: 'blocked', reason: 'COMPUTER_USE_HOST_BLOCKED' })
+  })
+  it('lets one send permit replace approval for an outward click on its platform only', () => {
+    const send = element({ tag: 'button', type: 'submit', text: 'Отправить отклик' })
+    const permit = { domain: 'fl.ru' }
+    expect(
+      classifyAction(
+        { name: 'click', x: 1, y: 1 },
+        page('https://www.fl.ru/projects/1/', { target: send, permit }),
+      ),
+    ).toEqual({ verdict: 'allow', reason: 'COMPUTER_USE_SEND_PERMIT' })
+    expect(
+      classifyAction(
+        { name: 'key', key: 'Enter' },
+        page('https://fl.ru/projects/1/', { focused: send, permit }),
+      ),
+    ).toEqual({ verdict: 'allow', reason: 'COMPUTER_USE_SEND_PERMIT' })
+    expect(
+      classifyAction(
+        { name: 'click', x: 1, y: 1 },
+        page('https://fl.ru/projects/1/apply', { target: element({ tag: 'button' }), permit }),
+      ),
+    ).toEqual({ verdict: 'allow', reason: 'COMPUTER_USE_SEND_PERMIT' })
+    // Another platform, a look-alike host, no permit: the owner decides as before.
+    for (const url of ['https://kwork.ru/x', 'https://fl.ru.evil.example/x', 'https://evilfl.ru/x'])
+      expect(
+        classifyAction({ name: 'click', x: 1, y: 1 }, page(url, { target: send, permit })),
+      ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_OUTWARD_ACTION' })
+    expect(
+      classifyAction({ name: 'click', x: 1, y: 1 }, page('https://fl.ru/x', { target: send })),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_OUTWARD_ACTION' })
+    // Money, credentials and code fields are never covered by a permit.
+    expect(
+      classifyAction(
+        { name: 'click', x: 1, y: 1 },
+        page('https://fl.ru/x', {
+          target: element({ tag: 'a', text: 'Оплатить', href: 'https://yoomoney.ru/pay' }),
+          permit,
+        }),
+      ),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_PAYMENT_SITE' })
+    expect(
+      classifyAction(
+        { name: 'key', key: 'Enter' },
+        page('https://fl.ru/login', {
+          focused: element({ tag: 'input', type: 'password' }),
+          permit,
+        }),
+      ),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_CREDENTIALS' })
+    expect(
+      classifyAction(
+        { name: 'key', key: 'Enter' },
+        page('https://fl.ru/x', { focused: element({ tag: 'input', name: 'otp' }), permit }),
+      ),
+    ).toEqual({ verdict: 'approval', reason: 'COMPUTER_USE_SENSITIVE_FIELD' })
+    expect(
+      classifyAction(
+        { name: 'click', x: 1, y: 1 },
+        page('https://fl.ru/x', { target: element({ text: 'купить аккаунт' }), permit }),
+      ),
+    ).toMatchObject({ verdict: 'blocked' })
+    // A plain click is allowed anyway and does not need the permit.
+    expect(
+      classifyAction(
+        { name: 'click', x: 1, y: 1 },
+        page('https://fl.ru/x', { target: element({ tag: 'a', text: 'Подробнее' }), permit }),
+      ),
+    ).toEqual({ verdict: 'allow', reason: '' })
   })
   it('recognises private and local hosts', () => {
     for (const host of [
