@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ComputerApprovalView,
+  ComputerOpportunityView,
   ComputerStepView,
   ComputerTaskView,
   ComputerUseView,
@@ -11,7 +12,11 @@ import { officeFetch, useOfficeResource } from '~/composables/office/resource'
 import {
   actionText,
   computerReason,
+  decisionBadge,
+  documentKindLabel,
+  money,
   opportunityKindLabel,
+  proposalStatusBadge,
   stepBadge,
   taskStatusBadge,
   usd,
@@ -43,6 +48,7 @@ const stateLabel = computed(() => {
   const s = state.value
   if (!s) return ''
   if (!s.enabled) return 'Выключено'
+  if (manualActive.value) return 'Вы управляете браузером'
   if (current.value?.status === 'waiting_approval') return 'Ждёт вашего решения'
   if (s.running) return 'Работает в браузере'
   if (s.blocked.length) return 'Ждёт условий для запуска'
@@ -51,6 +57,7 @@ const stateLabel = computed(() => {
 const stateBadge = computed(() => {
   const s = state.value
   if (!s || !s.enabled) return { label: 'Выключено', tone: 'off' as const }
+  if (manualActive.value) return { label: 'Вручную', tone: 'human' as const }
   if (current.value?.status === 'waiting_approval')
     return { label: 'Нужно решение', tone: 'wait' as const }
   if (s.running) return { label: 'Работает', tone: 'ok' as const }
@@ -70,6 +77,9 @@ const sourceLabel = (task: ComputerTaskView) =>
 const taskNote = (task: ComputerTaskView) => (task.error ? computerReason(task.error) : task.report)
 const approvalWhy = (approval: ComputerApprovalView) =>
   /^[A-Z][A-Z0-9_]{2,80}$/.test(approval.reason) ? computerReason(approval.reason) : approval.reason
+const loggedIn = computed(() => data.value?.platforms.filter((p) => p.loggedIn) ?? [])
+const estimate = (item: ComputerOpportunityView) =>
+  money(item.estimatedValueMinor, item.estimatedCurrency)
 
 function toggle() {
   const s = state.value
@@ -78,6 +88,18 @@ function toggle() {
     'toggle',
     () => post('/api/computer-use/control', { action: s.enabled ? 'pause' : 'enable' }),
     s.enabled ? 'Работа в браузере выключена.' : 'Работа в браузере включена.',
+  ).then(() => refresh())
+}
+function toggleProposals() {
+  const s = state.value
+  if (!s) return
+  void run(
+    'auto-proposals',
+    () =>
+      post('/api/computer-use/control', {
+        action: s.autoProposals ? 'auto_proposals_off' : 'auto_proposals_on',
+      }),
+    s.autoProposals ? 'Автоотклики выключены.' : 'Автоотклики включены.',
   ).then(() => refresh())
 }
 function decide(approval: ComputerApprovalView, decision: 'approve' | 'reject') {
@@ -114,6 +136,123 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
     post(`/api/computer-use/opportunities/${id}`, { status }),
   ).then(() => refresh())
 }
+function markPlatform(domain: string, loggedIn: boolean) {
+  void run(`platform-${domain}`, () =>
+    post('/api/computer-use/platforms', { domain, loggedIn }),
+  ).then(() => refresh())
+}
+
+// ---- owner remote control: the model pauses, typed text never leaves the browser request ----
+const now = ref(Date.now())
+const manualActive = computed(
+  () => !!state.value?.manualUntil && new Date(state.value.manualUntil).getTime() > now.value,
+)
+const manualLeft = computed(() => {
+  if (!manualActive.value || !state.value?.manualUntil) return ''
+  const minutes = Math.max(
+    0,
+    Math.ceil((new Date(state.value.manualUntil).getTime() - now.value) / 60_000),
+  )
+  return `${minutes} мин`
+})
+const manualSrc = ref('')
+const manualPageUrl = ref('')
+const manualText = ref('')
+const manualUrl = ref('')
+const manualNote = ref('')
+let clock: ReturnType<typeof setInterval> | undefined
+let frame: ReturnType<typeof setInterval> | undefined
+async function loadFrame() {
+  if (!manualActive.value) return
+  const url = `/api/computer-use/manual/screen.png?t=${Date.now()}`
+  try {
+    const response = await fetch(url, { credentials: 'same-origin' })
+    if (!response.ok) {
+      manualNote.value = computerReason(
+        response.status === 409 ? 'COMPUTER_USE_MANUAL_NOT_ACTIVE' : 'COMPUTER_USE_VM_UNAVAILABLE',
+      )
+      return
+    }
+    const blob = await response.blob()
+    const next = URL.createObjectURL(blob)
+    if (manualSrc.value) URL.revokeObjectURL(manualSrc.value)
+    manualSrc.value = next
+    manualPageUrl.value = decodeURI(response.headers.get('x-page-url') || '')
+    manualNote.value = ''
+  } catch {
+    manualNote.value = 'Снимок не получен. Проверьте связь с машиной.'
+  }
+}
+watch(
+  manualActive,
+  (on) => {
+    if (frame) clearInterval(frame)
+    frame = undefined
+    if (on) {
+      void loadFrame()
+      frame = setInterval(() => void loadFrame(), 2500)
+    } else if (manualSrc.value) {
+      URL.revokeObjectURL(manualSrc.value)
+      manualSrc.value = ''
+    }
+  },
+  { immediate: true },
+)
+onMounted(() => {
+  clock = setInterval(() => (now.value = Date.now()), 10_000)
+})
+onBeforeUnmount(() => {
+  if (clock) clearInterval(clock)
+  if (frame) clearInterval(frame)
+  if (manualSrc.value) URL.revokeObjectURL(manualSrc.value)
+})
+function manual(action: 'start' | 'stop') {
+  void run(
+    `manual-${action}`,
+    () => post('/api/computer-use/manual', { action }),
+    action === 'start' ? 'Управление у вас: модель ждёт.' : 'Управление возвращено модели.',
+  ).then(() => refresh())
+}
+const manualBusy = ref(false)
+async function act(action: Record<string, unknown>) {
+  if (manualBusy.value) return
+  manualBusy.value = true
+  try {
+    const result = await officeFetch<{ ok: boolean; error: string; url: string }>(
+      '/api/computer-use/manual/act',
+      { method: 'POST', body: action },
+    )
+    manualNote.value = result.ok ? '' : computerReason(result.error)
+    manualPageUrl.value = result.url
+  } catch {
+    manualNote.value = 'Действие не выполнено.'
+  } finally {
+    manualBusy.value = false
+    await loadFrame()
+  }
+}
+function screenClick(event: MouseEvent) {
+  const img = event.currentTarget as HTMLImageElement
+  const rect = img.getBoundingClientRect()
+  const x = Math.min(
+    1279,
+    Math.max(0, Math.round(((event.clientX - rect.left) / rect.width) * 1280)),
+  )
+  const y = Math.min(799, Math.max(0, Math.round(((event.clientY - rect.top) / rect.height) * 800)))
+  void act({ name: 'click', x, y })
+}
+async function typeText() {
+  const text = manualText.value
+  if (!text) return
+  await act({ name: 'type', text })
+  manualText.value = ''
+}
+async function openUrl() {
+  const url = manualUrl.value.trim()
+  if (!url) return
+  await act({ name: 'navigate', url: /^https?:\/\//i.test(url) ? url : `https://${url}` })
+}
+const key = (name: string) => act({ name: 'key', key: name })
 </script>
 <template>
   <div>
@@ -121,8 +260,9 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
       <div>
         <h1>Компьютер ИИ</h1>
         <p>
-          Модель сама ходит по сайтам в браузере на отдельной машине, ищет законные способы
-          заработка и записывает находки. Деньги, пароли, регистрации и публикации ждут вашего
+          Модель сама ходит по сайтам в браузере на отдельной машине, ищет заработок, оценивает
+          задания на фриланс-площадках, пишет и отправляет отклики, выполняет принятую текстовую
+          работу. Деньги, пароли, регистрации и всё, что она не может сделать сама, ждут вашего
           решения.
         </p>
       </div>
@@ -160,6 +300,27 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
             @click="toggle"
           />
         </div>
+        <div class="switch-row second">
+          <div>
+            <h3 class="state-sub">Автоотклики и ответы заказчикам</h3>
+            <p class="small muted">
+              {{
+                state.autoProposalsAllowed
+                  ? `Модель сама отправляет отклики, ответы и результаты на площадках с отмеченным входом: до ${state.proposalsPerDay} откликов в сутки на площадку, одна отправка на одно разрешение сервера.`
+                  : 'Выключено на сервере: COMPUTER_USE_AUTO_PROPOSALS=false в .env. Без этого модель только записывает находки.'
+              }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="switch"
+            role="switch"
+            :aria-checked="state.autoProposals"
+            aria-label="Автоотклики на площадках"
+            :disabled="!!busy || status.offline || !state.autoProposalsAllowed"
+            @click="toggleProposals"
+          />
+        </div>
         <ul v-if="issues.length" class="issues">
           <li v-for="issue in issues" :key="issue">{{ issue }}</li>
         </ul>
@@ -182,14 +343,16 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
           <span class="stat-note">до {{ state.stepLimit }} шагов</span>
         </div>
         <div class="stat rise">
-          <span class="stat-label">В очереди</span>
-          <span class="num">{{ state.queuedOwnerGoals }}</span>
-          <span class="stat-note">ваших заданий, затем {{ state.rotationGoals }} тем по кругу</span>
+          <span class="stat-label">Откликов сегодня</span>
+          <span class="num">{{ data.platforms.reduce((n, p) => n + p.sentToday, 0) }}</span>
+          <span class="stat-note">лимит {{ state.proposalsPerDay }} на площадку в сутки</span>
         </div>
         <div class="stat rise">
           <span class="stat-label">Найдено</span>
           <span class="num">{{ data.opportunities.length }}</span>
-          <span class="stat-note">возможностей для проверки</span>
+          <span class="stat-note"
+            >берёт сама: {{ data.opportunities.filter((o) => o.decision === 'take').length }}</span
+          >
         </div>
       </section>
 
@@ -199,7 +362,7 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
         aria-labelledby="computer-approvals"
       >
         <div class="card-head">
-          <h2 id="computer-approvals">Нужно ваше решение</h2>
+          <h2 id="computer-approvals">Нужен человек</h2>
           <span class="small muted">Пока вы не ответите, задание стоит</span>
         </div>
         <div class="rows">
@@ -297,6 +460,181 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
         />
       </section>
 
+      <section class="card rise manual" aria-labelledby="computer-manual">
+        <div class="card-head">
+          <h2 id="computer-manual">Управление вручную</h2>
+          <span v-if="manualActive" class="badge badge-human">Ещё {{ manualLeft }}</span>
+        </div>
+        <p class="small muted">
+          Войдите на площадки под своим аккаунтом один раз: браузер на машине хранит профиль, и
+          модель работает в нём дальше. Пока вы управляете, шаги модели не идут; через 15 минут без
+          действий управление вернётся само. Введённый вами текст не сохраняется и модели не
+          показывается.
+        </p>
+        <div v-if="!manualActive" class="row-wrap actions">
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="!!busy || status.offline"
+            @click="manual('start')"
+          >
+            Взять управление
+          </button>
+        </div>
+        <template v-else>
+          <div class="manual-grid">
+            <figure class="screen">
+              <img
+                v-if="manualSrc"
+                :src="manualSrc"
+                alt="Живой экран браузера: клик по снимку передаётся машине"
+                width="1280"
+                height="800"
+                class="clickable"
+                @click="screenClick"
+              />
+              <div v-else class="screen-empty muted small">Ждём снимок с машины…</div>
+              <figcaption class="small muted">
+                {{ manualPageUrl || 'Клик по снимку = клик в браузере' }}
+              </figcaption>
+            </figure>
+            <div class="manual-controls">
+              <form class="field" @submit.prevent="openUrl">
+                <label for="manual-url">Адрес</label>
+                <div class="inline">
+                  <input
+                    id="manual-url"
+                    v-model="manualUrl"
+                    class="input"
+                    type="text"
+                    inputmode="url"
+                    placeholder="https://www.fl.ru/login"
+                    maxlength="2000"
+                  />
+                  <button type="submit" class="btn btn-sm" :disabled="manualBusy">Открыть</button>
+                </div>
+              </form>
+              <form class="field" @submit.prevent="typeText">
+                <label for="manual-text">Текст в поле под курсором</label>
+                <div class="inline">
+                  <input
+                    id="manual-text"
+                    v-model="manualText"
+                    class="input"
+                    type="text"
+                    autocomplete="off"
+                    maxlength="2000"
+                    placeholder="Логин, пароль, код из SMS"
+                  />
+                  <button type="submit" class="btn btn-sm" :disabled="manualBusy">Ввести</button>
+                </div>
+              </form>
+              <div class="row-wrap keys" aria-label="Клавиши">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="manualBusy"
+                  @click="key('Enter')"
+                >
+                  Enter
+                </button>
+                <button type="button" class="btn btn-sm" :disabled="manualBusy" @click="key('Tab')">
+                  Tab
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="manualBusy"
+                  @click="key('Backspace')"
+                >
+                  Backspace
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="manualBusy"
+                  @click="key('Escape')"
+                >
+                  Esc
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="manualBusy"
+                  @click="key('PageDown')"
+                >
+                  Вниз
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="manualBusy"
+                  @click="key('PageUp')"
+                >
+                  Вверх
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-ghost"
+                  :disabled="manualBusy"
+                  @click="act({ name: 'back' })"
+                >
+                  Назад
+                </button>
+              </div>
+              <p v-if="manualNote" class="small hint-err">{{ manualNote }}</p>
+              <div class="row-wrap actions">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  :disabled="!!busy"
+                  @click="manual('stop')"
+                >
+                  <OfficeIcon name="check" size="sm" />Готово
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="!!busy"
+                  @click="manual('start')"
+                >
+                  Продлить
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <div class="platforms">
+          <h3>Площадки, где выполнен вход</h3>
+          <p class="small muted">
+            Отметьте площадки после входа через управление вручную. По ним модель получает задания
+            «проверить заказы и откликнуться» и «ответить заказчикам и сдать работу»; отклики
+            возможны только здесь.
+          </p>
+          <ul class="platform-list">
+            <li v-for="platform in data.platforms" :key="platform.domain">
+              <label class="check">
+                <input
+                  type="checkbox"
+                  :checked="platform.loggedIn"
+                  :disabled="!!busy"
+                  @change="markPlatform(platform.domain, !platform.loggedIn)"
+                />
+                <span>
+                  {{ platform.domain }}
+                  <span v-if="platform.loggedIn" class="small muted">
+                    · сегодня {{ platform.sentToday }} из {{ state.proposalsPerDay }}
+                  </span>
+                </span>
+              </label>
+            </li>
+          </ul>
+          <p v-if="!loggedIn.length" class="small muted">
+            Пока ни одной площадки: модель только исследует и записывает находки.
+          </p>
+        </div>
+      </section>
+
       <section class="card rise" aria-labelledby="computer-goal">
         <h2 id="computer-goal">Своё задание</h2>
         <p class="small muted">
@@ -322,10 +660,71 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
         </form>
       </section>
 
+      <section class="card rise" aria-labelledby="computer-proposals">
+        <div class="card-head">
+          <h2 id="computer-proposals">Отклики</h2>
+          <span class="small muted"
+            >Написаны от вашего имени; отправка только по разрешению сервера</span
+          >
+        </div>
+        <div v-if="data.proposals.length" class="rows">
+          <article v-for="item in data.proposals" :key="item.id" class="found">
+            <div class="found-head">
+              <OfficeBadge :badge="proposalStatusBadge[item.status]" />
+              <span class="badge badge-plain">{{ item.platformDomain }}</span>
+              <span v-if="item.demo" class="badge badge-test">Демо</span>
+              <span class="small muted">
+                {{ item.sentAt ? `отправлен ${when(item.sentAt)}` : when(item.createdAt) }}
+              </span>
+            </div>
+            <h3>{{ item.opportunityTitle || item.opportunityUrl }}</h3>
+            <p class="small">
+              <a :href="item.opportunityUrl" target="_blank" rel="noopener noreferrer nofollow">{{
+                item.opportunityUrl
+              }}</a>
+              <span v-if="item.priceAmount !== null">
+                · цена {{ money(item.priceAmount, item.priceCurrency) }}</span
+              >
+            </p>
+            <details class="disclosure">
+              <summary class="small">Текст отклика ({{ item.text.length }} зн.)</summary>
+              <p class="small report">{{ item.text }}</p>
+            </details>
+          </article>
+        </div>
+        <p v-else class="muted">
+          Откликов ещё нет. Они появятся, когда модель возьмёт задание на площадке с отмеченным
+          входом.
+        </p>
+      </section>
+
+      <section class="card rise" aria-labelledby="computer-documents">
+        <div class="card-head">
+          <h2 id="computer-documents">Документы</h2>
+          <span class="small muted">Результаты, подготовленные для сдачи заказчикам</span>
+        </div>
+        <div v-if="data.documents.length" class="rows">
+          <article v-for="item in data.documents" :key="item.id" class="found">
+            <div class="found-head">
+              <span class="badge badge-plain">{{ documentKindLabel[item.kind] || item.kind }}</span>
+              <span v-if="item.demo" class="badge badge-test">Демо</span>
+              <span class="small muted">{{ when(item.createdAt) }}</span>
+            </div>
+            <h3>{{ item.title }}</h3>
+            <p class="small muted">Техзадание: {{ item.brief }}</p>
+            <details class="disclosure">
+              <summary class="small">Текст ({{ item.text.length }} зн.)</summary>
+              <p class="small report">{{ item.text }}</p>
+            </details>
+          </article>
+        </div>
+        <p v-else class="muted">Документов ещё нет.</p>
+      </section>
+
       <section class="card rise" aria-labelledby="computer-found">
         <div class="card-head">
           <h2 id="computer-found">Найденные возможности</h2>
-          <span class="small muted">Записи для проверки человеком, не доход</span>
+          <span class="small muted">Записи и оценка модели, не доход</span>
         </div>
         <div v-if="data.opportunities.length" class="rows">
           <article
@@ -338,13 +737,18 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
               <span class="badge badge-plain">{{
                 opportunityKindLabel[item.kind] || item.kind
               }}</span>
-              <span v-if="item.requiresHuman" class="badge badge-human">Нужен человек</span>
+              <OfficeBadge :badge="decisionBadge[item.decision] ?? decisionBadge.human!" />
+              <span class="badge badge-plain">Подходит на {{ item.fit }}%</span>
+              <span v-if="item.aiForbidden" class="badge badge-err">Запрещён ИИ</span>
               <span v-if="item.demo" class="badge badge-test">Демо</span>
               <span v-if="item.status === 'saved'" class="badge badge-ok">Сохранено</span>
               <span class="small muted">{{ when(item.createdAt) }}</span>
             </div>
             <h3>{{ item.title }}</h3>
             <p class="small">{{ item.summary }}</p>
+            <p v-if="item.reason || estimate(item)" class="small muted">
+              <span v-if="estimate(item)">Оценка: {{ estimate(item) }}. </span>{{ item.reason }}
+            </p>
             <p class="small">
               <a :href="item.url" target="_blank" rel="noopener noreferrer nofollow">{{
                 item.url
@@ -433,15 +837,17 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
           с теми же дневными и месячными лимитами.
         </p>
         <p>
-          Сама модель может открывать сайты, искать, читать и заполнять поисковые формы. Оплата,
-          пароли, регистрация, публикации, сообщения людям, принятие условий и переводы ждут вашего
-          решения выше. Обход капч и проверок, мультиаккаунты и чужие документы запрещены на
-          сервере.
+          На фриланс-площадках, где вы вошли под своим аккаунтом, модель оценивает задания сама,
+          пропускает те, где запрещён ИИ, пишет отклики от вашего имени и отправляет их по
+          разрешению сервера: одно разрешение на одну отправку, не больше лимита в сутки. Выдумывать
+          дипломы, отзывы и опыт, предлагать оплату мимо площадки, оставлять контакты или отрицать
+          использование ИИ сервер не даёт; вопрос заказчика «вы ИИ?» уходит вам.
         </p>
         <p>
-          Найденные возможности это записи для проверки человеком. Они не считаются доходом и не
-          создают обязательств. Аккаунты на площадках регистрирует человек; двухфакторные коды
-          остаются у него.
+          Оплата, пароли, регистрация, переводы и всё, что модель не может сделать сама, ждут вашего
+          решения выше. Обход капч и проверок, мультиаккаунты и чужие документы запрещены на
+          сервере. Найденные возможности и отклики это записи; доходом считаются только деньги,
+          которые реально пришли.
         </p>
       </details>
     </template>
@@ -451,7 +857,8 @@ function mark(id: string, status: 'saved' | 'dismissed' | 'new') {
 .control,
 .stats,
 .approvals,
-.current {
+.current,
+.manual {
   margin-bottom: var(--s-5);
 }
 section.card + section.card,
@@ -464,11 +871,20 @@ section.card + details.card {
   justify-content: space-between;
   gap: var(--s-4);
 }
+.switch-row.second {
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
 .state-title {
   display: flex;
   align-items: center;
   gap: var(--s-2);
   flex-wrap: wrap;
+}
+.state-sub {
+  font-size: var(--text-md);
+  margin-bottom: 2px;
 }
 .issues {
   margin: var(--s-3) 0 0;
@@ -495,7 +911,8 @@ section.card + details.card {
   margin-left: 6px;
   vertical-align: 1px;
 }
-.live {
+.live,
+.manual-grid {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: var(--s-5);
@@ -513,6 +930,9 @@ section.card + details.card {
   border-radius: var(--r-md);
   background: var(--canvas-deep);
 }
+.screen img.clickable {
+  cursor: crosshair;
+}
 .screen-empty {
   aspect-ratio: 16 / 10;
   display: grid;
@@ -523,6 +943,43 @@ section.card + details.card {
 .screen figcaption {
   margin-top: 6px;
   word-break: break-all;
+}
+.manual-controls {
+  display: grid;
+  gap: var(--s-3);
+  align-content: start;
+  min-width: 0;
+}
+.inline {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+}
+.inline .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.keys {
+  gap: var(--s-2);
+}
+.hint-err {
+  color: var(--st-err-ink);
+}
+.platforms {
+  margin-top: var(--s-5);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+.platforms h3 {
+  margin-bottom: 4px;
+}
+.platform-list {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--s-2) var(--s-4);
 }
 .log {
   list-style: none;
@@ -588,7 +1045,8 @@ section.card + details.card {
   margin-top: var(--s-3);
 }
 @media (max-width: 900px) {
-  .live {
+  .live,
+  .manual-grid {
     grid-template-columns: 1fr;
   }
   .log {

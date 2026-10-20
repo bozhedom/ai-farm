@@ -1,4 +1,8 @@
-import type { ComputerStepDecision, ComputerTaskStatus } from '../../core/contracts/computer-use'
+import type {
+  ComputerProposalView,
+  ComputerStepDecision,
+  ComputerTaskStatus,
+} from '../../core/contracts/computer-use'
 import type { Badge } from '~/composables/office/labels'
 
 /** Owner words for the computer-use codes; the codes themselves stay in the technical log. */
@@ -54,6 +58,28 @@ const reasons: Record<string, string> = {
   TARGET_BLOCKED: 'Машина отказала в переходе: закрытый адрес.',
   NAVIGATION_TIMEOUT: 'Страница не загрузилась вовремя.',
   ACTION_FAILED: 'Браузер не смог выполнить действие.',
+  COMPUTER_USE_MANUAL_CONTROL: 'Вы управляете браузером: шаги модели приостановлены.',
+  COMPUTER_USE_MANUAL_NOT_ACTIVE: 'Управление вручную не включено или истекло.',
+  COMPUTER_USE_AI_FORBIDDEN: 'В задании запрещён ИИ: такие задания пропускаем.',
+  COMPUTER_USE_AI_DENIAL: 'Текст отрицает использование ИИ: так писать нельзя.',
+  COMPUTER_USE_OFF_PLATFORM_PAYMENT: 'Оплата мимо площадки запрещена: за это банят аккаунт.',
+  COMPUTER_USE_CONTACT_DETAILS: 'Контакты вне площадки в тексте запрещены.',
+  COMPUTER_USE_EXTERNAL_LINK: 'Внешние ссылки в отклике запрещены.',
+  COMPUTER_USE_UNVERIFIED_CLAIM: 'Дипломы, отзывы, портфолио и годы опыта выдумывать нельзя.',
+  COMPUTER_USE_PLATFORM_UNKNOWN: 'Это не фриланс-площадка из списка.',
+  COMPUTER_USE_PLATFORM_MISMATCH: 'Адрес задания не относится к указанной площадке.',
+  COMPUTER_USE_PLATFORM_NOT_LOGGED_IN: 'На этой площадке не отмечен вход под вашим аккаунтом.',
+  COMPUTER_USE_AUTO_PROPOSALS_OFF:
+    'Автоотклики выключены: включите переключатель и COMPUTER_USE_AUTO_PROPOSALS.',
+  COMPUTER_USE_OPPORTUNITY_REQUIRED:
+    'Сначала задание нужно записать и оценить через note_opportunity.',
+  COMPUTER_USE_DECISION_NOT_TAKE: 'Модель сама решила не брать это задание.',
+  COMPUTER_USE_PROPOSAL_LIMIT: 'Дневной лимит откликов на этой площадке исчерпан.',
+  COMPUTER_USE_SEND_LIMIT: 'Дневной лимит отправок на этой площадке исчерпан.',
+  COMPUTER_USE_PERMIT_GRANTED: 'Выдано разрешение на одну отправку (15 минут).',
+  COMPUTER_USE_SEND_PERMIT: 'Отправлено по разрешению на одну отправку.',
+  COMPUTER_USE_STORED_NOT_FOUND: 'Такого текста в этом задании нет.',
+  COMPUTER_USE_DOCUMENT_LIMIT: 'В этом задании уже подготовлено достаточно документов.',
 }
 export function computerReason(code: string | null | undefined) {
   const value = String(code ?? '').trim()
@@ -80,6 +106,37 @@ export const stepBadge: Record<ComputerStepDecision, Badge> = {
   blocked: { label: 'Запрещено', tone: 'err' },
   invalid: { label: 'Не по формату', tone: 'err' },
   failed: { label: 'Не удалось', tone: 'err' },
+}
+export const decisionBadge: Record<string, Badge> = {
+  take: { label: 'Берёт сама', tone: 'ok' },
+  human: { label: 'Нужен человек', tone: 'human' },
+  skip: { label: 'Пропущено', tone: 'off' },
+}
+export const proposalStatusBadge: Record<ComputerProposalView['status'], Badge> = {
+  draft: { label: 'Черновик', tone: 'wait' },
+  sent: { label: 'Отправлен', tone: 'ok' },
+  failed: { label: 'Не отправлен', tone: 'err' },
+  expired: { label: 'Истёк', tone: 'off' },
+}
+export const documentKindLabel: Record<string, string> = {
+  article: 'Статья',
+  product_description: 'Описание товара',
+  translation: 'Перевод',
+  summary: 'Краткое содержание',
+  instruction: 'Инструкция',
+  reply: 'Ответ заказчику',
+  other: 'Текст',
+}
+/** Display only: integer minor units of a currency as «3 000,00 RUB». */
+export function money(minor: number | null | undefined, currency: string | null | undefined) {
+  if (minor === null || minor === undefined || !currency) return ''
+  const value = Math.max(0, Math.round(Number(minor) || 0))
+  const whole = Math.floor(value / 100)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, '\u202f')
+  const symbol =
+    currency === 'RUB' ? '₽' : currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency
+  return `${whole},${String(value % 100).padStart(2, '0')} ${symbol}`
 }
 export const opportunityKindLabel: Record<string, string> = {
   bounty: 'Баунти, конкурс',
@@ -116,7 +173,15 @@ export function actionText(action: { name: string } & Record<string, unknown>): 
       return `Запрос разрешения: ${inner ? actionText(inner) : ''}`
     }
     case 'note_opportunity':
-      return `Записать возможность: ${String(a.title)}`
+      return `Записать возможность: ${String(a.title)}${a.decision ? ` (${decisionBadge[String(a.decision)]?.label.toLowerCase() ?? a.decision}, ${a.fit}%)` : ''}`
+    case 'draft_proposal':
+      return `Подготовить отклик на ${String(a.platform_domain)}: «${String(a.text).slice(0, 100)}…»`
+    case 'type_stored':
+      return `Вставить сохранённый текст${a.chars ? ` (${a.chars} зн.)` : ''}`
+    case 'write_document':
+      return `Написать документ: ${String(a.title)}`
+    case 'prepare_send':
+      return `Разрешение на отправку (${a.purpose === 'delivery' ? 'сдача работы' : 'ответ заказчику'}) на ${String(a.domain)}`
     default:
       return `Неизвестное действие ${action.name}`
   }
