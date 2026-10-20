@@ -14,6 +14,7 @@ import { Sessions } from './browser'
  *   GET    /sessions/:id/screenshot       -> { png (base64), url, title, focused }
  *   POST   /sessions/:id/inspect {x,y}    -> { element }
  *   POST   /sessions/:id/actions {action} -> { ok, error, url, title, focused }
+ *   Sessions are pages of one persistent profile (VM_AGENT_PROFILE_DIR): logins persist.
  *   DELETE /sessions/:id                  -> { ok }
  */
 const MAX_BODY = 64 * 1024

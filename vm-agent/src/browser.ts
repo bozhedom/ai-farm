@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 import { setTimeout as pause } from 'node:timers/promises'
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
+import { chromium, type BrowserContext, type Page } from 'playwright'
 import { targetAllowed } from './guard'
 import { startProxy, type Proxy } from './proxy'
 import { VIEWPORT, type Action } from './actions'
 
 /**
- * One headless Chromium per process, one context per session, one page per context. Pop-ups
- * are folded into the main page, dialogs are dismissed, downloads are cancelled and every
+ * One persistent Chromium profile per machine (PROFILE_DIR, a Docker volume), so platform
+ * logins the owner made survive tasks and restarts. Each session is one page of that profile.
+ * Pop-ups are folded into the opener, dialogs are dismissed, downloads are cancelled and every
  * request passes the network guard twice: the route hook refuses by name, and the loopback
  * proxy connects only to the public address it resolved itself (no DNS rebinding, WebSockets
  * included). Nothing here knows about the farm or holds its secrets.
@@ -23,10 +25,11 @@ export type Element = {
 export type PageState = { url: string; title: string; focused: Element | null }
 
 export const SESSION_IDLE_MS = 30 * 60_000
-export const MAX_SESSIONS = 2
+export const MAX_SESSIONS = 3
+export const PROFILE_DIR = process.env.VM_AGENT_PROFILE_DIR || '/agent/profile'
 const NAVIGATION_TIMEOUT_MS = 20_000
 
-type Session = { id: string; context: BrowserContext; page: Page; lastUsedAt: number }
+type Session = { id: string; page: Page; lastUsedAt: number }
 
 const elementScript = `(target) => {
   const pick = (node) => {
@@ -51,27 +54,19 @@ const elementScript = `(target) => {
 export const pageSchemeAllowed = (url: string) => /^https?:/.test(url) || url === 'about:blank'
 
 export class Sessions {
-  private browser: Browser | null = null
+  private context: BrowserContext | null = null
   private proxy: Proxy | null = null
   private readonly sessions = new Map<string, Session>()
 
   private async launch() {
-    if (this.browser?.isConnected()) return this.browser
+    if (this.context && this.context.browser()?.isConnected() !== false) return this.context
     this.proxy ??= await startProxy()
-    this.browser = await chromium.launch({
+    mkdirSync(PROFILE_DIR, { recursive: true })
+    const context = await chromium.launchPersistentContext(PROFILE_DIR, {
       headless: true,
       args: ['--disable-dev-shm-usage', '--disable-background-networking'],
       // Everything, loopback included, goes through the guarding proxy.
       proxy: { server: `http://127.0.0.1:${this.proxy.port}`, bypass: '<-loopback>' },
-    })
-    return this.browser
-  }
-
-  async start(): Promise<string> {
-    await this.expire()
-    if (this.sessions.size >= MAX_SESSIONS) throw new Error('SESSION_LIMIT')
-    const browser = await this.launch()
-    const context = await browser.newContext({
       viewport: { width: VIEWPORT.width, height: VIEWPORT.height },
       deviceScaleFactor: 1,
       acceptDownloads: false,
@@ -83,23 +78,38 @@ export class Sessions {
       if (await targetAllowed(request.url())) await route.continue()
       else await route.abort('blockedbyclient')
     })
+    context.on('page', (popup) => void this.foldPopup(popup))
+    // The profile opens with one blank page of its own; sessions get pages of their own.
+    for (const page of context.pages()) await page.close().catch(() => undefined)
+    this.context = context
+    return context
+  }
+
+  /** A page opened by a link continues in the opener's page; pages of sessions are left alone. */
+  private async foldPopup(popup: Page) {
+    const opener = await popup.opener().catch(() => null)
+    if (!opener) return
+    const session = [...this.sessions.values()].find((s) => s.page === opener)
+    const url = await Promise.race([
+      popup.waitForLoadState('domcontentloaded', { timeout: 3000 }).then(() => popup.url()),
+      pause(3000).then(() => popup.url()),
+    ]).catch(() => popup.url())
+    await popup.close().catch(() => undefined)
+    if (session && url && url !== 'about:blank' && (await targetAllowed(url)))
+      await session.page
+        .goto(url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS })
+        .catch(() => undefined)
+  }
+
+  async start(): Promise<string> {
+    await this.expire()
+    if (this.sessions.size >= MAX_SESSIONS) throw new Error('SESSION_LIMIT')
+    const context = await this.launch()
     const page = await context.newPage()
     const id = randomUUID()
-    const session: Session = { id, context, page, lastUsedAt: Date.now() }
+    const session: Session = { id, page, lastUsedAt: Date.now() }
     page.on('dialog', (dialog) => dialog.dismiss().catch(() => undefined))
     page.on('download', (download) => download.cancel().catch(() => undefined))
-    context.on('page', async (popup) => {
-      // A link that opens a new tab continues in the one page the model sees.
-      const url = await Promise.race([
-        popup.waitForLoadState('domcontentloaded', { timeout: 3000 }).then(() => popup.url()),
-        pause(3000).then(() => popup.url()),
-      ]).catch(() => popup.url())
-      await popup.close().catch(() => undefined)
-      if (url && url !== 'about:blank' && (await targetAllowed(url)))
-        await page
-          .goto(url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS })
-          .catch(() => undefined)
-    })
     this.sessions.set(id, session)
     return id
   }
@@ -115,7 +125,7 @@ export class Sessions {
     const session = this.sessions.get(id)
     if (!session) return false
     this.sessions.delete(id)
-    await session.context.close().catch(() => undefined)
+    await session.page.close().catch(() => undefined)
     return true
   }
 
@@ -126,8 +136,9 @@ export class Sessions {
 
   async close() {
     for (const id of [...this.sessions.keys()]) await this.end(id)
-    await this.browser?.close().catch(() => undefined)
-    this.browser = null
+    // Closing the persistent context flushes cookies and storage to the profile directory.
+    await this.context?.close().catch(() => undefined)
+    this.context = null
     await this.proxy?.close().catch(() => undefined)
     this.proxy = null
   }
@@ -194,6 +205,10 @@ export class Sessions {
           break
         case 'type':
           await page.keyboard.type(action.text, { delay: 10 })
+          break
+        case 'insert_text':
+          // insertText dispatches no key events: "\n" becomes a line break, never a submit.
+          await page.keyboard.insertText(action.text)
           break
         case 'key':
           await page.keyboard.press(action.key === 'Space' ? ' ' : action.key)

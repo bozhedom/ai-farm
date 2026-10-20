@@ -5,6 +5,8 @@ WORKDIR /agent
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY src ./src
+# The persistent browser profile lives in a volume mounted here; the browser user must own it.
+RUN mkdir -p /agent/profile && chown -R pwuser:pwuser /agent/profile
 # The image ships a non-root user for the browser; the agent never needs root.
 USER pwuser
 EXPOSE 8787
