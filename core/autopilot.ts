@@ -28,7 +28,9 @@ import type { AutopilotDecision, AutonomyView } from './contracts/autonomy'
  * Server autopilot. It turns on the autonomous loops through the same server functions as the
  * office buttons. Hard rules, enforced here and by those functions:
  * - it acts only while the farm is running: a pause or emergency stop is the owner's;
- * - it only starts what was never started: a paused or stopped portfolio stays as it is;
+ * - it only starts what was never started: a paused or stopped portfolio stays as it is. The one
+ *   exception is Paper: virtual training paused by its daily loss limit resumes on the next UTC
+ *   day, because that limit is about one day; Demo and Live stay paused;
  * - it never turns anything off, never touches Live, money limits or owner-defined capital;
  * - a schedule or manager the owner turned off stays off.
  */
@@ -38,6 +40,8 @@ export type TradingItem = {
   status: string
   reason: string
   hasKeys: boolean
+  /** UTC day of the stored daily risk mark, YYYY-MM-DD or empty. */
+  riskDay?: string
 }
 export type ExecutionItem = {
   track: ExecutionTrack
@@ -61,6 +65,8 @@ export type AutopilotInput = {
   /** Virtual USDT for a never-configured Paper execution book; 0 leaves it to the owner. */
   paperExecutionUsdt: number
   options: { demo: boolean; execution: boolean }
+  /** Current UTC day, YYYY-MM-DD. */
+  today?: string
 }
 export type PlannedDecision = AutopilotDecision & {
   /** Subject of a failure line. */
@@ -197,6 +203,23 @@ export function autopilotPlan(input: AutopilotInput): PlannedDecision[] {
     if (t.mode === 'live') continue
     if (t.mode === 'demo' && !input.options.demo) continue
     if (t.status === 'running') none(key, 'running', `${name}: работает.`)
+    else if (
+      t.mode === 'paper' &&
+      t.status === 'paused' &&
+      t.reason === 'DAILY_LOSS_LIMIT' &&
+      !!input.today &&
+      !!t.riskDay &&
+      t.riskDay < input.today
+    )
+      out.push({
+        key,
+        action: 'start_trading',
+        status: 'started',
+        text: `${name}: новый день, автопилот возобновил тренировку после дневного лимита убытка.`,
+        name,
+        exchange: t.exchange,
+        mode: t.mode,
+      })
     else if (t.status !== 'idle')
       none(
         key,
@@ -295,7 +318,7 @@ export async function autopilotInput(
   const managerControl = await latestAudit('trading_manager_control')
   const budget = await managerBudget()
   const trading = await query<Omit<TradingItem, 'hasKeys'>>(
-    'SELECT exchange,mode,status,reason FROM trading_portfolios ORDER BY exchange,mode',
+    'SELECT exchange,mode,status,reason,risk_day FROM trading_portfolios ORDER BY exchange,mode',
   )
   const execution = await query(
     'SELECT track,mode,status,reason,capital,started_at FROM execution_portfolios ORDER BY track,mode',
@@ -318,6 +341,7 @@ export async function autopilotInput(
         mode: t.mode,
         status: t.status,
         reason: t.reason,
+        riskDay: (t as { risk_day?: string }).risk_day ?? '',
         hasKeys: t.mode === 'live' ? false : hasKeys(scope(t.exchange, t.mode)),
       })),
     execution: execution
@@ -332,6 +356,7 @@ export async function autopilotInput(
         ready: e.mode === 'live' ? 'EXECUTION_LIVE_DISABLED' : executionReady(e.track, e.mode),
       })),
     paperExecutionUsdt: c.AUTOPILOT_EXECUTION_PAPER_USDT,
+    today: new Date().toISOString().slice(0, 10),
     options,
   }
 }

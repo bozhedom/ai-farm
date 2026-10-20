@@ -217,3 +217,34 @@ describe('worker loop heartbeats', () => {
     expect(health.map((h) => h.name)).toEqual(Object.keys(loopSpecs))
   })
 })
+
+describe('daily loss limit on Paper', () => {
+  const paused = (mode: 'paper' | 'demo', riskDay: string) =>
+    input({
+      today: '2026-10-21',
+      trading: [
+        {
+          exchange: 'bybit',
+          mode,
+          status: 'paused',
+          reason: 'DAILY_LOSS_LIMIT',
+          hasKeys: true,
+          riskDay,
+        },
+      ],
+      options: { demo: true, execution: false },
+    })
+  it('resumes virtual training on the next UTC day only', () => {
+    expect(actions(autopilotPlan(paused('paper', '2026-10-20')))).toContain(
+      'start_trading trading:bybit:paper',
+    )
+    expect(actions(autopilotPlan(paused('paper', '2026-10-21')))).not.toContain(
+      'start_trading trading:bybit:paper',
+    )
+  })
+  it('leaves Demo paused by its limit for the owner', () => {
+    expect(actions(autopilotPlan(paused('demo', '2026-10-20')))).not.toContain(
+      'start_trading trading:bybit:demo',
+    )
+  })
+})
