@@ -1,5 +1,21 @@
 import { z } from 'zod'
 
+/** USDT networks the owner may publish a deposit address for. */
+export const paymentNetworks = ['TRC20', 'ERC20', 'BEP20', 'TON', 'SOL'] as const
+export type PaymentNetwork = (typeof paymentNetworks)[number]
+const addressFormats: Record<PaymentNetwork, RegExp> = {
+  TRC20: /^T[1-9A-HJ-NP-Za-km-z]{33}$/,
+  ERC20: /^0x[0-9a-fA-F]{40}$/,
+  BEP20: /^0x[0-9a-fA-F]{40}$/,
+  // User-friendly (EQ…/UQ…, 48 base64url characters) or raw workchain:hex.
+  TON: /^(?:[A-Za-z0-9_-]{48}|-?\d{1,3}:[0-9a-fA-F]{64})$/,
+  SOL: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+}
+/** Loose format check: catches a wrong network or a truncated paste, not a checksum. */
+export function validPaymentAddress(network: PaymentNetwork, address: string) {
+  return addressFormats[network].test(address) && !/^0x0{40}$/.test(address)
+}
+
 const flag = z.enum(['true', 'false']).transform((v) => v === 'true')
 const positive = (fallback: number) => z.coerce.number().int().positive().default(fallback)
 /** Unset or empty: the documented default applies. */
@@ -125,6 +141,19 @@ const schema = z.object({
       'api.bybit.id',
     ])
     .default('api.bybit.com'),
+  // Read-only key of the Bybit account that receives client payments. Never a trading key:
+  // the wallet loop refuses it unless Bybit reports readOnly=1.
+  BYBIT_WALLET_READ_API_KEY: z.string().trim().default(''),
+  BYBIT_WALLET_READ_SECRET: z.string().trim().default(''),
+  // Deposit address for foreign clients only (259-FZ forbids crypto payment by RF residents).
+  PAYMENT_USDT_ADDRESS: z.string().trim().default(''),
+  PAYMENT_USDT_NETWORK: z.enum(['', ...paymentNetworks]).default(''),
+  // Memo/tag, only if Bybit shows one for this network (TON often needs it).
+  PAYMENT_USDT_MEMO: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{0,64}$/)
+    .default(''),
   BYBIT_DEMO_API_KEY: z.string().default(''),
   BYBIT_DEMO_SECRET: z.string().default(''),
   BYBIT_LIVE_API_KEY: z.string().default(''),
@@ -190,6 +219,13 @@ export function config(): Config {
     throw new Error('PUBLIC_INDEXING_REQUIRES_SELLER_TERMS')
   if (new URL(c.APP_ORIGIN).protocol === 'https:' && !c.SECURE_COOKIE)
     throw new Error('HTTPS_REQUIRES_SECURE_COOKIE')
+  if (!!c.PAYMENT_USDT_ADDRESS !== !!c.PAYMENT_USDT_NETWORK)
+    throw new Error('PAYMENT_USDT_NETWORK_REQUIRED')
+  if (
+    c.PAYMENT_USDT_NETWORK &&
+    !validPaymentAddress(c.PAYMENT_USDT_NETWORK, c.PAYMENT_USDT_ADDRESS)
+  )
+    throw new Error('PAYMENT_USDT_ADDRESS_INVALID')
   if (c.VM_AGENT_URL) {
     const u = URL.canParse(c.VM_AGENT_URL) ? new URL(c.VM_AGENT_URL) : null
     if (
