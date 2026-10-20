@@ -80,3 +80,11 @@ describe('computer-use tool calls are validated strictly on the server', () => {
     expect(pngSize(Buffer.from('not a png'))).toBeNull()
   })
 })
+
+describe('tool parameters sent to the model', () => {
+  it('avoid schema features OpenAI strict functions reject', () => {
+    const text = JSON.stringify(computerUseTools.map((tool) => tool.parameters))
+    expect(text).not.toContain('"oneOf"')
+    expect(text).not.toContain('"pattern"')
+  })
+})

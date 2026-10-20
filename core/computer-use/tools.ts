@@ -18,6 +18,22 @@ const descriptions: Record<string, string> = {
     'Записать найденную легальную возможность заработка: название, адрес страницы, суть, вид и нужен ли человек. Это запись для владельца, а не доход.',
 }
 
+/**
+ * OpenAI strict function schemas reject `oneOf` and Unicode property escapes in `pattern`
+ * (HTTP 400, checked against GPT-6 Astra on 20.10.2026). The model gets `anyOf` and no patterns;
+ * the server still validates every call with the full zod schema.
+ */
+export function strictCompatible(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(strictCompatible)
+  if (!value || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const [key, inner] of Object.entries(value)) {
+    if (key === 'pattern') continue
+    out[key === 'oneOf' ? 'anyOf' : key] = strictCompatible(inner)
+  }
+  return out
+}
+
 function parametersOf(schema: z.ZodType): Record<string, unknown> {
   const json = z.toJSONSchema(schema) as Record<string, unknown> & {
     properties?: Record<string, unknown>
@@ -26,7 +42,7 @@ function parametersOf(schema: z.ZodType): Record<string, unknown> {
   delete json.$schema
   if (json.properties) delete json.properties.name
   json.required = (json.required || []).filter((key) => key !== 'name')
-  return json
+  return strictCompatible(json) as Record<string, unknown>
 }
 
 /** Function tools for one computer-use step; the list is fixed by the server. */
