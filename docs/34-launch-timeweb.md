@@ -196,6 +196,12 @@ bash deploy/timeweb/dc.sh exec worker node --import tsx scripts/server-autopilot
    OPENAI_TOTAL_BUDGET_MICROUSD=90000000   # $90 на всю историю БД, не обнуляется
    DAILY_BUDGET_KOPECKS=120000             # ~$10 в сутки; должен покрывать резерв computer-use
    MONTHLY_BUDGET_KOPECKS=1080000
+   # Резервы на одно задание под Astra: верхняя оценка одного запроса 55–70 ₽.
+   # С прежними 20–30 ₽ разведка, отчёты и клиенты падают с BUDGET_BLOCKED.
+   SCOUT_RESERVE_KOPECKS=20000
+   LEAD_RESERVE_KOPECKS=15000
+   REPORT_RESERVE_KOPECKS=15000
+   RESEARCH_RESERVE_KOPECKS=40000
    ```
 
    Суммы взяты из примера [33-autonomy.md](33-autonomy.md). Их выбирает владелец. `MODEL_PROVIDER` и `SEARCH_PROVIDER` должны быть оба `demo` или оба не `demo` (`DEMO_PROVIDERS_MUST_MATCH`). Бесплатный вариант (`MODEL_PROVIDER=openrouter`, модели `…:free`) описан в [13-openrouter.md](13-openrouter.md).
