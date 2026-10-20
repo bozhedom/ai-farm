@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import type { BudgetCategory } from '../../../core/contracts/office'
-import { useOfficeMoney } from '~/composables/office/data'
-import { percent, rub, withCount } from '~/composables/office/format'
+import { useOfficeMoney, useOfficeWallet } from '~/composables/office/data'
+import { ago, percent, rub, withCount } from '~/composables/office/format'
 import { budgetCategories } from '~/composables/office/labels'
+import { copyText, useOfficeToast } from '~/composables/office/actions'
+import { walletAmountsText, walletKeyBadge } from '~/composables/office/income'
 
 useHead({ title: 'Деньги' })
 const { data: m, status, pending, refresh } = useOfficeMoney()
@@ -25,6 +27,24 @@ const categories = computed(() => {
     .sort((a, b) => b.value - a.value)
     .map((e) => ({ ...e, width: `${percent(e.value, max)}%` }))
 })
+const { data: wallet } = useOfficeWallet()
+const { show } = useOfficeToast()
+async function copyAddress() {
+  const a = wallet.value?.address
+  if (!a) return
+  if (await copyText(a.address)) show('Адрес скопирован')
+  else show('Не удалось скопировать. Выделите адрес вручную.', 'err')
+}
+const keyNote: Record<string, string> = {
+  not_configured:
+    'Ключ не задан. Нужен отдельный ключ Bybit только для чтения: BYBIT_WALLET_READ_API_KEY и BYBIT_WALLET_READ_SECRET в .env на сервере.',
+  unchecked: 'Ключ задан. Фоновый процесс проверит его в ближайшие минуты.',
+  read_only:
+    'Ключ только для чтения: ферма видит поступления, но не может переводить или выводить.',
+  rejected:
+    'Ключ отклонён: у него есть права не только на чтение. Удалите его на Bybit и создайте новый Read-Only.',
+  error: 'Bybit не ответил на проверку ключа. Проверьте ключ, IP сервера и права чтения.',
+}
 const usd = (micro: number) =>
   `$${(micro / 1000000).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
 </script>
@@ -72,6 +92,60 @@ const usd = (micro: number) =>
             }}</span></span
           >
         </div>
+      </section>
+
+      <section v-if="wallet" id="wallet" class="card rise wallet" aria-labelledby="wallet-title">
+        <div class="card-head wrap">
+          <h2 id="wallet-title">Оплата криптой (Bybit)</h2>
+          <OfficeBadge :badge="walletKeyBadge[wallet.keyStatus]" />
+        </div>
+        <p class="note note-err warn" role="note">
+          Только для зарубежных клиентов; оплата криптой за услуги от резидентов РФ запрещена.
+        </p>
+        <div v-if="wallet.address" class="address">
+          <span class="small muted">Адрес USDT, сеть {{ wallet.address.network }}</span>
+          <code class="mono">{{ wallet.address.address }}</code>
+          <span v-if="wallet.address.memo" class="small"
+            >Memo / Tag: <code class="mono">{{ wallet.address.memo }}</code> (обязателен)</span
+          >
+          <button type="button" class="btn btn-ghost btn-sm" @click="copyAddress">
+            Скопировать адрес
+          </button>
+        </div>
+        <p v-else class="small muted">
+          Адрес не задан: PAYMENT_USDT_ADDRESS и PAYMENT_USDT_NETWORK в .env на сервере (адрес
+          депозита USDT на Bybit).
+        </p>
+        <dl class="lines">
+          <div>
+            <dt>Ключ</dt>
+            <dd>{{ keyNote[wallet.keyStatus] }}</dd>
+          </div>
+          <div v-if="wallet.keyError">
+            <dt>Ответ Bybit</dt>
+            <dd class="mono">{{ wallet.keyError }}</dd>
+          </div>
+          <div>
+            <dt>Последняя сверка</dt>
+            <dd>
+              {{ wallet.lastSyncAt ? ago(wallet.lastSyncAt) : 'ещё не было' }}
+              <template v-if="wallet.syncError">· ошибка {{ wallet.syncError }}</template>
+            </dd>
+          </div>
+          <div>
+            <dt>Доход за 30 дней</dt>
+            <dd class="num">{{ walletAmountsText(wallet.periods.month.income) }}</dd>
+          </div>
+          <div>
+            <dt>Не разобрано</dt>
+            <dd class="num">{{ walletAmountsText(wallet.periods.all.unclassified) }}</dd>
+          </div>
+        </dl>
+        <p class="small muted">
+          Переводы со своих счетов тоже приходят как поступления. Отметьте их «не доход»; в доход
+          идёт только отмеченное «доход».
+        </p>
+        <OfficeWalletDeposits :deposits="wallet.recent" />
       </section>
 
       <div class="duo">
@@ -162,6 +236,24 @@ const usd = (micro: number) =>
 }
 .lines dd {
   margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.wallet {
+  margin-bottom: var(--s-5);
+}
+.warn {
+  margin: var(--s-2) 0 var(--s-3);
+}
+.address {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.address code {
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 @media (max-width: 1023px) {
   .money-grid {

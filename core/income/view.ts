@@ -11,6 +11,7 @@ import { exchanges, type TradingExchange } from '../trading/types'
 import { executionReady } from '../execution/config'
 import { executionTracks, type ExecutionTrack } from '../execution/types'
 import { managerView } from '../manager/view'
+import { walletView } from '../wallet/view'
 import type {
   IncomeCurrency,
   IncomeExchange,
@@ -130,6 +131,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     trades,
     managerRuns,
     executionOps,
+    wallet,
   ] = await Promise.all([
     officeOverview(now),
     tradingOverview('paper'),
@@ -270,6 +272,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       `SELECT track,mode,status,plan->>'symbol' AS symbol,pnl::text,created_at,closed_at
        FROM execution_operations ORDER BY coalesce(closed_at,created_at) DESC LIMIT 10`,
     ),
+    walletView(now),
   ])
 
   // ---- money by UTC day ------------------------------------------------------------------
@@ -542,6 +545,35 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     link: '/office/computer',
   })
 
+  const walletUsdt = wallet.periods.month.income.find((a) => a.coin === 'USDT')?.amount ?? '0'
+  const walletWords: Record<string, string> = {
+    not_configured: 'Не подключён: нет ключа Bybit только для чтения.',
+    unchecked: 'Ключ задан, проверка при следующем цикле.',
+    rejected: 'Ключ отклонён: у него есть права не только на чтение.',
+    error: `Ключ не проверен: ${wallet.keyError || 'ошибка'}.`,
+  }
+  sources.push({
+    id: 'wallet',
+    group: 'wallet',
+    title: 'Оплата криптой (Bybit)',
+    status: ['not_configured', 'rejected', 'error'].includes(wallet.keyStatus)
+      ? 'needs_human'
+      : 'autonomous',
+    mode: 'live',
+    result: { unit: 'USDT', value: walletUsdt, label: 'доход за 30 дней', test: false },
+    detail:
+      walletWords[wallet.keyStatus] ??
+      (wallet.syncError
+        ? `Последняя сверка не удалась: ${wallet.syncError}.`
+        : `Видит поступления сам. ${
+            wallet.unclassifiedCount
+              ? `Не разобрано: ${wallet.unclassifiedCount}.`
+              : 'Неразобранных нет.'
+          } Только для зарубежных клиентов.`),
+    lastAt: wallet.lastSyncAt,
+    link: '/office/money',
+  })
+
   // ---- needs a person ----------------------------------------------------------------------
   const needs: IncomeNeed[] = []
   const add = (need: IncomeNeed) => needs.push(need)
@@ -653,6 +685,50 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       detail:
         'Оплата, вход, регистрация или публикация выполняются только после вашего разрешения.',
       link: '/office/computer',
+      severity: 'warn',
+    })
+  if (wallet.keyStatus === 'not_configured')
+    add({
+      id: 'wallet-key',
+      title: 'Bybit: нет ключа для чтения поступлений',
+      detail:
+        'Создайте ключ Bybit только для чтения (Read-Only, IP сервера) и впишите ' +
+        'BYBIT_WALLET_READ_API_KEY и BYBIT_WALLET_READ_SECRET в .env на сервере.',
+      link: '/office/money',
+      severity: 'warn',
+    })
+  else if (wallet.keyStatus === 'rejected')
+    add({
+      id: 'wallet-key',
+      title: 'Ключ кошелька Bybit отклонён',
+      detail:
+        'У ключа есть права на изменение. Удалите его на Bybit и создайте новый с правом Read-Only.',
+      link: '/office/money',
+      severity: 'block',
+    })
+  else if (wallet.keyStatus === 'error')
+    add({
+      id: 'wallet-key',
+      title: 'Ключ кошелька Bybit не проверен',
+      detail: `Bybit ответил: ${wallet.keyError || 'ошибка'}. Проверьте ключ, IP сервера и права чтения.`,
+      link: '/office/money',
+      severity: 'warn',
+    })
+  if (!wallet.address)
+    add({
+      id: 'wallet-address',
+      title: 'Не задан адрес для оплаты USDT',
+      detail:
+        'Впишите PAYMENT_USDT_ADDRESS и PAYMENT_USDT_NETWORK (адрес депозита Bybit) в .env на сервере.',
+      link: '/office/money',
+      severity: 'warn',
+    })
+  if (wallet.unclassifiedCount)
+    add({
+      id: 'wallet-classify',
+      title: `Поступления без отметки: ${wallet.unclassifiedCount}`,
+      detail: 'Отметьте каждое: «доход» от клиента или «не доход» (перевод себе).',
+      link: '/office/money',
       severity: 'warn',
     })
   // The worker line is already above with an instruction.
@@ -771,5 +847,6 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     })),
     feed,
     needsHuman: needs,
+    wallet,
   }
 }

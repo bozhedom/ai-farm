@@ -19,6 +19,8 @@ import {
   resultText,
   rubSigned,
   sourceStatus,
+  walletAmountsText,
+  walletKeyBadge,
 } from '~/composables/office/income'
 import { modeBadge } from '~/composables/office/labels'
 import { strategyName } from '~/utils/trading'
@@ -44,6 +46,8 @@ const period = ref<PeriodKey>('month')
 const t = computed<IncomeTotals | null>(() =>
   v.value ? (period.value === 'all' ? v.value.allTime : v.value.periods[period.value]) : null,
 )
+// Deposits to the Bybit account: own coin, never added to rubles. "all" is all time.
+const w = computed(() => (v.value ? v.value.wallet.periods[period.value] : null))
 const realExtra = computed(() => {
   const x = t.value
   if (!x) return []
@@ -250,6 +254,44 @@ const priceText = (kopecks: number) => rub(kopecks)
             </div>
           </dl>
         </div>
+      </section>
+
+      <!-- Bybit wallet deposits -->
+      <section v-if="w" class="card rise wallet" aria-labelledby="wallet-title">
+        <div class="card-head wrap">
+          <div>
+            <h2 id="wallet-title">Поступления на кошелёк</h2>
+            <p class="small muted">
+              Оплата криптой на Bybit, только от зарубежных клиентов. В рубли не пересчитываем.
+            </p>
+          </div>
+          <span class="row wallet-head">
+            <OfficeBadge :badge="walletKeyBadge[v.wallet.keyStatus]" />
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/money#wallet">Адрес и ключ</NuxtLink>
+          </span>
+        </div>
+        <dl class="wallet-totals">
+          <div class="is-income">
+            <dt>Доход</dt>
+            <dd class="mono">{{ walletAmountsText(w.income) }}</dd>
+            <small>только отмеченное «доход»</small>
+          </div>
+          <div class="is-open">
+            <dt>Не разобрано</dt>
+            <dd class="mono">{{ walletAmountsText(w.unclassified) }}</dd>
+            <small>ждёт вашей отметки, в доход не входит</small>
+          </div>
+          <div>
+            <dt>Не доход</dt>
+            <dd class="mono">{{ walletAmountsText(w.notIncome) }}</dd>
+            <small>переводы себе со своих счетов</small>
+          </div>
+        </dl>
+        <p class="small muted wallet-hint">
+          Перевод со своей биржи или кошелька тоже приходит как поступление. Отметьте его «не
+          доход», чтобы он не попал в выручку.
+        </p>
+        <OfficeWalletDeposits :deposits="v.wallet.recent" :limit="5" />
       </section>
 
       <div class="grid-main">
@@ -575,6 +617,45 @@ const priceText = (kopecks: number) => rub(kopecks)
   font: 600 var(--text-sm) / 1.3 var(--font-mono);
   color: var(--st-test-ink);
   text-align: right;
+}
+.wallet-head {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wallet-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+  margin: var(--s-3) 0;
+}
+.wallet-totals div {
+  display: grid;
+  gap: 2px;
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.wallet-totals .is-income {
+  background: var(--sun-soft);
+}
+.wallet-totals .is-open {
+  background: var(--st-human-soft);
+}
+.wallet-totals dt {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.wallet-totals dd {
+  margin: 0;
+  font-weight: 700;
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+.wallet-totals small {
+  color: var(--muted);
+}
+.wallet-hint {
+  margin: 0 0 var(--s-2);
 }
 .grid-main {
   display: grid;
@@ -902,6 +983,9 @@ const priceText = (kopecks: number) => rub(kopecks)
   }
 }
 @media (max-width: 760px) {
+  .wallet-totals {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .source {
     grid-template-columns: minmax(0, 1fr) auto;
   }

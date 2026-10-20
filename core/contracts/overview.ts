@@ -7,6 +7,7 @@
  * payments are always reported in separate, labelled fields and never count as revenue.
  */
 import type { OfficeMode, OfficeOverview } from './office'
+import type { OfficeWallet } from './wallet'
 
 export type IncomePeriod = 'today' | 'week' | 'month'
 export type IncomeMode = 'paper' | 'demo' | 'live'
@@ -41,7 +42,15 @@ export type IncomeTotals = {
 export type IncomeSource = {
   id: string
   group:
-    'trading' | 'bots' | 'manager' | 'execution' | 'services' | 'scouts' | 'markets' | 'computer'
+    | 'trading'
+    | 'bots'
+    | 'manager'
+    | 'execution'
+    | 'services'
+    | 'scouts'
+    | 'markets'
+    | 'computer'
+    | 'wallet'
   title: string
   status: IncomeSourceStatus
   /** test: sandbox / Sepolia payments. null: the direction has no money mode. */
@@ -140,4 +149,9 @@ export type OfficeIncome = {
   strategies: { exchange: IncomeExchange; mode: IncomeMode; kind: string; count: number }[]
   feed: OfficeOverview['feed']
   needsHuman: IncomeNeed[]
+  /**
+   * Deposits to the owner's Bybit account, in their own coin (never converted to rubles). Real
+   * income only after the owner marks a deposit "income"; unclassified ones are shown apart.
+   */
+  wallet: OfficeWallet
 }

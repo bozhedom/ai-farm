@@ -13,6 +13,7 @@ import type {
   OfficeSettings,
 } from '../../../core/contracts/office'
 import type { OfficeIncome } from '../../../core/contracts/overview'
+import type { OfficeWallet } from '../../../core/contracts/wallet'
 import { officeFetch, useOfficeResource } from './resource'
 
 /**
@@ -87,6 +88,12 @@ export function useOfficeIncome(interval = 10000) {
 
 export function useOfficeAgents(interval = 5000) {
   return useOfficeResource('agents', () => officeFetch<OfficeAgents>('/api/office/agents'), {
+    interval,
+  })
+}
+
+export function useOfficeWallet(interval = 15000) {
+  return useOfficeResource('wallet', () => officeFetch<OfficeWallet>('/api/office/wallet'), {
     interval,
   })
 }
