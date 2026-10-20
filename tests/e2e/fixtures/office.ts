@@ -14,7 +14,7 @@ import type {
   OfficeSettings,
 } from '../../../core/contracts/office'
 import { taxonomyCategories } from '../../../core/taxonomy'
-import { incomeFixture } from './income'
+import { incomeFixture, walletFixture } from './income'
 
 /**
  * Typed office data for Playwright route stubs. Realistic Russian content: four scouts after one
@@ -1332,6 +1332,7 @@ export function officeFixtures(now = new Date()) {
   return {
     overview,
     income: incomeFixture(now, overview.feed),
+    wallet: walletFixture(now),
     agents: officeAgents,
     ideas,
     categories,

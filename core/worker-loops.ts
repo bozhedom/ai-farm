@@ -26,6 +26,8 @@ export const loopSpecs: Record<string, LoopSpec> = {
   tick: { label: 'Основной цикл', expectedMs: 2 * minute, stuckMs: 15 * minute },
   recovery: { label: 'Возврат зависших заданий', expectedMs: 2 * minute, stuckMs: 15 * minute },
   payments: { label: 'Сверка платежей', expectedMs: 5 * minute, stuckMs: 30 * minute },
+  // Runs every 5 minutes (WALLET_POLICY.syncMs); a healthy run is at most 10 minutes old.
+  wallet: { label: 'Поступления на кошелёк Bybit', expectedMs: 10 * minute, stuckMs: 15 * minute },
   ...tradingLoops,
   earnings: { label: 'Наблюдение за направлениями', expectedMs: 5 * minute, stuckMs: 30 * minute },
   execution: {

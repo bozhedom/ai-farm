@@ -5,6 +5,12 @@ import type {
   IncomeSource,
   IncomeSourceStatus,
 } from '../../../core/contracts/overview'
+import type {
+  WalletAmount,
+  WalletClassification,
+  WalletDeposit,
+  WalletKeyStatus,
+} from '../../../core/contracts/wallet'
 import type { Badge } from './labels'
 import { groupDigits } from './format'
 
@@ -84,3 +90,43 @@ export function resultText(result: IncomeSource['result']) {
 
 /** Display-only number for chart geometry; accounting never reads it. */
 export const chartNumber = (value: string) => Number(value) || 0
+
+// ---- Bybit wallet ------------------------------------------------------------------------
+
+export const walletKeyBadge: Record<WalletKeyStatus, Badge> = {
+  not_configured: { label: 'Ключ не задан', tone: 'off' },
+  unchecked: { label: 'Ключ ждёт проверки', tone: 'wait' },
+  read_only: { label: 'Только чтение: проверено', tone: 'ok' },
+  rejected: { label: 'Ключ отклонён', tone: 'err' },
+  error: { label: 'Ошибка проверки ключа', tone: 'err' },
+}
+
+export const depositStatusBadge: Record<WalletDeposit['status'], Badge> = {
+  pending: { label: 'Ждёт зачисления', tone: 'wait' },
+  success: { label: 'Зачислено', tone: 'ok' },
+  failed: { label: 'Не прошло', tone: 'err' },
+}
+
+export const classificationBadge: Record<WalletClassification, Badge> = {
+  unclassified: { label: 'Не разобрано', tone: 'human' },
+  income: { label: 'Доход', tone: 'sun' },
+  not_income: { label: 'Не доход', tone: 'off' },
+}
+
+/** Exact amount as reported, trailing zeros removed: «1 250,5». */
+export function exactAmount(value: string) {
+  const [whole = '0', fraction = ''] = value.split('.')
+  const rest = fraction.replace(/0+$/, '')
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}${rest ? `,${rest}` : ''}`
+}
+
+/** «100,50 USDT · 0,0015 BTC», or «0 USDT» when empty. Stablecoins to cents, others exact. */
+export const walletAmountsText = (list: WalletAmount[]) =>
+  list.length
+    ? list
+        .map(
+          (a) =>
+            `${['USDT', 'USDC'].includes(a.coin) ? decimalText(a.amount, 2) : exactAmount(a.amount)} ${a.coin}`,
+        )
+        .join(' · ')
+    : '0 USDT'

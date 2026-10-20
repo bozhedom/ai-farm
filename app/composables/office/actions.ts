@@ -79,6 +79,8 @@ export const officeApi = {
     post(`/api/orders/${encodeURIComponent(id)}/pay`, body),
   createOrder: (productId: string, input: string, requestKey: string) =>
     post<{ id: string }>('/api/orders', { productId, input, requestKey }),
+  classifyDeposit: (id: string, classification: 'income' | 'not_income' | 'unclassified') =>
+    post(`/api/office/wallet/deposits/${encodeURIComponent(id)}`, { classification }),
   login: (password: string) => post('/api/auth/login', { password }),
   logout: () => post('/api/auth/logout', {}),
 }

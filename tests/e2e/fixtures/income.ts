@@ -5,6 +5,94 @@ import type {
   OfficeIncome,
 } from '../../../core/contracts/overview'
 import type { OfficeOverview } from '../../../core/contracts/office'
+import type { OfficeWallet } from '../../../core/contracts/wallet'
+
+/**
+ * Bybit deposits: one client payment marked income, one unclassified, one own transfer, one
+ * pending and one internal transfer. Read-only key verified; the address is a format example.
+ */
+export function walletFixture(now: Date): OfficeWallet {
+  const at = (minutesAgo: number) => new Date(now.getTime() - minutesAgo * 60000).toISOString()
+  const totals = (income: string, open: string, own: string) => ({
+    income: income === '0' ? [] : [{ coin: 'USDT', amount: income }],
+    unclassified: open === '0' ? [] : [{ coin: 'USDT', amount: open }],
+    notIncome: own === '0' ? [] : [{ coin: 'USDT', amount: own }],
+  })
+  return {
+    address: { address: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf', network: 'TRC20', memo: '' },
+    keyConfigured: true,
+    keyStatus: 'read_only',
+    keyError: '',
+    keyCheckedAt: at(2),
+    lastSyncAt: at(2),
+    syncError: '',
+    periods: {
+      today: totals('0', '75', '0'),
+      week: totals('150', '75', '0'),
+      month: totals('150', '75', '500'),
+      all: totals('150', '75', '500'),
+    },
+    unclassifiedCount: 1,
+    recent: [
+      {
+        id: '00000000-0000-4000-8000-000000000101',
+        source: 'onchain',
+        coin: 'USDT',
+        chain: 'TRX',
+        amount: '40.000000',
+        status: 'pending',
+        confirmations: '3',
+        txId: 'a9f3c7e1d2b4a6c8e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3',
+        from: '',
+        successAt: null,
+        firstSeenAt: at(5),
+        classification: 'unclassified',
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000102',
+        source: 'onchain',
+        coin: 'USDT',
+        chain: 'TRX',
+        amount: '75.000000',
+        status: 'success',
+        confirmations: '20',
+        txId: 'b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2',
+        from: '',
+        successAt: at(90),
+        firstSeenAt: at(95),
+        classification: 'unclassified',
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000103',
+        source: 'internal',
+        coin: 'USDT',
+        chain: 'Bybit',
+        amount: '150',
+        status: 'success',
+        confirmations: '',
+        txId: '',
+        from: '4519****',
+        successAt: at(60 * 24 * 3),
+        firstSeenAt: at(60 * 24 * 3),
+        classification: 'income',
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000104',
+        source: 'onchain',
+        coin: 'USDT',
+        chain: 'BSC',
+        amount: '500.000000',
+        status: 'success',
+        confirmations: '15',
+        txId: '0x7d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e',
+        from: '',
+        successAt: at(60 * 24 * 12),
+        firstSeenAt: at(60 * 24 * 12),
+        classification: 'not_income',
+      },
+    ],
+  }
+}
 
 /**
  * Typed `/api/office/income` answer: paper and demo trading on three exchanges, one execution
@@ -274,6 +362,17 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         lastAt: null,
         link: '/office/computer',
       },
+      {
+        id: 'wallet',
+        group: 'wallet',
+        title: 'Оплата криптой (Bybit)',
+        status: 'autonomous',
+        mode: 'live',
+        result: { unit: 'USDT', value: '150', label: 'доход за 30 дней', test: false },
+        detail: 'Видит поступления сам. Не разобрано: 1. Только для зарубежных клиентов.',
+        lastAt: at(2),
+        link: '/office/money',
+      },
     ],
     trading,
     equity: [
@@ -450,6 +549,14 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         link: '/office/ideas?status=needs_human',
         severity: 'warn',
       },
+      {
+        id: 'wallet-classify',
+        title: 'Поступления без отметки: 1',
+        detail: 'Отметьте каждое: «доход» от клиента или «не доход» (перевод себе).',
+        link: '/office/money',
+        severity: 'warn',
+      },
     ],
+    wallet: walletFixture(now),
   }
 }

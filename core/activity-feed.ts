@@ -319,6 +319,11 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
     }
     case 'worker_loop_stuck':
       return item(event.message)
+    case 'wallet_deposit':
+    case 'wallet_deposit_classified':
+    case 'wallet_key_rejected':
+    case 'wallet_key_accepted':
+      return item(event.message, '/office/money')
     default:
       return []
   }
@@ -359,6 +364,10 @@ export const feedKinds = [
   'research_restarted',
   'autopilot_decision',
   'worker_loop_stuck',
+  'wallet_deposit',
+  'wallet_deposit_classified',
+  'wallet_key_rejected',
+  'wallet_key_accepted',
 ]
 
 /**

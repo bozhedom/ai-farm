@@ -42,6 +42,7 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (path === '/api/office/income') return json(route, fx.income)
     if (path === '/api/office/agents') return json(route, fx.agents)
     if (path === '/api/office/money') return json(route, fx.money)
+    if (path === '/api/office/wallet') return json(route, fx.wallet)
     if (path === '/api/office/settings') return json(route, fx.settings)
     if (path === '/api/office/products') return json(route, { items: fx.products })
     if (path === '/api/office/reports') return json(route, { items: fx.reports })
@@ -369,6 +370,53 @@ for (const width of [1440, 390]) {
           fullPage: true,
         })
       }
+      expect(errors).toEqual([])
+    })
+  })
+}
+
+const walletShots = join(process.cwd(), 'output/playwright/wallet')
+mkdirSync(walletShots, { recursive: true })
+
+for (const width of [1440, 390]) {
+  test.describe(`wallet ${width}`, () => {
+    test.use({ viewport: { width, height: width > 1000 ? 900 : 844 } })
+
+    test('shows deposits apart from rubles and lets the owner classify them', async ({ page }) => {
+      const errors = watchConsole(page)
+      const posted = await stubOffice(page, fx)
+      await page.goto('/office')
+      const section = page.locator('section.wallet')
+      await expect(section.getByRole('heading', { name: 'Поступления на кошелёк' })).toBeVisible()
+      await expect(section).toContainText('только от зарубежных клиентов')
+      await expect(section.locator('.is-income dd')).toHaveText('150,00 USDT')
+      await expect(section.locator('.is-open dd')).toHaveText('75,00 USDT')
+      await page.waitForTimeout(400)
+      await noHorizontalScroll(page)
+      if (width < 1024) await page.addStyleTag({ content: '.tabbar{position:static!important}' })
+      await page.screenshot({ path: join(walletShots, `overview-${width}.png`), fullPage: true })
+      await page.getByRole('button', { name: 'Сегодня' }).click()
+      await expect(section.locator('.is-income dd')).toHaveText('0 USDT')
+      await expect(page.locator('.sources')).toContainText('Оплата криптой (Bybit)')
+      await section.getByRole('button', { name: 'Не доход' }).first().click()
+      await expect
+        .poll(() => posted.map((p) => p.url))
+        .toContain('/api/office/wallet/deposits/00000000-0000-4000-8000-000000000102')
+      expect(posted.at(-1)!.body).toEqual({ classification: 'not_income' })
+
+      await page.goto('/office/money')
+      const card = page.locator('#wallet')
+      await expect(card.getByRole('heading', { name: 'Оплата криптой (Bybit)' })).toBeVisible()
+      await expect(card).toContainText(
+        'Только для зарубежных клиентов; оплата криптой за услуги от резидентов РФ запрещена.',
+      )
+      await expect(card).toContainText('TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf')
+      await expect(card).toContainText('Только чтение: проверено')
+      await expect(card.locator('.deposits li')).toHaveCount(fx.wallet.recent.length)
+      await page.waitForTimeout(400)
+      await noHorizontalScroll(page)
+      if (width < 1024) await page.addStyleTag({ content: '.tabbar{position:static!important}' })
+      await page.screenshot({ path: join(walletShots, `money-${width}.png`), fullPage: true })
       expect(errors).toEqual([])
     })
   })

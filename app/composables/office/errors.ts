@@ -45,6 +45,8 @@ const messages: Record<string, string> = {
   COMPUTER_TASK_NOT_FOUND: 'Такого задания нет.',
   COMPUTER_APPROVAL_NOT_FOUND: 'Этот запрос уже решён.',
   POLICY_IDEA_TOPIC_BLOCKED: 'Такие темы ферма не берёт.',
+  WALLET_DEPOSIT_NOT_FOUND: 'Такого поступления нет. Обновите страницу.',
+  WALLET_DEPOSIT_NOT_FINAL: 'Отметить можно только зачисленное поступление.',
 }
 
 export type OfficeError = { status: number; code: string; text: string }

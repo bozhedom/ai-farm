@@ -12,7 +12,8 @@ import { earningsTick } from '../core/earnings/monitor'
 import { managerTick } from '../core/manager/runtime'
 import { executionTick } from '../core/execution/engine'
 import { computerUseTick } from '../core/computer-use/runtime'
-import { EXECUTION_POLICY } from '../core/policy'
+import { EXECUTION_POLICY, WALLET_POLICY } from '../core/policy'
+import { walletTick } from '../core/wallet/sync'
 import { createLoopRunner, loopSpecs } from '../core/worker-loops'
 import { runAutopilot } from '../core/autopilot'
 
@@ -21,6 +22,8 @@ let farmBusy = false
 let ordersBusy = false
 let lastExecutionAt = 0
 let lastAutopilotAt = 0
+// 0: the read-only key is checked and deposits are read right after the worker starts.
+let lastWalletAt = 0
 let stuckExit = false
 let tickStartedAt = Date.now()
 let tickIdle = false
@@ -120,6 +123,10 @@ while (!stopping) {
     for (const exchange of exchanges)
       background(`trading:${exchange}`, () => tradingTick(undefined, isStopping, [exchange]))
     background('earnings', () => earningsTick())
+    if (Date.now() - lastWalletAt >= WALLET_POLICY.syncMs && !loops.busy.has('wallet')) {
+      lastWalletAt = Date.now()
+      background('wallet', () => walletTick())
+    }
     if (Date.now() - lastExecutionAt >= EXECUTION_POLICY.tickMs && !loops.busy.has('execution')) {
       lastExecutionAt = Date.now()
       background('execution', () => executionTick(undefined, isStopping))

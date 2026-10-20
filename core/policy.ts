@@ -165,6 +165,17 @@ export const MANAGER_POLICY = Object.freeze({
   observationLifetimeMs: 7 * 24 * 60 * 60_000,
   priceMaxAgeMs: 90_000,
 })
+/**
+ * Bybit deposit watcher: a read-only key, the last 30 days (Bybit's own maximum window), bounded
+ * pages. Only owner-classified "income" deposits count as real income.
+ */
+export const WALLET_POLICY = Object.freeze({
+  syncMs: 5 * 60_000,
+  windowMs: 30 * 24 * 60 * 60_000,
+  pageLimit: 50,
+  maxPages: 40,
+  recentRows: 20,
+})
 export const templates = serviceTemplates
 export type Template = ServiceTemplate
 export const templateSchema = z.enum(templates)
