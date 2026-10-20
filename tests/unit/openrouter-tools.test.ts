@@ -65,11 +65,11 @@ describe('computer-use tool calls through the paid OpenRouter route', () => {
       model: 'openai/gpt-6-astra',
       max_tokens: 700,
       tool_choice: 'required',
-      parallel_tool_calls: false,
       plugins: [],
       provider: { allow_fallbacks: false, data_collection: 'deny' },
     })
     expect(body.response_format).toBeUndefined()
+    expect(body.parallel_tool_calls).toBeUndefined()
     expect(body.tools.map((t: { function: { name: string } }) => t.function.name)).toEqual(
       computerUseTools.map((t) => t.name),
     )

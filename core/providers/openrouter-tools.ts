@@ -54,7 +54,8 @@ export async function openrouterToolCall(args: {
         },
       })),
       tool_choice: 'required',
-      parallel_tool_calls: false,
+      // No Astra endpoint accepts parallel_tool_calls with require_parameters (HTTP 404, checked
+      // 20.10.2026); a reply with more than one call is rejected below instead.
     },
   })
   if (!['tool_calls', 'stop'].includes(choice?.finish_reason))
