@@ -13,6 +13,7 @@ import type {
 import { rotationGoals } from './goals'
 import { platformDomains } from './platforms'
 import { COMPUTER_USE_POLICY as P } from './policy'
+import { effectiveProposalsPerDay, readProfile } from './profile'
 import {
   computerUseProvider,
   dailySpend,
@@ -164,7 +165,11 @@ export async function computerUseView(): Promise<ComputerUseView> {
       rotationGoals: rotationGoals.length + 2 * [...loggedIn.values()].filter(Boolean).length,
       autoProposals: state.auto_proposals,
       autoProposalsAllowed: c.COMPUTER_USE_AUTO_PROPOSALS,
-      proposalsPerDay: c.COMPUTER_USE_PROPOSALS_PER_DAY,
+      // The performer profile may lower the env limit, never raise it.
+      proposalsPerDay: effectiveProposalsPerDay(
+        (await readProfile()).profile,
+        c.COMPUTER_USE_PROPOSALS_PER_DAY,
+      ),
       manualUntil: manualActive ? state.manual_until!.toISOString() : null,
     },
     current: currentView,

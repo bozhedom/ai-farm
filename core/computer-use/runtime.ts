@@ -41,6 +41,13 @@ import {
   platformGoals,
   platformOf,
 } from './platforms'
+import {
+  effectiveProposalsPerDay,
+  priceReason,
+  profileForModel,
+  readProfile,
+  verifiedFacts,
+} from './profile'
 
 export interface ComputerUseRow {
   enabled: boolean
@@ -188,7 +195,9 @@ export async function loggedInPlatforms(db?: Connection) {
 /** Goals in rotation order: logged-in platforms first, then the research themes. */
 export async function currentRotationGoals(db?: Connection) {
   const platforms = await loggedInPlatforms(db)
-  return [...platformGoals(platforms, config().COMPUTER_USE_PROPOSALS_PER_DAY), ...rotationGoals]
+  const { profile } = await readProfile(db)
+  const limit = effectiveProposalsPerDay(profile, config().COMPUTER_USE_PROPOSALS_PER_DAY)
+  return [...platformGoals(platforms, limit), ...rotationGoals]
 }
 
 export async function addOwnerGoal(text: string) {
@@ -847,11 +856,12 @@ type DraftCall = Extract<ToolCall, { name: 'draft_proposal' }>
 async function draftProposal(task: TaskRow, stepNo: number, call: DraftCall, base: StepRecord) {
   const c = config()
   const domain = call.platform_domain
+  const { profile } = await readProfile()
   const reason =
     (await sendingAllowed(domain)) ||
     (platformOf(call.opportunity_url) !== domain ? 'COMPUTER_USE_PLATFORM_MISMATCH' : '') ||
     forbiddenTextReason(call.text) ||
-    forbiddenClaimReason(call.text)
+    forbiddenClaimReason(call.text, verifiedFacts(profile))
   if (reason) {
     await recordStep(task, stepNo, { ...base, decision: 'blocked', reason })
     return
@@ -859,19 +869,34 @@ async function draftProposal(task: TaskRow, stepNo: number, call: DraftCall, bas
   const result = await transaction(async (db) => {
     await query('SELECT id FROM computer_use WHERE id=true FOR UPDATE', [], db)
     const [opportunity] = await query(
-      'SELECT id,decision,ai_forbidden FROM computer_use_opportunities WHERE task_id=$1 AND url=$2',
+      'SELECT id,decision,ai_forbidden,estimated_value_minor,estimated_currency FROM computer_use_opportunities WHERE task_id=$1 AND url=$2',
       [task.id, call.opportunity_url],
       db,
     )
     if (!opportunity) return 'COMPUTER_USE_OPPORTUNITY_REQUIRED'
     if (opportunity.ai_forbidden) return 'COMPUTER_USE_AI_FORBIDDEN'
     if (opportunity.decision !== 'take') return 'COMPUTER_USE_DECISION_NOT_TAKE'
+    // The owner's minimum price per currency (performer profile); the job budget counts as the
+    // bid when the proposal names no price.
+    const price = priceReason(
+      profile,
+      { amount: call.price_amount, currency: call.price_currency },
+      {
+        amount:
+          opportunity.estimated_value_minor === null
+            ? null
+            : Number(opportunity.estimated_value_minor),
+        currency: opportunity.estimated_currency,
+      },
+    )
+    if (price) return price
     const [count] = await query(
       `SELECT count(*)::int AS n FROM computer_use_proposals WHERE platform_domain=$1 AND ${utcDay}`,
       [domain],
       db,
     )
-    if (count!.n >= c.COMPUTER_USE_PROPOSALS_PER_DAY) return 'COMPUTER_USE_PROPOSAL_LIMIT'
+    if (count!.n >= effectiveProposalsPerDay(profile, c.COMPUTER_USE_PROPOSALS_PER_DAY))
+      return 'COMPUTER_USE_PROPOSAL_LIMIT'
     const [sends] = await query(
       `SELECT count(*)::int AS n FROM computer_use_send_permits WHERE platform_domain=$1 AND ${utcDay}`,
       [domain],
@@ -1128,6 +1153,7 @@ async function runStep(
     [task.id],
   )
   const [owner] = await query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true')
+  const { profile } = await readProfile()
   const input = {
     taskId: task.id,
     reservationId: task.reservation_id!,
@@ -1143,8 +1169,9 @@ async function runStep(
     platforms: {
       loggedIn: await loggedInPlatforms(),
       autoProposals: c.COMPUTER_USE_AUTO_PROPOSALS && !!owner?.auto_proposals,
-      proposalsPerDay: c.COMPUTER_USE_PROPOSALS_PER_DAY,
+      proposalsPerDay: effectiveProposalsPerDay(profile, c.COMPUTER_USE_PROPOSALS_PER_DAY),
     },
+    profile: profileForModel(profile),
   }
   if (!task.is_demo) {
     const estimate = prepareStepRequest(input).maximumMicrousd
