@@ -79,6 +79,8 @@ const reasons: Record<string, string> = {
   COMPUTER_USE_PERMIT_GRANTED: 'Выдано разрешение на одну отправку (15 минут).',
   COMPUTER_USE_SEND_PERMIT: 'Отправлено по разрешению на одну отправку.',
   COMPUTER_USE_STORED_NOT_FOUND: 'Такого текста в этом задании нет.',
+  COMPUTER_USE_PRICE_BELOW_MINIMUM: 'Цена ниже вашей минимальной из профиля исполнителя.',
+  COMPUTER_USE_PRICE_CURRENCY_REQUIRED: 'У цены в отклике не указана валюта.',
   COMPUTER_USE_DOCUMENT_LIMIT: 'В этом задании уже подготовлено достаточно документов.',
 }
 export function computerReason(code: string | null | undefined) {

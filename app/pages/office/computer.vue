@@ -660,6 +660,8 @@ const key = (name: string) => act({ name: 'key', key: name })
         </form>
       </section>
 
+      <OfficePerformerProfile />
+
       <section class="card rise" aria-labelledby="computer-proposals">
         <div class="card-head">
           <h2 id="computer-proposals">Отклики</h2>

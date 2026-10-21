@@ -144,17 +144,34 @@ const aiDenial = [
  * Proposal or reply text the server refuses: contact details and off-platform payment (platform
  * rules, fee circumvention bans accounts), invented credentials, reviews, experience or
  * portfolio, external links, and any denial of AI use. The owner decides what to answer when a
- * client asks about AI; the model escalates with request_approval.
+ * client asks about AI; the model escalates with request_approval. `verified` is the owner's
+ * performer profile: a claim repeated from it word for word is a fact, not an invention.
  */
-export function forbiddenClaimReason(text: string): string {
+export function forbiddenClaimReason(text: string, verified = ''): string {
   if (aiDenial.some((pattern) => pattern.test(text))) return 'COMPUTER_USE_AI_DENIAL'
   if (offPlatformPayment.some((pattern) => pattern.test(text)))
     return 'COMPUTER_USE_OFF_PLATFORM_PAYMENT'
   if (phoneLike(text) || contactDetails.some((pattern) => pattern.test(text)))
     return 'COMPUTER_USE_CONTACT_DETAILS'
   if (externalLinks.test(text)) return 'COMPUTER_USE_EXTERNAL_LINK'
-  if (fabricatedClaims.some((pattern) => pattern.test(text))) return 'COMPUTER_USE_UNVERIFIED_CLAIM'
+  if (fabricatedClaims.some((pattern) => unverifiedMatch(pattern, text, verified)))
+    return 'COMPUTER_USE_UNVERIFIED_CLAIM'
   return ''
+}
+
+const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim()
+/**
+ * A claim pattern matches and at least one match is not repeated word for word in the owner's
+ * verified facts (the performer profile). Without facts every match is unverified.
+ */
+function unverifiedMatch(pattern: RegExp, text: string, verified: string) {
+  if (!verified) return pattern.test(text)
+  const facts = normalize(verified)
+  const all = new RegExp(
+    pattern.source,
+    pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
+  )
+  return [...text.matchAll(all)].some((match) => !facts.includes(normalize(match[0])))
 }
 
 /**
