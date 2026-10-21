@@ -376,16 +376,24 @@ describe('computer use: one task at a time, validated actions, owner approvals',
       .mockResolvedValueOnce(answer('navigate', { url: 'https://example.com/jobs' }))
     vi.stubGlobal('fetch', fetchMock)
     await controlComputerUse('enable')
+    // Earlier real failures stay counted until a task ends normally; the cap is a normal end.
+    await query('UPDATE computer_use SET failures=2 WHERE id=true')
     const agent = new FakeVmAgent()
     await computerUseTick({ agent, model: astraStep(demoScript) })
     const row = await task()
     expect(row).toMatchObject({
-      status: 'failed',
-      error: 'COMPUTER_USE_TASK_CAP',
+      status: 'done',
+      error: '',
       provider: 'openai',
       model: 'openai/gpt-6-astra',
       is_demo: false,
     })
+    expect(row.report).toContain('исчерпан лимит расходов на одно задание')
+    expect(row.report).toContain('https://example.com/jobs')
+    expect(row.report).toContain(`из $${(cap / 1_000_000).toFixed(2)}`)
+    const [owner] = await query('SELECT failures,last_error FROM computer_use WHERE id=true')
+    expect(owner).toMatchObject({ failures: 0, last_error: '' })
+    expect(agent.sessions.size).toBe(0)
     const calls = await query(
       "SELECT * FROM tool_calls WHERE call_key LIKE 'computer-use:%' ORDER BY created_at",
     )
@@ -412,6 +420,60 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     const shown = await computerUseView()
     expect(shown.state.spentTodayMicrousd).toBe(calls.length * 85000)
     expect(shown.history[0]?.spentMicrousd).toBe(calls.length * 85000)
+  })
+
+  it('ends a task at the step limit as done with a report assembled from its records', async () => {
+    vi.spyOn(settings, 'config').mockImplementation(() => ({
+      ...original,
+      COMPUTER_USE_STEP_LIMIT: 3,
+    }))
+    await controlComputerUse('enable')
+    await query("UPDATE computer_use SET failures=2,last_error='COMPUTER_USE_VM_UNAVAILABLE'")
+    const agent = new FakeVmAgent()
+    const seen: ModelInput[] = []
+    const model = scripted([
+      (input) => (
+        seen.push(input),
+        { name: 'navigate', arguments: { url: 'https://jobs.example/list' } }
+      ),
+      (input) => (
+        seen.push(input),
+        {
+          name: 'note_opportunity',
+          arguments: {
+            title: 'Перевод описаний товаров',
+            url: 'https://jobs.example/list/7',
+            summary: 'Нужно перевести 20 описаний товаров с английского, оплата через площадку.',
+            kind: 'freelance',
+            requiresHuman: false,
+            decision: 'take',
+            fit: 80,
+            ai_forbidden: false,
+            estimated_value: { amount: 300000, currency: 'RUB' },
+            reason: 'Текстовая работа по профилю.',
+          },
+        }
+      ),
+      (input) => (seen.push(input), { name: 'scroll', arguments: { x: 600, y: 400, deltaY: 500 } }),
+      () => {
+        throw new Error('NO_FOURTH_MODEL_CALL')
+      },
+    ])
+    await computerUseTick({ agent, model })
+    const row = await task()
+    expect(row).toMatchObject({ status: 'done', error: '', step_count: 3 })
+    expect(row.report).toContain('израсходованы все шаги задания (шагов 3 из 3)')
+    expect(row.report).toContain(
+      '1. Перевод описаний товаров - https://jobs.example/list/7 (беру сам, соответствие 80/100, оценка 300000 RUB в минимальных единицах)',
+    )
+    expect(row.report).toContain('- https://jobs.example/list')
+    const [owner] = await query('SELECT failures,last_error FROM computer_use WHERE id=true')
+    expect(owner).toMatchObject({ failures: 0, last_error: '' })
+    const [audited] = await query(
+      "SELECT data FROM audit_events WHERE kind='computer_use_task' ORDER BY id DESC LIMIT 1",
+    )
+    expect(audited?.data).toMatchObject({ status: 'done', endedBy: 'limit' })
+    expect(agent.sessions.size).toBe(0)
   })
 
   it('keeps a task resumable on pause, stop and the daily limit', async () => {

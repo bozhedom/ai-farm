@@ -600,10 +600,13 @@ async function finishTask(
   report: string,
   error: string,
   agent: VmAgentClient,
+  endedBy: 'model' | 'limit' = 'model',
 ) {
   await transaction(async (db) => {
     await query('SELECT id FROM computer_use WHERE id=true FOR UPDATE', [], db)
     await endTask(db, task, status, report, error)
+    // Only a real failure counts towards the pause after three in a row; a task that reached its
+    // step or cost limit worked normally.
     await query(
       status === 'done'
         ? "UPDATE computer_use SET failures=0,last_error='' WHERE id=true"
@@ -613,14 +616,103 @@ async function finishTask(
     )
     await audit(
       'computer_use_task',
-      status === 'done'
-        ? 'Задание браузера завершено, отчёт сохранён.'
-        : 'Задание браузера остановлено без отчёта.',
-      { taskId: task.id, status, error, source: task.source },
+      status !== 'done'
+        ? 'Задание браузера остановлено без отчёта.'
+        : endedBy === 'limit'
+          ? 'Задание браузера завершено по лимиту, отчёт собран сервером из записей задания.'
+          : 'Задание браузера завершено, отчёт сохранён.',
+      { taskId: task.id, status, error, source: task.source, endedBy },
       db,
     )
   })
   if (task.session_id) await agent.endSession(task.session_id).catch(() => undefined)
+}
+
+export type LimitReason = 'COMPUTER_USE_STEP_LIMIT' | 'COMPUTER_USE_TASK_CAP'
+const limitWords: Record<LimitReason, string> = {
+  COMPUTER_USE_STEP_LIMIT: 'израсходованы все шаги задания',
+  COMPUTER_USE_TASK_CAP: 'исчерпан лимит расходов на одно задание',
+}
+const decisionWords: Record<string, string> = {
+  take: 'беру сам',
+  human: 'нужен владелец',
+  skip: 'пропуск',
+}
+const proposalWords: Record<string, string> = {
+  draft: 'черновик',
+  sent: 'отправлен',
+  failed: 'не отправлен',
+  expired: 'истёк',
+}
+const usd = (microusd: number) => `$${(microusd / 1_000_000).toFixed(2)}`
+
+/**
+ * The report of a task that reached its step or cost limit before the model called `finish`:
+ * assembled by the server from what the task recorded, with no extra model call.
+ */
+export async function limitReport(task: TaskRow, reason: LimitReason, db?: Connection) {
+  const [opportunities, proposals, documents, pages, spent] = await Promise.all([
+    query(
+      `SELECT title,url,decision,fit,requires_human,ai_forbidden,estimated_value_minor,estimated_currency
+       FROM computer_use_opportunities WHERE task_id=$1 ORDER BY step_no LIMIT 20`,
+      [task.id],
+      db,
+    ),
+    query(
+      'SELECT status,count(*)::int AS n FROM computer_use_proposals WHERE task_id=$1 GROUP BY status ORDER BY status',
+      [task.id],
+      db,
+    ),
+    query(
+      'SELECT title FROM computer_use_documents WHERE task_id=$1 ORDER BY step_no LIMIT 5',
+      [task.id],
+      db,
+    ),
+    query<{ url: string }>(
+      `SELECT url_after AS url FROM computer_use_steps WHERE task_id=$1 AND url_after ~ '^https?://'
+       GROUP BY url_after ORDER BY min(step_no) LIMIT 12`,
+      [task.id],
+      db,
+    ),
+    taskSpend(task.reservation_id, db),
+  ])
+  const cost =
+    task.cost_cap_microusd > 0
+      ? `, расход ${usd(spent.microusd)} из ${usd(task.cost_cap_microusd)}`
+      : ''
+  const lines = [
+    `Задание завершено сервером: ${limitWords[reason]} (шагов ${task.step_count} из ${task.step_limit}${cost}). Модель не вызвала finish; ниже то, что записано в задании.`,
+  ]
+  if (opportunities.length) {
+    lines.push('', `Находки (${opportunities.length}):`)
+    opportunities.forEach((o, index) => {
+      const notes = [
+        decisionWords[o.decision] || o.decision,
+        `соответствие ${o.fit}/100`,
+        o.requires_human ? 'нужен человек' : '',
+        o.ai_forbidden ? 'ИИ запрещён' : '',
+        o.estimated_value_minor != null
+          ? `оценка ${o.estimated_value_minor} ${o.estimated_currency} в минимальных единицах`
+          : '',
+      ].filter(Boolean)
+      lines.push(`${index + 1}. ${o.title} - ${o.url} (${notes.join(', ')})`)
+    })
+  } else lines.push('', 'Находок не записано.')
+  if (proposals.length)
+    lines.push(
+      '',
+      `Отклики: ${proposals.map((p) => `${proposalWords[p.status] || p.status} ${p.n}`).join(', ')}.`,
+    )
+  if (documents.length)
+    lines.push('', `Документы: ${documents.map((d) => `«${d.title}»`).join(', ')}.`)
+  if (pages.length) lines.push('', 'Просмотренные страницы:', ...pages.map((p) => `- ${p.url}`))
+  lines.push('', 'Находки - записи для проверки человеком, не доход.')
+  return lines.join('\n').slice(0, 4000)
+}
+
+/** Reaching the step or cost limit is a normal end: done, the server's report, no failure. */
+async function finishAtLimit(task: TaskRow, reason: LimitReason, agent: VmAgentClient) {
+  await finishTask(task, 'done', await limitReport(task, reason), '', agent, 'limit')
 }
 
 function safeError(error: unknown) {
@@ -1114,7 +1206,7 @@ async function runStep(
   const stepNo = task.step_count + 1
   if (await applyResolvedApproval(task, agent, stepNo)) return { kind: 'continue' }
   if (task.step_count >= task.step_limit) {
-    await finishTask(task, 'failed', '', 'COMPUTER_USE_STEP_LIMIT', agent)
+    await finishAtLimit(task, 'COMPUTER_USE_STEP_LIMIT', agent)
     return { kind: 'stop' }
   }
   const c = config()
@@ -1150,7 +1242,7 @@ async function runStep(
     const estimate = prepareStepRequest(input).maximumMicrousd
     const spent = await taskSpend(task.reservation_id)
     if (spent.microusd + estimate > task.cost_cap_microusd) {
-      await finishTask(task, 'failed', '', 'COMPUTER_USE_TASK_CAP', agent)
+      await finishAtLimit(task, 'COMPUTER_USE_TASK_CAP', agent)
       return { kind: 'stop' }
     }
     const day = await dailySpend()
