@@ -45,6 +45,8 @@ const reasons: Record<string, string> = {
   COMPUTER_USE_OWNER_APPROVED: 'Выполнено с вашего разрешения.',
   COMPUTER_USE_OWNER_REJECTED: 'Вы отклонили это действие.',
   COMPUTER_USE_APPROVAL_EXPIRED: 'Запрос ждал сутки без ответа и закрыт.',
+  COMPUTER_USE_SCREENSHOT_REQUIRED:
+    'Клик без снимка экрана отклонён: снимок пришёл на следующем шаге.',
   COMPUTER_USE_LOOP_URL: 'Этот адрес уже открывали дважды в задании: третий переход отклонён.',
   COMPUTER_USE_OPPORTUNITY_LIMIT: 'В этом задании уже записано достаточно возможностей.',
   COMPUTER_USE_QUEUE_FULL: 'Очередь заданий заполнена. Дождитесь выполнения.',

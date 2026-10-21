@@ -551,6 +551,76 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     })
   })
 
+  it('leaves out an unchanged screenshot after a record step, never twice, never for a click', async () => {
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent()
+    const seen: ModelInput[] = []
+    const note = (n: number) => (input: ModelInput) => (
+      seen.push(input),
+      {
+        name: 'note_opportunity',
+        arguments: {
+          title: `Конкурс номер ${n}`,
+          url: `https://contests.example/${n}`,
+          summary: 'Открытый конкурс для разработчиков, условия на странице.',
+          kind: 'bounty',
+          requiresHuman: true,
+          decision: 'human',
+          fit: 50,
+          ai_forbidden: false,
+          estimated_value: null,
+          reason: 'Участие решает владелец.',
+        },
+      }
+    )
+    const click = (input: ModelInput) => (
+      seen.push(input),
+      { name: 'click', arguments: { x: 10, y: 10 } }
+    )
+    const model = scripted([
+      (input) => (
+        seen.push(input),
+        { name: 'navigate', arguments: { url: 'https://contests.example/' } }
+      ),
+      note(1),
+      note(2),
+      note(3),
+      click,
+      click,
+      (input) => (seen.push(input), { name: 'finish', arguments: { report: 'Готово.' } }),
+    ])
+    await computerUseTick({ agent, model })
+    const row = await task()
+    expect(row.status).toBe('done')
+    // The fake VM returns the same picture every time: only record steps make it skippable.
+    expect(seen.map((input) => (input.png ? 'image' : 'none'))).toEqual([
+      'image', // first step
+      'image', // after navigate
+      'none', // after a record, same screen
+      'image', // never twice in a row
+      'none', // after a record again: the click here is refused
+      'image', // after the refused click (no picture sent then): the click runs
+      'image',
+    ])
+    expect(seen[2]!.screenshotUnchangedSince).toBe(2)
+    expect(JSON.parse(prepareStepRequest(seen[2]!).text).screenshot).toBe(
+      'не приложен: экран не изменился после шага 2',
+    )
+    expect(prepareStepRequest(seen[2]!).maximumMicrousd).toBe(0) // demo: nothing is charged
+    expect((await steps(row.id)).map((s) => [s.action.name, s.decision, s.reason])).toEqual([
+      ['navigate', 'allowed', ''],
+      ['note_opportunity', 'allowed', ''],
+      ['note_opportunity', 'allowed', ''],
+      ['note_opportunity', 'allowed', ''],
+      ['click', 'blocked', 'COMPUTER_USE_SCREENSHOT_REQUIRED'],
+      ['click', 'allowed', ''],
+      ['finish', 'allowed', ''],
+    ])
+    // Every screen is still stored for the owner, sent to the model or not.
+    expect((await steps(row.id)).every((s) => s.screenshot_path)).toBe(true)
+    expect(agent.actions.filter((a) => a.action.name === 'click')).toHaveLength(1)
+  })
+
   it('keeps a task resumable on pause, stop and the daily limit', async () => {
     await controlComputerUse('enable')
     const agent = new FakeVmAgent()

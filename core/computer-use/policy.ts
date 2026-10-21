@@ -23,7 +23,10 @@ export const COMPUTER_USE_POLICY = Object.freeze({
   agentActionTimeoutMs: 45_000,
   maxOutputTokens: 700,
   // Upper estimate of one 1280x800 PNG in input tokens; the reserve is checked before sending.
+  // A step without a picture is estimated without it.
   imageTokens: 3000,
+  // Leave out a screenshot identical to the one the model just saw after note_opportunity.
+  omitUnchangedScreenshots: true,
   maxHistorySteps: 12,
   maxScreenshotBytes: 2_000_000,
   maxInvalidInRow: 3,

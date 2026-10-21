@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { config, computerUseReady, paidModelId } from '../config'
@@ -400,7 +400,31 @@ export async function cleanupScreenshots(now = Date.now()) {
   }
 }
 
-type Claim = { task: TaskRow; leaseId: string }
+type Claim = {
+  task: TaskRow
+  leaseId: string
+  /** The previous step's screen within this tick: its hash and whether the model got it. */
+  lastImage?: { stepNo: number; sha: string; sent: boolean }
+}
+
+/**
+ * The screenshot is left out of a step only when the model saw a byte-identical screen on the
+ * directly preceding step of this tick and that step was note_opportunity: a record on the
+ * server that changes nothing in the browser, typically followed by another record or a
+ * navigate from the links. Proposals, documents and permits are followed by clicks into the
+ * page, so they always get a picture. Never twice in a row; page text and links are always sent.
+ */
+export function canOmitScreenshot(
+  stepNo: number,
+  sha: string,
+  last: Claim['lastImage'],
+  previous: StepHistory | undefined,
+) {
+  if (!P.omitUnchangedScreenshots) return false
+  if (!last || !last.sent || last.stepNo !== stepNo - 1 || last.sha !== sha) return false
+  if (!previous || previous.stepNo !== stepNo - 1) return false
+  return previous.action.name === 'note_opportunity' && previous.decision === 'allowed'
+}
 
 async function claimTask(): Promise<Claim | null> {
   return transaction(async (db) => {
@@ -1257,6 +1281,9 @@ async function runStep(
   const screenshot = await saveScreenshot(task.id, stepNo, shot.png)
   const page: PageContext = { url: shot.url, title: shot.title, focused: shot.focused }
   const history = await historyOf(task.id)
+  const sha = createHash('sha256').update(shot.png).digest('hex')
+  const omitImage = canOmitScreenshot(stepNo, sha, claim.lastImage, history.at(-1))
+  claim.lastImage = { stepNo, sha, sent: !omitImage }
   const [found] = await query(
     'SELECT count(*)::int AS n FROM computer_use_opportunities WHERE task_id=$1',
     [task.id],
@@ -1272,7 +1299,8 @@ async function runStep(
     stepLimit: task.step_limit,
     history,
     page,
-    png: shot.png,
+    png: omitImage ? null : shot.png,
+    screenshotUnchangedSince: omitImage ? stepNo - 1 : undefined,
     reading: { text: shot.text ?? '', links: shot.links ?? [] },
     opportunities: found!.n as number,
     stored: await storedFor(task.id),
@@ -1428,6 +1456,15 @@ async function runStep(
   }
   if (!browserActionNames.includes(call.name)) throw new Error('COMPUTER_USE_TOOL_CALL_INVALID')
   const action = call as BrowserAction
+  if (omitImage && action.name === 'click') {
+    // Coordinates without a picture are a guess; the next step carries the screenshot again.
+    await recordStep(task, stepNo, {
+      ...base,
+      decision: 'blocked',
+      reason: 'COMPUTER_USE_SCREENSHOT_REQUIRED',
+    })
+    return { kind: 'continue' }
+  }
   if (action.name === 'navigate') {
     const target = normalizeUrl(action.url)
     const before = visited.find((v) => v.url === target)
