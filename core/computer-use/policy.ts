@@ -14,7 +14,13 @@ export const COMPUTER_USE_POLICY = Object.freeze({
   // task never looks like a stuck loop to the worker watchdog (40 minutes).
   tickBudgetMs: 10 * 60_000,
   stepTimeoutMs: 60_000,
-  agentTimeoutMs: 45_000,
+  // Reads (snapshot, state, element under the cursor) are idempotent: a short timeout and one
+  // retry after a pause. Actions are never repeated; they get room for a page load and settling.
+  // An unreachable VM fails the task in about half a minute instead of hanging on it.
+  agentReadTimeoutMs: 15_000,
+  agentReadAttempts: 2,
+  agentRetryPauseMs: 1000,
+  agentActionTimeoutMs: 45_000,
   maxOutputTokens: 700,
   // Upper estimate of one 1280x800 PNG in input tokens; the reserve is checked before sending.
   imageTokens: 3000,

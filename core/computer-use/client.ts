@@ -61,13 +61,47 @@ export class HttpVmAgent implements VmAgentClient {
     private readonly token: string,
   ) {}
 
+  /**
+   * One HTTP request to the VM. Idempotent reads (`attempts` > 1) are retried once after a short
+   * pause when the link fails or the agent answers 5xx; actions and session changes never are.
+   */
   private async request<T>(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     schema: z.ZodType<T>,
     body?: unknown,
+    options: { timeoutMs?: number; attempts?: number } = {},
+  ): Promise<T> {
+    const attempts = Math.max(1, options.attempts ?? 1)
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.once(
+          method,
+          path,
+          schema,
+          body,
+          options.timeoutMs ?? P.agentReadTimeoutMs,
+        )
+      } catch (error) {
+        const retryable =
+          error instanceof VmAgentUnavailable &&
+          (error.message === 'COMPUTER_USE_VM_UNAVAILABLE' ||
+            /^COMPUTER_USE_VM_HTTP_5\d\d$/.test(error.message))
+        if (!retryable || attempt >= attempts) throw error
+        await new Promise((resolve) => setTimeout(resolve, P.agentRetryPauseMs))
+      }
+    }
+  }
+
+  private async once<T>(
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    schema: z.ZodType<T>,
+    body: unknown,
+    timeoutMs: number,
   ): Promise<T> {
     let response: Response
+    const signal = AbortSignal.timeout(timeoutMs)
     try {
       response = await fetch(new URL(path, this.base), {
         method,
@@ -77,7 +111,7 @@ export class HttpVmAgent implements VmAgentClient {
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         redirect: 'error',
-        signal: AbortSignal.timeout(P.agentTimeoutMs),
+        signal,
       })
     } catch {
       throw new VmAgentUnavailable()
@@ -90,7 +124,13 @@ export class HttpVmAgent implements VmAgentClient {
       await response.body?.cancel()
       throw new VmAgentUnavailable(`COMPUTER_USE_VM_HTTP_${response.status}`)
     }
-    const raw = await response.text()
+    let raw: string
+    try {
+      // The same deadline covers the body: a VM that stalls mid-answer is unavailable too.
+      raw = await response.text()
+    } catch {
+      throw new VmAgentUnavailable()
+    }
     if (raw.length > 6_000_000) throw new VmAgentUnavailable('COMPUTER_USE_VM_RESPONSE_TOO_LARGE')
     try {
       return schema.parse(JSON.parse(raw))
@@ -104,14 +144,24 @@ export class HttpVmAgent implements VmAgentClient {
       '/sessions',
       z.object({ sessionId: z.string().regex(/^[0-9a-f-]{36}$/) }),
       {},
+      // The first session may start Chromium on the VM.
+      { timeoutMs: P.agentActionTimeoutMs },
     )
     return sessionId
   }
   state(sessionId: string) {
-    return this.request('GET', `/sessions/${sessionId}`, stateSchema)
+    return this.request('GET', `/sessions/${sessionId}`, stateSchema, undefined, {
+      attempts: P.agentReadAttempts,
+    })
   }
   async screenshot(sessionId: string) {
-    const data = await this.request('GET', `/sessions/${sessionId}/screenshot`, screenshotSchema)
+    const data = await this.request(
+      'GET',
+      `/sessions/${sessionId}/screenshot`,
+      screenshotSchema,
+      undefined,
+      { attempts: P.agentReadAttempts },
+    )
     const png = Buffer.from(data.png, 'base64')
     const size = pngSize(png)
     if (!size || png.length > P.maxScreenshotBytes || size.width > VIEWPORT.width * 2)
@@ -131,10 +181,13 @@ export class HttpVmAgent implements VmAgentClient {
       `/sessions/${sessionId}/inspect`,
       z.object({ element: elementSchema }),
       { x, y },
+      { attempts: P.agentReadAttempts },
     ).then((r) => r.element)
   }
   act(sessionId: string, action: VmAction) {
-    return this.request('POST', `/sessions/${sessionId}/actions`, actionSchema, action)
+    return this.request('POST', `/sessions/${sessionId}/actions`, actionSchema, action, {
+      timeoutMs: P.agentActionTimeoutMs,
+    })
   }
   async endSession(sessionId: string) {
     await this.request('DELETE', `/sessions/${sessionId}`, z.object({ ok: z.boolean() })).catch(

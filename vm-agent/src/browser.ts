@@ -28,6 +28,18 @@ export const SESSION_IDLE_MS = 30 * 60_000
 export const MAX_SESSIONS = 3
 export const PROFILE_DIR = process.env.VM_AGENT_PROFILE_DIR || '/agent/profile'
 const NAVIGATION_TIMEOUT_MS = 20_000
+// After an action that may load a page, the snapshot waits for the document and a short quiet
+// network, so the model rarely needs an explicit `wait`. Both waits are bounded: a page that
+// never goes quiet (analytics, long polling) costs at most SETTLE_MS + NETWORK_IDLE_MS.
+export const SETTLE_MS = 5000
+export const NETWORK_IDLE_MS = 2500
+
+type Loadable = Pick<Page, 'waitForLoadState'>
+/** Waits for domcontentloaded, then a quiet network, never longer than the two bounds. */
+export async function settle(page: Loadable, settleMs = SETTLE_MS, idleMs = NETWORK_IDLE_MS) {
+  await page.waitForLoadState('domcontentloaded', { timeout: settleMs }).catch(() => undefined)
+  await page.waitForLoadState('networkidle', { timeout: idleMs }).catch(() => undefined)
+}
 
 type Session = { id: string; page: Page; lastUsedAt: number }
 
@@ -59,7 +71,9 @@ export class Sessions {
   private readonly sessions = new Map<string, Session>()
 
   private async launch() {
-    if (this.context && this.context.browser()?.isConnected() !== false) return this.context
+    // A persistent context has no Browser object: a crashed Chromium shows up as a `close`
+    // event, which drops the context so the next session launches a fresh one.
+    if (this.context) return this.context
     this.proxy ??= await startProxy()
     mkdirSync(PROFILE_DIR, { recursive: true })
     const context = await chromium.launchPersistentContext(PROFILE_DIR, {
@@ -79,6 +93,11 @@ export class Sessions {
       else await route.abort('blockedbyclient')
     })
     context.on('page', (popup) => void this.foldPopup(popup))
+    context.on('close', () => {
+      if (this.context !== context) return
+      this.context = null
+      this.sessions.clear()
+    })
     // The profile opens with one blank page of its own; sessions get pages of their own.
     for (const page of context.pages()) await page.close().catch(() => undefined)
     this.context = context
@@ -197,11 +216,13 @@ export class Sessions {
             waitUntil: 'domcontentloaded',
             timeout: NAVIGATION_TIMEOUT_MS,
           })
+          await settle(page)
           break
         case 'click':
           await page.mouse.click(action.x, action.y)
-          await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => undefined)
+          // A link starts its navigation a moment after the click.
           await pause(300)
+          await settle(page)
           break
         case 'type':
           await page.keyboard.type(action.text, { delay: 10 })
@@ -212,7 +233,13 @@ export class Sessions {
           break
         case 'key':
           await page.keyboard.press(action.key === 'Space' ? ' ' : action.key)
-          await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => undefined)
+          if (action.key === 'Enter') {
+            await pause(300)
+            await settle(page)
+          } else
+            await page
+              .waitForLoadState('domcontentloaded', { timeout: 3000 })
+              .catch(() => undefined)
           break
         case 'scroll':
           await page.mouse.move(action.x, action.y)
@@ -221,6 +248,7 @@ export class Sessions {
           break
         case 'back':
           await page.goBack({ waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS })
+          await settle(page)
           break
         case 'wait':
           await pause(action.ms)
