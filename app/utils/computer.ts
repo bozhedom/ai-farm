@@ -79,6 +79,13 @@ const reasons: Record<string, string> = {
   COMPUTER_USE_PERMIT_GRANTED: 'Выдано разрешение на одну отправку (15 минут).',
   COMPUTER_USE_SEND_PERMIT: 'Отправлено по разрешению на одну отправку.',
   COMPUTER_USE_STORED_NOT_FOUND: 'Такого текста в этом задании нет.',
+  COMPUTER_USE_NO_DIRECTIONS:
+    'Нет ни одного включённого направления поиска и ни одной площадки с входом: ротации нечего делать.',
+  COMPUTER_USE_DIRECTION_NOT_FOUND: 'Такого направления нет.',
+  COMPUTER_USE_DIRECTION_BUILT_IN: 'Встроенное направление можно выключить, но не удалить.',
+  COMPUTER_USE_DIRECTIONS_LIMIT: 'Направлений уже достаточно: удалите или выключите лишние.',
+  COMPUTER_USE_DIRECTION_TITLE: 'Название направления: от 3 до 80 символов без угловых скобок.',
+  COMPUTER_USE_DIRECTION_WEIGHT: 'Приоритет направления: целое число от 1 до 5.',
   COMPUTER_USE_DOCUMENT_LIMIT: 'В этом задании уже подготовлено достаточно документов.',
 }
 export function computerReason(code: string | null | undefined) {

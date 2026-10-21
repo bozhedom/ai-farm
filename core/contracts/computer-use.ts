@@ -106,6 +106,25 @@ export interface ComputerPlatformView {
   proposalsToday: number
   sentToday: number
 }
+/** A search direction of the rotation; built-ins can be disabled, owner directions deleted. */
+export interface ComputerDirectionView {
+  id: string
+  title: string
+  goal: string
+  enabled: boolean
+  /** Owner priority 1..5. */
+  weight: number
+  builtIn: boolean
+  createdAt: string
+  updatedAt: string
+  lastRunAt: string | null
+  /** Rotation tasks started from this direction and the findings they recorded. */
+  tasks: number
+  found: number
+  take: number
+  human: number
+  skip: number
+}
 export interface ComputerUseView {
   state: {
     enabled: boolean
@@ -124,6 +143,7 @@ export interface ComputerUseView {
     spentTodayKopecks: number
     queuedOwnerGoals: number
     failures: number
+    /** Goals in the rotation right now: enabled directions plus two per logged-in platform. */
     rotationGoals: number
     /** Autonomous sending on logged-in platforms: the office switch and the env gate. */
     autoProposals: boolean
@@ -139,4 +159,5 @@ export interface ComputerUseView {
   proposals: ComputerProposalView[]
   documents: ComputerDocumentView[]
   platforms: ComputerPlatformView[]
+  directions: ComputerDirectionView[]
 }

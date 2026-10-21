@@ -4,7 +4,7 @@ import { join, resolve, sep } from 'node:path'
 import { config, computerUseReady, paidModelId } from '../config'
 import { audit, query, transaction, type Connection } from '../db'
 import { closeReservation, reserveBudget } from '../budget'
-import { rotationGoals } from './goals'
+import { ensureDirections, pickDirection, recordDirectionFinding, rotationSlot } from './directions'
 import {
   COMPUTER_USE_POLICY as P,
   classifyAction,
@@ -81,6 +81,7 @@ export interface TaskRow {
   session_id: string | null
   report: string
   error: string
+  direction_id: string | null
   created_at: Date
   started_at: Date | null
   finished_at: Date | null
@@ -100,6 +101,7 @@ export function computerUseProvider() {
 
 export async function ensureComputerUse(db?: Connection) {
   await query('INSERT INTO computer_use(id) VALUES(true) ON CONFLICT DO NOTHING', [], db)
+  await ensureDirections(db)
 }
 
 /** Charged model costs of one task, from the shared ledger. */
@@ -185,10 +187,22 @@ export async function loggedInPlatforms(db?: Connection) {
   )
   return rows.map((row) => row.domain).filter(isFreelancePlatform)
 }
-/** Goals in rotation order: logged-in platforms first, then the research themes. */
-export async function currentRotationGoals(db?: Connection) {
-  const platforms = await loggedInPlatforms(db)
-  return [...platformGoals(platforms, config().COMPUTER_USE_PROPOSALS_PER_DAY), ...rotationGoals]
+/**
+ * The goal of rotation step `index`: platform goals of logged-in platforms first in every cycle,
+ * then an enabled search direction picked by yield-weighted round robin (`rotationSlot`,
+ * `nextDirection`). Runs inside the claim transaction; null when there is nothing to rotate.
+ */
+export async function pickRotationGoal(index: number, db: Connection) {
+  const platforms = platformGoals(
+    await loggedInPlatforms(db),
+    config().COMPUTER_USE_PROPOSALS_PER_DAY,
+  )
+  const slot = rotationSlot(index, platforms.length)
+  if (slot.kind === 'platform') return { goal: platforms[slot.index]!, directionId: null }
+  const direction = await pickDirection(db)
+  if (direction) return { goal: direction.goal, directionId: direction.id }
+  if (platforms.length) return { goal: platforms[index % platforms.length]!, directionId: null }
+  return null
 }
 
 export async function addOwnerGoal(text: string) {
@@ -456,20 +470,22 @@ async function claimTask(): Promise<Claim | null> {
         if (age < P.rotationPauseMs) return null
       }
       const provider = computerUseProvider()
-      const goals = await currentRotationGoals(db)
-      const goal = goals[owner.rotation_index % goals.length]!
+      const next = await pickRotationGoal(owner.rotation_index, db)
+      // Nothing enabled and no logged-in platform: the office shows COMPUTER_USE_NO_DIRECTIONS.
+      if (!next) return null
       const id = randomUUID()
       await query(
-        `INSERT INTO computer_use_tasks(id,goal,source,status,step_limit,cost_cap_microusd,provider,model,is_demo)
-         VALUES($1,$2,'rotation','queued',$3,$4,$5,$6,$7)`,
+        `INSERT INTO computer_use_tasks(id,goal,source,status,step_limit,cost_cap_microusd,provider,model,is_demo,direction_id)
+         VALUES($1,$2,'rotation','queued',$3,$4,$5,$6,$7,$8)`,
         [
           id,
-          goal,
+          next.goal,
           c.COMPUTER_USE_STEP_LIMIT,
           provider.demo ? 0 : c.COMPUTER_USE_TASK_CAP_MICROUSD,
           provider.provider,
           provider.model,
           provider.demo,
+          next.directionId,
         ],
         db,
       )
@@ -1224,9 +1240,9 @@ async function runStep(
     }
     await transaction(async (db) => {
       await recordStep(task, stepNo, record, db)
-      await query(
+      const inserted = await query(
         `INSERT INTO computer_use_opportunities(id,task_id,step_no,title,url,summary,kind,requires_human,is_demo,decision,fit,ai_forbidden,estimated_value_minor,estimated_currency,reason,platform_domain)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (task_id,url) DO NOTHING`,
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (task_id,url) DO NOTHING RETURNING id`,
         [
           randomUUID(),
           task.id,
@@ -1247,6 +1263,7 @@ async function runStep(
         ],
         db,
       )
+      if (inserted.length) await recordDirectionFinding(task.id, decision, db)
     })
     return { kind: 'continue' }
   }

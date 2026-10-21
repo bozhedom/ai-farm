@@ -6,6 +6,7 @@ import * as settings from '../../core/config'
 import { pool, query } from '../../core/db'
 import { attemptLogin } from '../../core/auth'
 import { FakeVmAgent } from '../../core/computer-use/client'
+import { builtInDirections } from '../../core/computer-use/goals'
 import { manualAct, setManualAgent, startManual, stopManual } from '../../core/computer-use/manual'
 import { COMPUTER_USE_POLICY as P, type ElementInfo } from '../../core/computer-use/policy'
 import {
@@ -542,7 +543,7 @@ describe('computer use on freelance platforms: assessment, proposals, permits', 
       loggedIn: true,
     })
     expect(marked.json.platforms.find((p: any) => p.domain === 'kwork.ru').loggedIn).toBe(true)
-    expect(marked.json.state.rotationGoals).toBe(original.COMPUTER_USE_STEP_LIMIT > 0 ? 8 : 8)
+    expect(marked.json.state.rotationGoals).toBe(builtInDirections.length + 2)
     const switched = await call('POST', '/api/computer-use/control', session, {
       action: 'auto_proposals_on',
     })
