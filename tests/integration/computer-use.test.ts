@@ -376,16 +376,24 @@ describe('computer use: one task at a time, validated actions, owner approvals',
       .mockResolvedValueOnce(answer('navigate', { url: 'https://example.com/jobs' }))
     vi.stubGlobal('fetch', fetchMock)
     await controlComputerUse('enable')
+    // Earlier real failures stay counted until a task ends normally; the cap is a normal end.
+    await query('UPDATE computer_use SET failures=2 WHERE id=true')
     const agent = new FakeVmAgent()
     await computerUseTick({ agent, model: astraStep(demoScript) })
     const row = await task()
     expect(row).toMatchObject({
-      status: 'failed',
-      error: 'COMPUTER_USE_TASK_CAP',
+      status: 'done',
+      error: '',
       provider: 'openai',
       model: 'openai/gpt-6-astra',
       is_demo: false,
     })
+    expect(row.report).toContain('исчерпан лимит расходов на одно задание')
+    expect(row.report).toContain('https://example.com/jobs')
+    expect(row.report).toContain(`из $${(cap / 1_000_000).toFixed(2)}`)
+    const [owner] = await query('SELECT failures,last_error FROM computer_use WHERE id=true')
+    expect(owner).toMatchObject({ failures: 0, last_error: '' })
+    expect(agent.sessions.size).toBe(0)
     const calls = await query(
       "SELECT * FROM tool_calls WHERE call_key LIKE 'computer-use:%' ORDER BY created_at",
     )
@@ -409,9 +417,208 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     })
     expect(row.step_count).toBe(calls.length)
     expect(fetchMock).toHaveBeenCalledTimes(calls.length)
+    // Each request carried the budget: the second step was the last that fits under the cap.
+    const budgets = fetchMock.mock.calls.map(
+      ([, init]) => JSON.parse(JSON.parse(init.body).messages[1].content[0].text).budget,
+    )
+    expect(budgets[0]).toMatchObject({ steps_left: 30, cost_left_percent: 100 })
+    expect(budgets[1]).toMatchObject({ steps_left: 29, wrap_up: true, final_step: true })
+    expect(budgets[1].cost_left_percent).toBe(Math.floor(((cap - 85000) * 100) / cap))
     const shown = await computerUseView()
     expect(shown.state.spentTodayMicrousd).toBe(calls.length * 85000)
     expect(shown.history[0]?.spentMicrousd).toBe(calls.length * 85000)
+  })
+
+  it('ends a task at the step limit as done with a report assembled from its records', async () => {
+    vi.spyOn(settings, 'config').mockImplementation(() => ({
+      ...original,
+      COMPUTER_USE_STEP_LIMIT: 3,
+    }))
+    await controlComputerUse('enable')
+    await query("UPDATE computer_use SET failures=2,last_error='COMPUTER_USE_VM_UNAVAILABLE'")
+    const agent = new FakeVmAgent()
+    const seen: ModelInput[] = []
+    const model = scripted([
+      (input) => (
+        seen.push(input),
+        { name: 'navigate', arguments: { url: 'https://jobs.example/list' } }
+      ),
+      (input) => (
+        seen.push(input),
+        {
+          name: 'note_opportunity',
+          arguments: {
+            title: 'Перевод описаний товаров',
+            url: 'https://jobs.example/list/7',
+            summary: 'Нужно перевести 20 описаний товаров с английского, оплата через площадку.',
+            kind: 'freelance',
+            requiresHuman: false,
+            decision: 'take',
+            fit: 80,
+            ai_forbidden: false,
+            estimated_value: { amount: 300000, currency: 'RUB' },
+            reason: 'Текстовая работа по профилю.',
+          },
+        }
+      ),
+      (input) => (seen.push(input), { name: 'scroll', arguments: { x: 600, y: 400, deltaY: 500 } }),
+      () => {
+        throw new Error('NO_FOURTH_MODEL_CALL')
+      },
+    ])
+    await computerUseTick({ agent, model })
+    const row = await task()
+    expect(row).toMatchObject({ status: 'done', error: '', step_count: 3 })
+    expect(row.report).toContain('израсходованы все шаги задания (шагов 3 из 3)')
+    expect(row.report).toContain(
+      '1. Перевод описаний товаров - https://jobs.example/list/7 (беру сам, соответствие 80/100, оценка 300000 RUB в минимальных единицах)',
+    )
+    expect(row.report).toContain('- https://jobs.example/list')
+    const [owner] = await query('SELECT failures,last_error FROM computer_use WHERE id=true')
+    expect(owner).toMatchObject({ failures: 0, last_error: '' })
+    const [audited] = await query(
+      "SELECT data FROM audit_events WHERE kind='computer_use_task' ORDER BY id DESC LIMIT 1",
+    )
+    expect(audited?.data).toMatchObject({ status: 'done', endedBy: 'limit' })
+    expect(agent.sessions.size).toBe(0)
+    // The model saw what was left and where it had been; the last step asked it to finish.
+    expect(seen.map((input) => input.budget)).toEqual([
+      { stepsLeft: 3, costLeftPercent: null, wrapUp: true, finalStep: false },
+      { stepsLeft: 2, costLeftPercent: null, wrapUp: true, finalStep: false },
+      { stepsLeft: 1, costLeftPercent: null, wrapUp: true, finalStep: true },
+    ])
+    expect(seen[0]!.visited).toEqual([])
+    expect(seen[1]!.visited).toEqual([
+      { url: 'https://jobs.example/list', visits: 1, navigates: 1 },
+    ])
+    const sent = JSON.parse(prepareStepRequest(seen[2]!).text)
+    expect(sent.budget).toEqual({
+      steps_left: 1,
+      cost_left_percent: null,
+      wrap_up: true,
+      final_step: true,
+    })
+    expect(sent.visited_urls).toEqual([
+      { url: 'https://jobs.example/list', visits: 1, navigates: 1 },
+    ])
+  })
+
+  it('refuses a third navigate to the same address and shows the visited list', async () => {
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent()
+    const seen: ModelInput[] = []
+    const go = (url: string) => (input: ModelInput) => (
+      seen.push(input),
+      { name: 'navigate', arguments: { url } }
+    )
+    const model = scripted([
+      go('https://plati.example/catalog'),
+      go('https://boosty.example/'),
+      // The same page again, written differently: fragment and trailing slash do not count.
+      go('https://PLATI.example/catalog/#top'),
+      go('https://plati.example/catalog'),
+      go('https://plati.example/catalog?page=2'),
+      (input) => (
+        seen.push(input),
+        { name: 'finish', arguments: { report: 'Каталог просмотрен.' } }
+      ),
+    ])
+    await computerUseTick({ agent, model })
+    const row = await task()
+    expect(row.status).toBe('done')
+    expect((await steps(row.id)).map((s) => [s.action.name, s.decision, s.reason])).toEqual([
+      ['navigate', 'allowed', ''],
+      ['navigate', 'allowed', ''],
+      ['navigate', 'allowed', ''],
+      ['navigate', 'blocked', 'COMPUTER_USE_LOOP_URL'],
+      ['navigate', 'allowed', ''],
+      ['finish', 'allowed', ''],
+    ])
+    expect(agent.actions.map((a) => a.action)).toEqual([
+      { name: 'navigate', url: 'https://plati.example/catalog' },
+      { name: 'navigate', url: 'https://boosty.example/' },
+      { name: 'navigate', url: 'https://PLATI.example/catalog/#top' },
+      { name: 'navigate', url: 'https://plati.example/catalog?page=2' },
+    ])
+    expect(seen[3]!.visited).toEqual([
+      { url: 'https://plati.example/catalog', visits: 2, navigates: 2 },
+      { url: 'https://boosty.example/', visits: 1, navigates: 1 },
+    ])
+    expect(seen[5]!.visited![0]).toEqual({
+      url: 'https://plati.example/catalog?page=2',
+      visits: 1,
+      navigates: 1,
+    })
+  })
+
+  it('leaves out an unchanged screenshot after a record step, never twice, never for a click', async () => {
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent()
+    const seen: ModelInput[] = []
+    const note = (n: number) => (input: ModelInput) => (
+      seen.push(input),
+      {
+        name: 'note_opportunity',
+        arguments: {
+          title: `Конкурс номер ${n}`,
+          url: `https://contests.example/${n}`,
+          summary: 'Открытый конкурс для разработчиков, условия на странице.',
+          kind: 'bounty',
+          requiresHuman: true,
+          decision: 'human',
+          fit: 50,
+          ai_forbidden: false,
+          estimated_value: null,
+          reason: 'Участие решает владелец.',
+        },
+      }
+    )
+    const click = (input: ModelInput) => (
+      seen.push(input),
+      { name: 'click', arguments: { x: 10, y: 10 } }
+    )
+    const model = scripted([
+      (input) => (
+        seen.push(input),
+        { name: 'navigate', arguments: { url: 'https://contests.example/' } }
+      ),
+      note(1),
+      note(2),
+      note(3),
+      click,
+      click,
+      (input) => (seen.push(input), { name: 'finish', arguments: { report: 'Готово.' } }),
+    ])
+    await computerUseTick({ agent, model })
+    const row = await task()
+    expect(row.status).toBe('done')
+    // The fake VM returns the same picture every time: only record steps make it skippable.
+    expect(seen.map((input) => (input.png ? 'image' : 'none'))).toEqual([
+      'image', // first step
+      'image', // after navigate
+      'none', // after a record, same screen
+      'image', // never twice in a row
+      'none', // after a record again: the click here is refused
+      'image', // after the refused click (no picture sent then): the click runs
+      'image',
+    ])
+    expect(seen[2]!.screenshotUnchangedSince).toBe(2)
+    expect(JSON.parse(prepareStepRequest(seen[2]!).text).screenshot).toBe(
+      'не приложен: экран не изменился после шага 2',
+    )
+    expect(prepareStepRequest(seen[2]!).maximumMicrousd).toBe(0) // demo: nothing is charged
+    expect((await steps(row.id)).map((s) => [s.action.name, s.decision, s.reason])).toEqual([
+      ['navigate', 'allowed', ''],
+      ['note_opportunity', 'allowed', ''],
+      ['note_opportunity', 'allowed', ''],
+      ['note_opportunity', 'allowed', ''],
+      ['click', 'blocked', 'COMPUTER_USE_SCREENSHOT_REQUIRED'],
+      ['click', 'allowed', ''],
+      ['finish', 'allowed', ''],
+    ])
+    // Every screen is still stored for the owner, sent to the model or not.
+    expect((await steps(row.id)).every((s) => s.screenshot_path)).toBe(true)
+    expect(agent.actions.filter((a) => a.action.name === 'click')).toHaveLength(1)
   })
 
   it('keeps a task resumable on pause, stop and the daily limit', async () => {

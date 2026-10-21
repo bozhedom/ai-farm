@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { config, computerUseReady, paidModelId } from '../config'
@@ -11,6 +11,7 @@ import {
   forbiddenTextReason,
   hostOf,
   isPrivateHost,
+  normalizeUrl,
   validateGoal,
   type PageContext,
 } from './policy'
@@ -29,10 +30,13 @@ import {
   demoScript,
   prepareDocumentRequest,
   prepareStepRequest,
+  stepBudget,
   type ComputerUseModel,
   type DocumentWriter,
+  type ModelInput,
   type StepHistory,
   type StoredForModel,
+  type VisitedUrl,
 } from './model'
 import {
   aiForbiddenReason,
@@ -405,7 +409,31 @@ export async function cleanupScreenshots(now = Date.now()) {
   }
 }
 
-type Claim = { task: TaskRow; leaseId: string }
+type Claim = {
+  task: TaskRow
+  leaseId: string
+  /** The previous step's screen within this tick: its hash and whether the model got it. */
+  lastImage?: { stepNo: number; sha: string; sent: boolean }
+}
+
+/**
+ * The screenshot is left out of a step only when the model saw a byte-identical screen on the
+ * directly preceding step of this tick and that step was note_opportunity: a record on the
+ * server that changes nothing in the browser, typically followed by another record or a
+ * navigate from the links. Proposals, documents and permits are followed by clicks into the
+ * page, so they always get a picture. Never twice in a row; page text and links are always sent.
+ */
+export function canOmitScreenshot(
+  stepNo: number,
+  sha: string,
+  last: Claim['lastImage'],
+  previous: StepHistory | undefined,
+) {
+  if (!P.omitUnchangedScreenshots) return false
+  if (!last || !last.sent || last.stepNo !== stepNo - 1 || last.sha !== sha) return false
+  if (!previous || previous.stepNo !== stepNo - 1) return false
+  return previous.action.name === 'note_opportunity' && previous.decision === 'allowed'
+}
 
 async function claimTask(): Promise<Claim | null> {
   return transaction(async (db) => {
@@ -603,16 +631,57 @@ async function historyOf(taskId: string): Promise<StepHistory[]> {
   }))
 }
 
+/**
+ * Addresses this task has opened, most recent first: arrivals on a page (a navigate or an action
+ * that changed the address) and navigate attempts that reached the VM. Feeds the model's
+ * visited list and the loop guard.
+ */
+export async function visitedUrls(taskId: string, db?: Connection): Promise<VisitedUrl[]> {
+  const rows = await query(
+    'SELECT step_no,action,decision,url_before,url_after FROM computer_use_steps WHERE task_id=$1 ORDER BY step_no',
+    [taskId],
+    db,
+  )
+  const seen = new Map<string, VisitedUrl & { last: number }>()
+  const entry = (url: string, stepNo: number) => {
+    const key = normalizeUrl(url)
+    const found = seen.get(key) ?? { url: key, visits: 0, navigates: 0, last: stepNo }
+    found.last = stepNo
+    seen.set(key, found)
+    return found
+  }
+  for (const row of rows) {
+    const reached = ['allowed', 'approved', 'failed'].includes(row.decision)
+    if (!reached) continue
+    if (row.action?.name === 'navigate' && typeof row.action.url === 'string')
+      entry(row.action.url, row.step_no).navigates++
+    const after = String(row.url_after || '')
+    if (
+      /^https?:\/\//.test(after) &&
+      row.decision !== 'failed' &&
+      (row.action?.name === 'navigate' ||
+        normalizeUrl(after) !== normalizeUrl(String(row.url_before || '')))
+    )
+      entry(after, row.step_no).visits++
+  }
+  return [...seen.values()]
+    .sort((a, b) => b.last - a.last)
+    .map(({ url, visits, navigates }) => ({ url, visits, navigates }))
+}
+
 async function finishTask(
   task: TaskRow,
   status: 'done' | 'failed',
   report: string,
   error: string,
   agent: VmAgentClient,
+  endedBy: 'model' | 'limit' = 'model',
 ) {
   await transaction(async (db) => {
     await query('SELECT id FROM computer_use WHERE id=true FOR UPDATE', [], db)
     await endTask(db, task, status, report, error)
+    // Only a real failure counts towards the pause after three in a row; a task that reached its
+    // step or cost limit worked normally.
     await query(
       status === 'done'
         ? "UPDATE computer_use SET failures=0,last_error='' WHERE id=true"
@@ -622,14 +691,103 @@ async function finishTask(
     )
     await audit(
       'computer_use_task',
-      status === 'done'
-        ? 'Задание браузера завершено, отчёт сохранён.'
-        : 'Задание браузера остановлено без отчёта.',
-      { taskId: task.id, status, error, source: task.source },
+      status !== 'done'
+        ? 'Задание браузера остановлено без отчёта.'
+        : endedBy === 'limit'
+          ? 'Задание браузера завершено по лимиту, отчёт собран сервером из записей задания.'
+          : 'Задание браузера завершено, отчёт сохранён.',
+      { taskId: task.id, status, error, source: task.source, endedBy },
       db,
     )
   })
   if (task.session_id) await agent.endSession(task.session_id).catch(() => undefined)
+}
+
+export type LimitReason = 'COMPUTER_USE_STEP_LIMIT' | 'COMPUTER_USE_TASK_CAP'
+const limitWords: Record<LimitReason, string> = {
+  COMPUTER_USE_STEP_LIMIT: 'израсходованы все шаги задания',
+  COMPUTER_USE_TASK_CAP: 'исчерпан лимит расходов на одно задание',
+}
+const decisionWords: Record<string, string> = {
+  take: 'беру сам',
+  human: 'нужен владелец',
+  skip: 'пропуск',
+}
+const proposalWords: Record<string, string> = {
+  draft: 'черновик',
+  sent: 'отправлен',
+  failed: 'не отправлен',
+  expired: 'истёк',
+}
+const usd = (microusd: number) => `$${(microusd / 1_000_000).toFixed(2)}`
+
+/**
+ * The report of a task that reached its step or cost limit before the model called `finish`:
+ * assembled by the server from what the task recorded, with no extra model call.
+ */
+export async function limitReport(task: TaskRow, reason: LimitReason, db?: Connection) {
+  const [opportunities, proposals, documents, pages, spent] = await Promise.all([
+    query(
+      `SELECT title,url,decision,fit,requires_human,ai_forbidden,estimated_value_minor,estimated_currency
+       FROM computer_use_opportunities WHERE task_id=$1 ORDER BY step_no LIMIT 20`,
+      [task.id],
+      db,
+    ),
+    query(
+      'SELECT status,count(*)::int AS n FROM computer_use_proposals WHERE task_id=$1 GROUP BY status ORDER BY status',
+      [task.id],
+      db,
+    ),
+    query(
+      'SELECT title FROM computer_use_documents WHERE task_id=$1 ORDER BY step_no LIMIT 5',
+      [task.id],
+      db,
+    ),
+    query<{ url: string }>(
+      `SELECT url_after AS url FROM computer_use_steps WHERE task_id=$1 AND url_after ~ '^https?://'
+       GROUP BY url_after ORDER BY min(step_no) LIMIT 12`,
+      [task.id],
+      db,
+    ),
+    taskSpend(task.reservation_id, db),
+  ])
+  const cost =
+    task.cost_cap_microusd > 0
+      ? `, расход ${usd(spent.microusd)} из ${usd(task.cost_cap_microusd)}`
+      : ''
+  const lines = [
+    `Задание завершено сервером: ${limitWords[reason]} (шагов ${task.step_count} из ${task.step_limit}${cost}). Модель не вызвала finish; ниже то, что записано в задании.`,
+  ]
+  if (opportunities.length) {
+    lines.push('', `Находки (${opportunities.length}):`)
+    opportunities.forEach((o, index) => {
+      const notes = [
+        decisionWords[o.decision] || o.decision,
+        `соответствие ${o.fit}/100`,
+        o.requires_human ? 'нужен человек' : '',
+        o.ai_forbidden ? 'ИИ запрещён' : '',
+        o.estimated_value_minor != null
+          ? `оценка ${o.estimated_value_minor} ${o.estimated_currency} в минимальных единицах`
+          : '',
+      ].filter(Boolean)
+      lines.push(`${index + 1}. ${o.title} - ${o.url} (${notes.join(', ')})`)
+    })
+  } else lines.push('', 'Находок не записано.')
+  if (proposals.length)
+    lines.push(
+      '',
+      `Отклики: ${proposals.map((p) => `${proposalWords[p.status] || p.status} ${p.n}`).join(', ')}.`,
+    )
+  if (documents.length)
+    lines.push('', `Документы: ${documents.map((d) => `«${d.title}»`).join(', ')}.`)
+  if (pages.length) lines.push('', 'Просмотренные страницы:', ...pages.map((p) => `- ${p.url}`))
+  lines.push('', 'Находки - записи для проверки человеком, не доход.')
+  return lines.join('\n').slice(0, 4000)
+}
+
+/** Reaching the step or cost limit is a normal end: done, the server's report, no failure. */
+async function finishAtLimit(task: TaskRow, reason: LimitReason, agent: VmAgentClient) {
+  await finishTask(task, 'done', await limitReport(task, reason), '', agent, 'limit')
 }
 
 function safeError(error: unknown) {
@@ -1139,7 +1297,7 @@ async function runStep(
   const stepNo = task.step_count + 1
   if (await applyResolvedApproval(task, agent, stepNo)) return { kind: 'continue' }
   if (task.step_count >= task.step_limit) {
-    await finishTask(task, 'failed', '', 'COMPUTER_USE_STEP_LIMIT', agent)
+    await finishAtLimit(task, 'COMPUTER_USE_STEP_LIMIT', agent)
     return { kind: 'stop' }
   }
   const c = config()
@@ -1148,13 +1306,18 @@ async function runStep(
   const screenshot = await saveScreenshot(task.id, stepNo, shot.png)
   const page: PageContext = { url: shot.url, title: shot.title, focused: shot.focused }
   const history = await historyOf(task.id)
+  const sha = createHash('sha256').update(shot.png).digest('hex')
+  const omitImage = canOmitScreenshot(stepNo, sha, claim.lastImage, history.at(-1))
+  claim.lastImage = { stepNo, sha, sent: !omitImage }
   const [found] = await query(
     'SELECT count(*)::int AS n FROM computer_use_opportunities WHERE task_id=$1',
     [task.id],
   )
   const [owner] = await query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true')
   const { profile } = await readProfile()
-  const input = {
+  const spent = task.is_demo ? { microusd: 0, kopecks: 0 } : await taskSpend(task.reservation_id)
+  const visited = await visitedUrls(task.id)
+  const input: ModelInput = {
     taskId: task.id,
     reservationId: task.reservation_id!,
     goal: task.goal,
@@ -1162,7 +1325,8 @@ async function runStep(
     stepLimit: task.step_limit,
     history,
     page,
-    png: shot.png,
+    png: omitImage ? null : shot.png,
+    screenshotUnchangedSince: omitImage ? stepNo - 1 : undefined,
     reading: { text: shot.text ?? '', links: shot.links ?? [] },
     opportunities: found!.n as number,
     stored: await storedFor(task.id),
@@ -1172,12 +1336,13 @@ async function runStep(
       proposalsPerDay: effectiveProposalsPerDay(profile, c.COMPUTER_USE_PROPOSALS_PER_DAY),
     },
     profile: profileForModel(profile),
+    budget: stepBudget(stepNo, task.step_limit, spent.microusd, task.cost_cap_microusd),
+    visited: visited.slice(0, P.maxVisitedShown),
   }
   if (!task.is_demo) {
     const estimate = prepareStepRequest(input).maximumMicrousd
-    const spent = await taskSpend(task.reservation_id)
     if (spent.microusd + estimate > task.cost_cap_microusd) {
-      await finishTask(task, 'failed', '', 'COMPUTER_USE_TASK_CAP', agent)
+      await finishAtLimit(task, 'COMPUTER_USE_TASK_CAP', agent)
       return { kind: 'stop' }
     }
     const day = await dailySpend()
@@ -1185,6 +1350,16 @@ async function runStep(
       await query("UPDATE computer_use SET last_error='COMPUTER_USE_DAILY_LIMIT' WHERE id=true")
       return { kind: 'stop' }
     }
+    // Another step of the same size would not fit under the cap: this one is the last. The flag
+    // only shortens the request (false -> true), so the estimate above still covers it.
+    if (spent.microusd + 2 * estimate > task.cost_cap_microusd)
+      input.budget = stepBudget(
+        stepNo,
+        task.step_limit,
+        spent.microusd,
+        task.cost_cap_microusd,
+        true,
+      )
   }
   const callKey = `computer-use:${task.id}:${stepNo}`
   const raw = await model(input)
@@ -1308,6 +1483,27 @@ async function runStep(
   }
   if (!browserActionNames.includes(call.name)) throw new Error('COMPUTER_USE_TOOL_CALL_INVALID')
   const action = call as BrowserAction
+  if (omitImage && action.name === 'click') {
+    // Coordinates without a picture are a guess; the next step carries the screenshot again.
+    await recordStep(task, stepNo, {
+      ...base,
+      decision: 'blocked',
+      reason: 'COMPUTER_USE_SCREENSHOT_REQUIRED',
+    })
+    return { kind: 'continue' }
+  }
+  if (action.name === 'navigate') {
+    const target = normalizeUrl(action.url)
+    const before = visited.find((v) => v.url === target)
+    if (before && before.navigates >= P.maxNavigatesPerUrl) {
+      await recordStep(task, stepNo, {
+        ...base,
+        decision: 'blocked',
+        reason: 'COMPUTER_USE_LOOP_URL',
+      })
+      return { kind: 'continue' }
+    }
+  }
   const permit = await openPermit(task.id)
   const context: PageContext = {
     ...page,

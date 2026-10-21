@@ -14,10 +14,19 @@ export const COMPUTER_USE_POLICY = Object.freeze({
   // task never looks like a stuck loop to the worker watchdog (40 minutes).
   tickBudgetMs: 10 * 60_000,
   stepTimeoutMs: 60_000,
-  agentTimeoutMs: 45_000,
+  // Reads (snapshot, state, element under the cursor) are idempotent: a short timeout and one
+  // retry after a pause. Actions are never repeated; they get room for a page load and settling.
+  // An unreachable VM fails the task in about half a minute instead of hanging on it.
+  agentReadTimeoutMs: 15_000,
+  agentReadAttempts: 2,
+  agentRetryPauseMs: 1000,
+  agentActionTimeoutMs: 45_000,
   maxOutputTokens: 700,
   // Upper estimate of one 1280x800 PNG in input tokens; the reserve is checked before sending.
+  // A step without a picture is estimated without it.
   imageTokens: 3000,
+  // Leave out a screenshot identical to the one the model just saw after note_opportunity.
+  omitUnchangedScreenshots: true,
   maxHistorySteps: 12,
   maxScreenshotBytes: 2_000_000,
   maxInvalidInRow: 3,
@@ -37,6 +46,12 @@ export const COMPUTER_USE_POLICY = Object.freeze({
   documentOutputTokens: 2500,
   // The owner's remote control of the browser: the model does not run while it lasts.
   manualLeaseMs: 15 * 60_000,
+  // The model is told to wrap up (record what is left, call finish) at or below these.
+  wrapUpSteps: 3,
+  wrapUpCostPercent: 15,
+  // Loop guard: a third navigate to the same address within one task is refused.
+  maxNavigatesPerUrl: 2,
+  maxVisitedShown: 30,
 })
 
 export type ElementInfo = {
@@ -125,6 +140,18 @@ export function hostOf(url: string) {
   if (!URL.canParse(url)) return ''
   const u = new URL(url)
   return ['http:', 'https:'].includes(u.protocol) ? u.hostname.toLowerCase() : ''
+}
+/**
+ * One address for the loop guard and the visited list: no fragment, lower-case host, no trailing
+ * slash. The query stays: a different search or page number is a different page.
+ */
+export function normalizeUrl(url: string) {
+  if (!URL.canParse(url)) return url
+  const u = new URL(url)
+  if (!['http:', 'https:'].includes(u.protocol)) return url
+  u.hash = ''
+  if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '') || '/'
+  return u.href
 }
 const hostMatches = (host: string, list: string[]) =>
   list.some((entry) => {

@@ -18,8 +18,9 @@ const reasons: Record<string, string> = {
     'Три задания подряд не завершились. Проверьте машину и модель, затем включите заново.',
   COMPUTER_USE_DAILY_LIMIT:
     'Дневной лимит расходов на браузер исчерпан. Продолжим после полуночи UTC.',
-  COMPUTER_USE_TASK_CAP: 'Задание остановлено по лимиту расходов на одно задание.',
-  COMPUTER_USE_STEP_LIMIT: 'Задание остановлено по лимиту шагов, отчёт не получен.',
+  COMPUTER_USE_TASK_CAP:
+    'Достигнут лимит расходов на одно задание: работа завершается с отчётом сервера.',
+  COMPUTER_USE_STEP_LIMIT: 'Достигнут лимит шагов задания: работа завершается с отчётом сервера.',
   COMPUTER_USE_MODEL_INVALID: 'Модель трижды ответила не по формату. Задание остановлено.',
   COMPUTER_USE_VM_UNAVAILABLE: 'Виртуальная машина не отвечает.',
   COMPUTER_USE_SESSION_LOST: 'Сессия браузера на машине потеряна.',
@@ -44,6 +45,9 @@ const reasons: Record<string, string> = {
   COMPUTER_USE_OWNER_APPROVED: 'Выполнено с вашего разрешения.',
   COMPUTER_USE_OWNER_REJECTED: 'Вы отклонили это действие.',
   COMPUTER_USE_APPROVAL_EXPIRED: 'Запрос ждал сутки без ответа и закрыт.',
+  COMPUTER_USE_SCREENSHOT_REQUIRED:
+    'Клик без снимка экрана отклонён: снимок пришёл на следующем шаге.',
+  COMPUTER_USE_LOOP_URL: 'Этот адрес уже открывали дважды в задании: третий переход отклонён.',
   COMPUTER_USE_OPPORTUNITY_LIMIT: 'В этом задании уже записано достаточно возможностей.',
   COMPUTER_USE_QUEUE_FULL: 'Очередь заданий заполнена. Дождитесь выполнения.',
   COMPUTER_USE_GOAL_LENGTH: 'Опишите задание от 10 до 1000 символов без угловых скобок.',
