@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ComputerApprovalView,
+  ComputerDirectionView,
   ComputerOpportunityView,
   ComputerStepView,
   ComputerTaskView,
@@ -140,6 +141,85 @@ function markPlatform(domain: string, loggedIn: boolean) {
   void run(`platform-${domain}`, () =>
     post('/api/computer-use/platforms', { domain, loggedIn }),
   ).then(() => refresh())
+}
+
+// ---- search directions: the owner steers what the rotation looks for ----
+const directions = computed(() => data.value?.directions ?? [])
+const enabledDirections = computed(() => directions.value.filter((d) => d.enabled).length)
+const weights = [1, 2, 3, 4, 5]
+const directionPlaceholder =
+  'Например: найди русскоязычные подкасты, которые ищут редактора шоуноутов и расшифровок за оплату. Запиши условия и адреса; договор заключает владелец.'
+const newDirection = reactive({ title: '', goal: '', weight: 3 })
+const directionError = ref('')
+const editing = ref<string | null>(null)
+const edit = reactive({ title: '', goal: '', weight: 3 })
+const directionStats = (d: ComputerDirectionView) =>
+  `найдено ${d.found} · брать ${d.take} · нужен человек ${d.human}` +
+  (d.skip ? ` · пропущено ${d.skip}` : '') +
+  ` · заданий ${d.tasks}` +
+  (d.lastRunAt ? ` · последний запуск ${ago(d.lastRunAt)}` : ' · ещё не запускалось')
+function toggleDirection(d: ComputerDirectionView) {
+  void run(
+    `direction-${d.id}`,
+    () =>
+      post(`/api/computer-use/directions/${d.id}`, { action: d.enabled ? 'disable' : 'enable' }),
+    d.enabled ? 'Направление выключено.' : 'Направление включено.',
+  ).then(() => refresh())
+}
+function removeDirection(d: ComputerDirectionView) {
+  void run(
+    `direction-${d.id}`,
+    () => post(`/api/computer-use/directions/${d.id}`, { action: 'delete' }),
+    'Направление удалено.',
+  ).then(() => refresh())
+}
+function startEdit(d: ComputerDirectionView) {
+  editing.value = d.id
+  edit.title = d.title
+  edit.goal = d.goal
+  edit.weight = d.weight
+}
+async function saveEdit() {
+  const id = editing.value
+  if (!id) return
+  const result = await run(
+    `direction-${id}`,
+    () =>
+      post(`/api/computer-use/directions/${id}`, {
+        action: 'update',
+        title: edit.title.trim(),
+        goal: edit.goal.trim(),
+        weight: Number(edit.weight),
+      }),
+    'Направление сохранено.',
+  )
+  if (result) editing.value = null
+  await refresh()
+}
+async function addDirection() {
+  directionError.value = ''
+  const title = newDirection.title.trim()
+  const goal = newDirection.goal.trim()
+  if (title.length < 3) {
+    directionError.value = 'Дайте направлению название от 3 символов.'
+    return
+  }
+  if (goal.length < 10) {
+    directionError.value = 'Опишите, что искать и что записывать, хотя бы десятью символами.'
+    return
+  }
+  const result = await run(
+    'direction-new',
+    () =>
+      post('/api/computer-use/directions', { title, goal, weight: Number(newDirection.weight) }),
+    'Направление добавлено: оно войдёт в ближайший круг.',
+  )
+  if (result) {
+    newDirection.title = ''
+    newDirection.goal = ''
+    newDirection.weight = 3
+  }
+  await refresh()
 }
 
 // ---- owner remote control: the model pauses, typed text never leaves the browser request ----
@@ -661,6 +741,156 @@ const key = (name: string) => act({ name: 'key', key: name })
       </section>
 
       <OfficePerformerProfile />
+      <section class="card rise directions" aria-labelledby="computer-directions">
+        <div class="card-head">
+          <h2 id="computer-directions">Направления поиска</h2>
+          <span class="small muted"
+            >включено {{ enabledDirections }} из {{ directions.length }}</span
+          >
+        </div>
+        <p class="small muted">
+          Пока нет ваших заданий, модель по кругу берёт включённые направления: чаще те, где находки
+          чаще получаются «брать» или «нужен человек», но ни одно включённое не остаётся без
+          очереди. Площадки с входом идут первыми. Встроенные направления можно выключить и
+          переписать, свои - ещё и удалить; запрещённые схемы сервер отклонит.
+        </p>
+        <ul class="direction-list" aria-label="Направления поиска">
+          <li
+            v-for="d in directions"
+            :key="d.id"
+            class="direction"
+            :class="{ 'is-off': !d.enabled }"
+            :data-direction="d.id"
+          >
+            <div class="direction-row">
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                :aria-checked="d.enabled"
+                :aria-label="`Направление «${d.title}»`"
+                :disabled="!!busy || status.offline"
+                @click="toggleDirection(d)"
+              />
+              <div class="direction-body">
+                <div class="found-head">
+                  <h3>{{ d.title }}</h3>
+                  <span class="badge badge-plain">Приоритет {{ d.weight }}</span>
+                  <span v-if="!d.builtIn" class="badge badge-copy">Своё</span>
+                  <span v-if="!d.enabled" class="badge badge-off">Выключено</span>
+                </div>
+                <p class="small muted">{{ directionStats(d) }}</p>
+                <template v-if="editing === d.id">
+                  <form class="direction-form" @submit.prevent="saveEdit">
+                    <div class="field">
+                      <label :for="`direction-title-${d.id}`">Название</label>
+                      <input
+                        :id="`direction-title-${d.id}`"
+                        v-model="edit.title"
+                        class="input"
+                        type="text"
+                        maxlength="80"
+                      />
+                    </div>
+                    <div class="field">
+                      <label :for="`direction-goal-${d.id}`">Что искать и что записывать</label>
+                      <textarea
+                        :id="`direction-goal-${d.id}`"
+                        v-model="edit.goal"
+                        class="textarea"
+                        rows="4"
+                        maxlength="1000"
+                      />
+                    </div>
+                    <div class="field weight">
+                      <label :for="`direction-weight-${d.id}`">Приоритет</label>
+                      <select :id="`direction-weight-${d.id}`" v-model="edit.weight" class="select">
+                        <option v-for="w in weights" :key="w" :value="w">{{ w }}</option>
+                      </select>
+                    </div>
+                    <div class="row-wrap actions">
+                      <button type="submit" class="btn btn-primary btn-sm" :disabled="!!busy">
+                        Сохранить
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        :disabled="!!busy"
+                        @click="editing = null"
+                      >
+                        Отмена
+                      </button>
+                    </div>
+                  </form>
+                </template>
+                <template v-else>
+                  <details class="fold">
+                    <summary class="small">Текст задания</summary>
+                    <p class="small report">{{ d.goal }}</p>
+                  </details>
+                  <div class="row-wrap actions">
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      :disabled="!!busy"
+                      @click="startEdit(d)"
+                    >
+                      Изменить
+                    </button>
+                    <button
+                      v-if="!d.builtIn"
+                      type="button"
+                      class="btn btn-sm btn-ghost"
+                      :disabled="!!busy"
+                      @click="removeDirection(d)"
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </li>
+        </ul>
+        <p v-if="!enabledDirections && !loggedIn.length" class="small hint-err">
+          Все направления выключены и нет площадок с входом: модели нечего искать по кругу.
+        </p>
+        <form class="direction-form add" @submit.prevent="addDirection">
+          <h3>Своё направление</h3>
+          <div class="field" :class="{ 'is-error': directionError }">
+            <label for="direction-new-title">Название</label>
+            <input
+              id="direction-new-title"
+              v-model="newDirection.title"
+              class="input"
+              type="text"
+              maxlength="80"
+              placeholder="Например: редактура подкастов"
+            />
+          </div>
+          <div class="field" :class="{ 'is-error': directionError }">
+            <label for="direction-new-goal">Что искать и что записывать</label>
+            <textarea
+              id="direction-new-goal"
+              v-model="newDirection.goal"
+              class="textarea"
+              rows="4"
+              maxlength="1000"
+              :placeholder="directionPlaceholder"
+            />
+            <p v-if="directionError" class="hint">{{ directionError }}</p>
+          </div>
+          <div class="field weight">
+            <label for="direction-new-weight">Приоритет</label>
+            <select id="direction-new-weight" v-model="newDirection.weight" class="select">
+              <option v-for="w in weights" :key="w" :value="w">{{ w }}</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary" :disabled="!!busy || status.offline">
+            {{ busy === 'direction-new' ? 'Сохраняем' : 'Добавить направление' }}
+          </button>
+        </form>
+      </section>
 
       <section class="card rise" aria-labelledby="computer-proposals">
         <div class="card-head">
@@ -688,7 +918,7 @@ const key = (name: string) => act({ name: 'key', key: name })
                 · цена {{ money(item.priceAmount, item.priceCurrency) }}</span
               >
             </p>
-            <details class="disclosure">
+            <details class="fold">
               <summary class="small">Текст отклика ({{ item.text.length }} зн.)</summary>
               <p class="small report">{{ item.text }}</p>
             </details>
@@ -714,7 +944,7 @@ const key = (name: string) => act({ name: 'key', key: name })
             </div>
             <h3>{{ item.title }}</h3>
             <p class="small muted">Техзадание: {{ item.brief }}</p>
-            <details class="disclosure">
+            <details class="fold">
               <summary class="small">Текст ({{ item.text.length }} зн.)</summary>
               <p class="small report">{{ item.text }}</p>
             </details>
@@ -815,7 +1045,7 @@ const key = (name: string) => act({ name: 'key', key: name })
                   <p class="small muted">
                     {{ sourceLabel(task) }}<span v-if="task.demo"> · демо</span>
                   </p>
-                  <details v-if="taskNote(task)" class="disclosure">
+                  <details v-if="taskNote(task)" class="fold">
                     <summary class="small">{{ task.error ? 'Причина' : 'Отчёт' }}</summary>
                     <p class="small report">{{ taskNote(task) }}</p>
                   </details>
@@ -830,7 +1060,7 @@ const key = (name: string) => act({ name: 'key', key: name })
         <p v-else class="muted">Заданий ещё не было.</p>
       </section>
 
-      <details class="card rise disclosure help">
+      <details class="card rise fold help">
         <summary>Как это устроено</summary>
         <p>
           Браузер работает на отдельной виртуальной машине без ключей бирж, кошельков и базы фермы.
@@ -1043,8 +1273,67 @@ section.card + details.card {
   white-space: pre-line;
   margin-top: 4px;
 }
+/* Plain <details>: the design-system .disclosure is hidden until a script opens it. */
+.fold summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.fold.help summary {
+  color: inherit;
+  font-weight: 600;
+}
 .help p + p {
   margin-top: var(--s-3);
+}
+.direction-list {
+  list-style: none;
+  margin: var(--s-4) 0 0;
+  padding: 0;
+}
+.direction {
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line);
+}
+.direction-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+.direction-row .switch {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.direction-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.direction-body h3 {
+  margin: 0;
+  font-size: var(--text-md);
+}
+.direction.is-off h3,
+.direction.is-off .small {
+  color: var(--muted);
+}
+.direction-form {
+  display: grid;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  justify-items: start;
+}
+.direction-form .field {
+  width: 100%;
+}
+.direction-form .field.weight {
+  width: auto;
+}
+.direction-form.add {
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+.direction-form.add h3 {
+  margin: 0;
 }
 @media (max-width: 900px) {
   .live,

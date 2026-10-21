@@ -2,6 +2,7 @@ import { config, computerUseReady } from '../config'
 import { query } from '../db'
 import type {
   ComputerApprovalView,
+  ComputerDirectionView,
   ComputerDocumentView,
   ComputerOpportunityView,
   ComputerPlatformView,
@@ -10,7 +11,7 @@ import type {
   ComputerTaskView,
   ComputerUseView,
 } from '../contracts/computer-use'
-import { rotationGoals } from './goals'
+import { listDirections } from './directions'
 import { platformDomains } from './platforms'
 import { COMPUTER_USE_POLICY as P } from './policy'
 import { effectiveProposalsPerDay, readProfile } from './profile'
@@ -74,6 +75,7 @@ export async function computerUseView(): Promise<ComputerUseView> {
     documents,
     platformRows,
     daily,
+    directionRows,
   ] = await Promise.all([
     query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true'),
     query('SELECT mode,worker_heartbeat FROM system_state WHERE id=true'),
@@ -101,6 +103,7 @@ export async function computerUseView(): Promise<ComputerUseView> {
       `SELECT platform_domain,count(*)::int AS n,count(*) FILTER (WHERE status='sent')::int AS sent
        FROM computer_use_proposals WHERE ${utcDay} GROUP BY platform_domain`,
     ),
+    listDirections(),
   ])
   const state = states[0]!
   const system = systems[0]
@@ -118,6 +121,10 @@ export async function computerUseView(): Promise<ComputerUseView> {
     blocked.push('COMPUTER_USE_DAILY_LIMIT')
   const manualActive = !!state.manual_until && state.manual_until.getTime() > now
   if (manualActive) blocked.push('COMPUTER_USE_MANUAL_CONTROL')
+  const loggedIn = new Map(platformRows.map((row) => [row.domain as string, !!row.logged_in]))
+  const enabledDirections = directionRows.filter((row) => row.enabled).length
+  const rotationGoals = enabledDirections + 2 * [...loggedIn.values()].filter(Boolean).length
+  if (!rotationGoals && !queued[0]!.n) blocked.push('COMPUTER_USE_NO_DIRECTIONS')
   let currentView: ComputerTaskView | null = null
   if (current[0]) {
     const steps = await query(
@@ -139,7 +146,6 @@ export async function computerUseView(): Promise<ComputerUseView> {
     }))
     currentView = taskView(current[0], views, views.find((s) => s.hasScreenshot)?.id ?? null)
   }
-  const loggedIn = new Map(platformRows.map((row) => [row.domain as string, !!row.logged_in]))
   const counts = new Map(daily.map((row) => [row.platform_domain as string, row]))
   const platforms: ComputerPlatformView[] = platformDomains().map((domain) => ({
     domain,
@@ -162,7 +168,7 @@ export async function computerUseView(): Promise<ComputerUseView> {
       spentTodayKopecks: spent.kopecks,
       queuedOwnerGoals: queued[0]!.n,
       failures: state.failures,
-      rotationGoals: rotationGoals.length + 2 * [...loggedIn.values()].filter(Boolean).length,
+      rotationGoals,
       autoProposals: state.auto_proposals,
       autoProposalsAllowed: c.COMPUTER_USE_AUTO_PROPOSALS,
       // The performer profile may lower the env limit, never raise it.
@@ -229,5 +235,21 @@ export async function computerUseView(): Promise<ComputerUseView> {
       createdAt: d.created_at.toISOString(),
     })),
     platforms,
+    directions: directionRows.map((d): ComputerDirectionView => ({
+      id: d.id,
+      title: d.title,
+      goal: d.goal,
+      enabled: d.enabled,
+      weight: d.weight,
+      builtIn: d.built_in,
+      createdAt: d.created_at.toISOString(),
+      updatedAt: d.updated_at.toISOString(),
+      lastRunAt: d.last_run_at?.toISOString() || null,
+      tasks: d.tasks,
+      found: d.found,
+      take: d.take_count,
+      human: d.human_count,
+      skip: d.skip_count,
+    })),
   }
 }
