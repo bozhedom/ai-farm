@@ -251,6 +251,17 @@ export function config(): Config {
   return c
 }
 
+/** The chosen model provider has its key: free OpenRouter models, paid Astra over OpenRouter or the direct OpenAI key. */
+export function modelConfigured(c: Config) {
+  return c.MODEL_PROVIDER === 'openrouter'
+    ? !!c.OPENROUTER_API_KEY
+    : c.MODEL_PROVIDER === 'openai'
+      ? c.OPENAI_TRANSPORT === 'openrouter'
+        ? !!c.OPENROUTER_API_KEY
+        : !!c.OPENAI_API_KEY
+      : c.MODEL_PROVIDER !== 'demo'
+}
+
 /** Whether the worker may drive the VM browser with the real model or the demo script. */
 export function computerUseReady(c: Config) {
   if (!c.COMPUTER_USE_ENABLED) return 'COMPUTER_USE_DISABLED_ON_SERVER'

@@ -1,4 +1,4 @@
-import { computerUseReady, config } from '../config'
+import { computerUseReady, config, modelConfigured } from '../config'
 import { query } from '../db'
 import { officeOverview, publicUrl } from '../office'
 import { serviceName } from '../service-names'
@@ -632,16 +632,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       link: '/office/trading',
       severity: 'warn',
     })
-  // Free OpenRouter models, or paid Astra over OpenRouter or the direct OpenAI key.
-  const modelReady =
-    c.MODEL_PROVIDER === 'openrouter'
-      ? !!c.OPENROUTER_API_KEY
-      : c.MODEL_PROVIDER === 'openai'
-        ? c.OPENAI_TRANSPORT === 'openrouter'
-          ? !!c.OPENROUTER_API_KEY
-          : !!c.OPENAI_API_KEY
-        : c.MODEL_PROVIDER !== 'demo'
-  if (!modelReady)
+  if (!modelConfigured(c))
     add({
       id: 'openrouter',
       title:
