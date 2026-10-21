@@ -417,6 +417,13 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     })
     expect(row.step_count).toBe(calls.length)
     expect(fetchMock).toHaveBeenCalledTimes(calls.length)
+    // Each request carried the budget: the second step was the last that fits under the cap.
+    const budgets = fetchMock.mock.calls.map(
+      ([, init]) => JSON.parse(JSON.parse(init.body).messages[1].content[0].text).budget,
+    )
+    expect(budgets[0]).toMatchObject({ steps_left: 30, cost_left_percent: 100 })
+    expect(budgets[1]).toMatchObject({ steps_left: 29, wrap_up: true, final_step: true })
+    expect(budgets[1].cost_left_percent).toBe(Math.floor(((cap - 85000) * 100) / cap))
     const shown = await computerUseView()
     expect(shown.state.spentTodayMicrousd).toBe(calls.length * 85000)
     expect(shown.history[0]?.spentMicrousd).toBe(calls.length * 85000)
@@ -474,6 +481,74 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     )
     expect(audited?.data).toMatchObject({ status: 'done', endedBy: 'limit' })
     expect(agent.sessions.size).toBe(0)
+    // The model saw what was left and where it had been; the last step asked it to finish.
+    expect(seen.map((input) => input.budget)).toEqual([
+      { stepsLeft: 3, costLeftPercent: null, wrapUp: true, finalStep: false },
+      { stepsLeft: 2, costLeftPercent: null, wrapUp: true, finalStep: false },
+      { stepsLeft: 1, costLeftPercent: null, wrapUp: true, finalStep: true },
+    ])
+    expect(seen[0]!.visited).toEqual([])
+    expect(seen[1]!.visited).toEqual([
+      { url: 'https://jobs.example/list', visits: 1, navigates: 1 },
+    ])
+    const sent = JSON.parse(prepareStepRequest(seen[2]!).text)
+    expect(sent.budget).toEqual({
+      steps_left: 1,
+      cost_left_percent: null,
+      wrap_up: true,
+      final_step: true,
+    })
+    expect(sent.visited_urls).toEqual([
+      { url: 'https://jobs.example/list', visits: 1, navigates: 1 },
+    ])
+  })
+
+  it('refuses a third navigate to the same address and shows the visited list', async () => {
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent()
+    const seen: ModelInput[] = []
+    const go = (url: string) => (input: ModelInput) => (
+      seen.push(input),
+      { name: 'navigate', arguments: { url } }
+    )
+    const model = scripted([
+      go('https://plati.example/catalog'),
+      go('https://boosty.example/'),
+      // The same page again, written differently: fragment and trailing slash do not count.
+      go('https://PLATI.example/catalog/#top'),
+      go('https://plati.example/catalog'),
+      go('https://plati.example/catalog?page=2'),
+      (input) => (
+        seen.push(input),
+        { name: 'finish', arguments: { report: 'Каталог просмотрен.' } }
+      ),
+    ])
+    await computerUseTick({ agent, model })
+    const row = await task()
+    expect(row.status).toBe('done')
+    expect((await steps(row.id)).map((s) => [s.action.name, s.decision, s.reason])).toEqual([
+      ['navigate', 'allowed', ''],
+      ['navigate', 'allowed', ''],
+      ['navigate', 'allowed', ''],
+      ['navigate', 'blocked', 'COMPUTER_USE_LOOP_URL'],
+      ['navigate', 'allowed', ''],
+      ['finish', 'allowed', ''],
+    ])
+    expect(agent.actions.map((a) => a.action)).toEqual([
+      { name: 'navigate', url: 'https://plati.example/catalog' },
+      { name: 'navigate', url: 'https://boosty.example/' },
+      { name: 'navigate', url: 'https://PLATI.example/catalog/#top' },
+      { name: 'navigate', url: 'https://plati.example/catalog?page=2' },
+    ])
+    expect(seen[3]!.visited).toEqual([
+      { url: 'https://plati.example/catalog', visits: 2, navigates: 2 },
+      { url: 'https://boosty.example/', visits: 1, navigates: 1 },
+    ])
+    expect(seen[5]!.visited![0]).toEqual({
+      url: 'https://plati.example/catalog?page=2',
+      visits: 1,
+      navigates: 1,
+    })
   })
 
   it('keeps a task resumable on pause, stop and the daily limit', async () => {

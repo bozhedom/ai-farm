@@ -11,6 +11,7 @@ import {
   forbiddenTextReason,
   hostOf,
   isPrivateHost,
+  normalizeUrl,
   validateGoal,
   type PageContext,
 } from './policy'
@@ -29,10 +30,13 @@ import {
   demoScript,
   prepareDocumentRequest,
   prepareStepRequest,
+  stepBudget,
   type ComputerUseModel,
   type DocumentWriter,
+  type ModelInput,
   type StepHistory,
   type StoredForModel,
+  type VisitedUrl,
 } from './model'
 import {
   aiForbiddenReason,
@@ -592,6 +596,44 @@ async function historyOf(taskId: string): Promise<StepHistory[]> {
     reason: row.reason,
     urlAfter: row.url_after,
   }))
+}
+
+/**
+ * Addresses this task has opened, most recent first: arrivals on a page (a navigate or an action
+ * that changed the address) and navigate attempts that reached the VM. Feeds the model's
+ * visited list and the loop guard.
+ */
+export async function visitedUrls(taskId: string, db?: Connection): Promise<VisitedUrl[]> {
+  const rows = await query(
+    'SELECT step_no,action,decision,url_before,url_after FROM computer_use_steps WHERE task_id=$1 ORDER BY step_no',
+    [taskId],
+    db,
+  )
+  const seen = new Map<string, VisitedUrl & { last: number }>()
+  const entry = (url: string, stepNo: number) => {
+    const key = normalizeUrl(url)
+    const found = seen.get(key) ?? { url: key, visits: 0, navigates: 0, last: stepNo }
+    found.last = stepNo
+    seen.set(key, found)
+    return found
+  }
+  for (const row of rows) {
+    const reached = ['allowed', 'approved', 'failed'].includes(row.decision)
+    if (!reached) continue
+    if (row.action?.name === 'navigate' && typeof row.action.url === 'string')
+      entry(row.action.url, row.step_no).navigates++
+    const after = String(row.url_after || '')
+    if (
+      /^https?:\/\//.test(after) &&
+      row.decision !== 'failed' &&
+      (row.action?.name === 'navigate' ||
+        normalizeUrl(after) !== normalizeUrl(String(row.url_before || '')))
+    )
+      entry(after, row.step_no).visits++
+  }
+  return [...seen.values()]
+    .sort((a, b) => b.last - a.last)
+    .map(({ url, visits, navigates }) => ({ url, visits, navigates }))
 }
 
 async function finishTask(
@@ -1220,7 +1262,9 @@ async function runStep(
     [task.id],
   )
   const [owner] = await query<ComputerUseRow>('SELECT * FROM computer_use WHERE id=true')
-  const input = {
+  const spent = task.is_demo ? { microusd: 0, kopecks: 0 } : await taskSpend(task.reservation_id)
+  const visited = await visitedUrls(task.id)
+  const input: ModelInput = {
     taskId: task.id,
     reservationId: task.reservation_id!,
     goal: task.goal,
@@ -1237,10 +1281,11 @@ async function runStep(
       autoProposals: c.COMPUTER_USE_AUTO_PROPOSALS && !!owner?.auto_proposals,
       proposalsPerDay: c.COMPUTER_USE_PROPOSALS_PER_DAY,
     },
+    budget: stepBudget(stepNo, task.step_limit, spent.microusd, task.cost_cap_microusd),
+    visited: visited.slice(0, P.maxVisitedShown),
   }
   if (!task.is_demo) {
     const estimate = prepareStepRequest(input).maximumMicrousd
-    const spent = await taskSpend(task.reservation_id)
     if (spent.microusd + estimate > task.cost_cap_microusd) {
       await finishAtLimit(task, 'COMPUTER_USE_TASK_CAP', agent)
       return { kind: 'stop' }
@@ -1250,6 +1295,16 @@ async function runStep(
       await query("UPDATE computer_use SET last_error='COMPUTER_USE_DAILY_LIMIT' WHERE id=true")
       return { kind: 'stop' }
     }
+    // Another step of the same size would not fit under the cap: this one is the last. The flag
+    // only shortens the request (false -> true), so the estimate above still covers it.
+    if (spent.microusd + 2 * estimate > task.cost_cap_microusd)
+      input.budget = stepBudget(
+        stepNo,
+        task.step_limit,
+        spent.microusd,
+        task.cost_cap_microusd,
+        true,
+      )
   }
   const callKey = `computer-use:${task.id}:${stepNo}`
   const raw = await model(input)
@@ -1373,6 +1428,18 @@ async function runStep(
   }
   if (!browserActionNames.includes(call.name)) throw new Error('COMPUTER_USE_TOOL_CALL_INVALID')
   const action = call as BrowserAction
+  if (action.name === 'navigate') {
+    const target = normalizeUrl(action.url)
+    const before = visited.find((v) => v.url === target)
+    if (before && before.navigates >= P.maxNavigatesPerUrl) {
+      await recordStep(task, stepNo, {
+        ...base,
+        decision: 'blocked',
+        reason: 'COMPUTER_USE_LOOP_URL',
+      })
+      return { kind: 'continue' }
+    }
+  }
   const permit = await openPermit(task.id)
   const context: PageContext = {
     ...page,

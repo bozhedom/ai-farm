@@ -43,6 +43,12 @@ export const COMPUTER_USE_POLICY = Object.freeze({
   documentOutputTokens: 2500,
   // The owner's remote control of the browser: the model does not run while it lasts.
   manualLeaseMs: 15 * 60_000,
+  // The model is told to wrap up (record what is left, call finish) at or below these.
+  wrapUpSteps: 3,
+  wrapUpCostPercent: 15,
+  // Loop guard: a third navigate to the same address within one task is refused.
+  maxNavigatesPerUrl: 2,
+  maxVisitedShown: 30,
 })
 
 export type ElementInfo = {
@@ -131,6 +137,18 @@ export function hostOf(url: string) {
   if (!URL.canParse(url)) return ''
   const u = new URL(url)
   return ['http:', 'https:'].includes(u.protocol) ? u.hostname.toLowerCase() : ''
+}
+/**
+ * One address for the loop guard and the visited list: no fragment, lower-case host, no trailing
+ * slash. The query stays: a different search or page number is a different page.
+ */
+export function normalizeUrl(url: string) {
+  if (!URL.canParse(url)) return url
+  const u = new URL(url)
+  if (!['http:', 'https:'].includes(u.protocol)) return url
+  u.hash = ''
+  if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '') || '/'
+  return u.href
 }
 const hostMatches = (host: string, list: string[]) =>
   list.some((entry) => {
