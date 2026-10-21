@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { IconName } from '~/composables/office/icons'
 import { officeApi, useOfficeToast } from '~/composables/office/actions'
-import { useOfficeOverview } from '~/composables/office/data'
+import { useOfficeLaunch, useOfficeOverview } from '~/composables/office/data'
 import { count } from '~/composables/office/format'
 import { useOfficeOnline } from '~/composables/office/resource'
 
 const route = useRoute()
 const { data: overview } = useOfficeOverview()
+const { data: launch } = useOfficeLaunch(30000)
 const online = useOfficeOnline()
 const { toast } = useOfficeToast()
 const menuOpen = ref(false)
@@ -26,8 +27,17 @@ type Item = {
 const items = computed<Item[]>(() => {
   const o = overview.value
   const orderAlerts = o?.needsOwner.filter((n) => /order|заказ/i.test(n.kind)).length || 0
+  const l = launch.value
+  const launchLeft = l ? l.total - l.done : 0
   return [
     { to: '/office', label: 'Обзор', icon: 'home' },
+    {
+      to: '/office/launch',
+      label: 'Запуск',
+      icon: 'play',
+      alert: launchLeft,
+      hint: 'шагов осталось',
+    },
     { to: '/office/trading', label: 'Торговая ферма', icon: 'money', short: 'Торговля' },
     { to: '/office/earnings', label: 'Направления', icon: 'spark' },
     { to: '/office/computer', label: 'Компьютер ИИ', icon: 'box' },
@@ -129,9 +139,12 @@ async function logout() {
           :class="{ 'is-active': isActive(item.to) }"
           :aria-current="isActive(item.to) ? 'page' : undefined"
           ><OfficeIcon :name="item.icon" />{{ item.label }}
-          <span v-if="item.alert" class="count is-alert" :title="`Ждут вас: ${item.alert}`">{{
-            item.alert
-          }}</span>
+          <span
+            v-if="item.alert"
+            class="count is-alert"
+            :title="item.hint ? `${item.alert} ${item.hint}` : `Ждут вас: ${item.alert}`"
+            >{{ item.alert }}</span
+          >
           <span
             v-else-if="item.count"
             class="count"

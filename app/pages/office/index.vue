@@ -5,7 +5,7 @@ import type {
   IncomePeriod,
   IncomeTotals,
 } from '../../../core/contracts/overview'
-import { useOfficeIncome, useOfficeOverview } from '~/composables/office/data'
+import { useOfficeIncome, useOfficeLaunch, useOfficeOverview } from '~/composables/office/data'
 import { ago, count, rub, todayTitle, withCount } from '~/composables/office/format'
 import {
   amountText,
@@ -29,6 +29,13 @@ useHead({ title: 'Как ферма зарабатывает' })
 const { data: v, status, pending, refresh } = useOfficeIncome()
 // The shell already polls the overview; reusing it keeps the stop button state in sync.
 const { data: office } = useOfficeOverview()
+// Launch checklist for the readiness card; its own poll, slower than the income one.
+const { data: launch } = useOfficeLaunch()
+const launchPercent = computed(() =>
+  launch.value && launch.value.total
+    ? Math.round((launch.value.done / launch.value.total) * 100)
+    : 0,
+)
 
 const clock = ref(new Date())
 let tick: ReturnType<typeof setInterval> | undefined
@@ -219,6 +226,47 @@ const priceText = (kopecks: number) => rub(kopecks)
           >
             {{ p.label }}
           </button>
+        </div>
+      </section>
+
+      <!-- Launch readiness -->
+      <section v-if="launch" class="card rise launch" aria-labelledby="launch-card-title">
+        <div class="launch-main">
+          <div class="launch-text">
+            <h2 id="launch-card-title">
+              {{
+                launch.done === launch.total
+                  ? 'Всё обязательное для заработка сделано'
+                  : `Готовность к заработку: ${launch.done} из ${launch.total}`
+              }}
+            </h2>
+            <div
+              class="bar"
+              role="progressbar"
+              :aria-valuenow="launch.done"
+              aria-valuemin="0"
+              :aria-valuemax="launch.total"
+              :aria-label="`Готово ${launch.done} из ${launch.total}`"
+            >
+              <i :style="{ width: `${launchPercent}%` }" />
+            </div>
+            <p v-if="launch.next" class="small">
+              <b>Следующий шаг:</b> {{ launch.next.title }}.
+              <span class="muted">{{ launch.next.state }}</span>
+            </p>
+            <p v-else class="small muted">
+              Дальше по желанию: торговля на реальные деньги и другие биржи, см. список «Запуск».
+            </p>
+          </div>
+          <div class="launch-actions">
+            <NuxtLink
+              v-if="launch.next"
+              class="btn btn-primary"
+              :to="`/office/launch#step-${launch.next.id}`"
+              >Что сделать</NuxtLink
+            >
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/launch">Весь список</NuxtLink>
+          </div>
         </div>
       </section>
 
@@ -774,6 +822,50 @@ const priceText = (kopecks: number) => rub(kopecks)
 .feed-card :deep(.feed) {
   max-height: 560px;
   overflow-y: auto;
+}
+
+/* Launch readiness */
+.launch {
+  margin-top: var(--s-5);
+}
+.launch-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-5);
+}
+.launch-text {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+  flex: 1;
+}
+.launch-text p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.launch .bar {
+  max-width: 420px;
+}
+.launch .bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--st-ok);
+}
+.launch-actions {
+  display: grid;
+  gap: var(--s-2);
+  flex: none;
+}
+@media (max-width: 640px) {
+  .launch-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .launch-actions {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 /* Needs a person */

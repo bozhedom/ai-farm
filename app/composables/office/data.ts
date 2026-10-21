@@ -13,6 +13,7 @@ import type {
   OfficeSettings,
 } from '../../../core/contracts/office'
 import type { OfficeIncome } from '../../../core/contracts/overview'
+import type { LaunchView } from '../../../core/contracts/launch'
 import type { OfficeWallet } from '../../../core/contracts/wallet'
 import { officeFetch, useOfficeResource } from './resource'
 
@@ -82,6 +83,13 @@ export function useOfficeOverview() {
 /** How the farm earns: `/api/office/income`, one aggregated snapshot for the main screen. */
 export function useOfficeIncome(interval = 10000) {
   return useOfficeResource('income', () => officeFetch<OfficeIncome>('/api/office/income'), {
+    interval,
+  })
+}
+
+/** Launch checklist: `/api/office/launch`, what is left so the farm earns by itself. */
+export function useOfficeLaunch(interval = 15000) {
+  return useOfficeResource('launch', () => officeFetch<LaunchView>('/api/office/launch'), {
     interval,
   })
 }

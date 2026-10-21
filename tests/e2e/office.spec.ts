@@ -40,6 +40,7 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     const offset = Number(url.searchParams.get('offset') || 0)
     if (path === '/api/office/overview') return json(route, fx.overview)
     if (path === '/api/office/income') return json(route, fx.income)
+    if (path === '/api/office/launch') return json(route, fx.launch)
     if (path === '/api/office/agents') return json(route, fx.agents)
     if (path === '/api/office/money') return json(route, fx.money)
     if (path === '/api/office/wallet') return json(route, fx.wallet)
@@ -129,6 +130,7 @@ async function noHorizontalScroll(page: Page) {
 const fx = officeFixtures()
 const sections: { name: string; path: string; ready: string }[] = [
   { name: 'overview', path: '/office', ready: 'Источники заработка' },
+  { name: 'launch', path: '/office/launch', ready: 'Готовность к заработку' },
   { name: 'farm', path: '/office/farm', ready: 'Что произошло сегодня' },
   { name: 'ideas', path: '/office/ideas', ready: fx.ideas[0]!.title },
   {
@@ -171,6 +173,74 @@ for (const width of [1440, 390]) {
     }
   })
 }
+
+/** The launch checklist and the overview card in both themes; shots: output/playwright/launch. */
+const launchShots = join(process.cwd(), 'output/playwright/launch')
+mkdirSync(launchShots, { recursive: true })
+for (const theme of ['light', 'dark'] as const)
+  for (const width of [1440, 390]) {
+    test.describe(`launch ${theme} ${width}`, () => {
+      test.use({ viewport: { width, height: width > 1000 ? 900 : 844 } })
+      for (const section of sections.filter((s) => s.name === 'launch' || s.name === 'overview')) {
+        test(section.name, async ({ page }) => {
+          const errors = watchConsole(page)
+          await stubOffice(page, fx)
+          // The init script may run before <html> exists: apply the theme as soon as it does.
+          if (theme === 'dark')
+            await page.addInitScript(() => {
+              const apply = () => {
+                if (!document.documentElement) return false
+                document.documentElement.setAttribute('data-theme', 'dark')
+                return true
+              }
+              if (!apply())
+                new MutationObserver((_, observer) => {
+                  if (apply()) observer.disconnect()
+                }).observe(document, { childList: true })
+            })
+          await page.goto(section.path)
+          await expect(page.getByText(section.ready).first()).toBeVisible()
+          await expect(page.getByText('Готовность к заработку').first()).toBeVisible()
+          await page.waitForTimeout(400)
+          await noHorizontalScroll(page)
+          if (width < 1024)
+            await page.addStyleTag({ content: '.tabbar{position:static!important}' })
+          await page.screenshot({
+            path: join(launchShots, `${section.name}-${theme}-${width}.png`),
+            fullPage: true,
+          })
+          expect(errors).toEqual([])
+        })
+      }
+    })
+  }
+
+test.describe('launch behaviour', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test('the overview card names the next step and leads to it', async ({ page }) => {
+    await stubOffice(page, fx)
+    await page.goto('/office')
+    const card = page.locator('section.launch')
+    await expect(card).toContainText(
+      `Готовность к заработку: ${fx.launch.done} из ${fx.launch.total}`,
+    )
+    await expect(card).toContainText(fx.launch.next!.title)
+    await card.getByRole('link', { name: 'Что сделать' }).click()
+    await expect(page).toHaveURL(new RegExp(`/office/launch#step-${fx.launch.next!.id}$`))
+    await expect(page.getByRole('heading', { name: 'Запуск' })).toBeVisible()
+    const step = page.locator(`#step-${fx.launch.next!.id}`)
+    await expect(step).toContainText('Нужно сделать')
+    await expect(step).toContainText('Виртуальная машина не отвечает')
+    // Honest words about test money and the real state of the platforms.
+    await expect(
+      page.getByText('Тренировка и Demo идут на тестовые деньги, это не доход.'),
+    ).toBeVisible()
+    await expect(page.locator('#step-platforms')).toContainText('Начните с: kwork.ru, fl.ru')
+    await expect(page.locator('#step-bybit-live-key')).toContainText('только с правом Spot Trade')
+    await expect(page.getByRole('link', { name: 'Запуск' }).first()).toBeVisible()
+  })
+})
 
 test.describe('office behaviour', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
