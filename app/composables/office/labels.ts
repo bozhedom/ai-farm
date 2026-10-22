@@ -146,11 +146,25 @@ const paramValue = (value: unknown): string =>
       ? valueLabels[value] || categoryById[value]?.label || value
       : String(value ?? '')
 
-/** «тон: экспертный (раньше простой)». */
-export function mutationText(mutation: AgentMutation | null | undefined) {
-  if (!mutation) return ''
-  const name = paramLabels[mutation.param] || mutation.param
-  return `${name}: ${paramValue(mutation.to)} (раньше ${paramValue(mutation.from)})`
+/**
+ * «тон: экспертный (раньше простой)». Older copies may have no recorded change, or a change
+ * stored as a JSON string; both still read as a sentence instead of an empty «Копия В:».
+ */
+export function mutationText(mutation: AgentMutation | string | null | undefined) {
+  let m = mutation
+  if (typeof m === 'string') {
+    try {
+      m = JSON.parse(m) as AgentMutation
+    } catch {
+      m = null
+    }
+  }
+  if (!m || typeof m !== 'object' || !m.param) return 'изменение не записано'
+  const name = paramLabels[m.param] || m.param
+  const to = paramValue(m.to)
+  const from = paramValue(m.from)
+  if (!to) return `${name} изменён`
+  return from && from !== to ? `${name}: ${to} (раньше ${from})` : `${name}: ${to}`
 }
 
 export const tonesForAgents = ['', 'is-clay', 'is-sky', 'is-sun'] as const

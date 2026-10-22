@@ -11,21 +11,38 @@ const nextBefore = ref<number | null>(null)
 const busy = ref(false)
 const error = ref('')
 const loaded = ref(false)
+/** The request has its own timeout; this one also covers a stalled connection or a lost reply. */
+const giveUpMs = 15_000
+let attempt = 0
 async function load() {
   if (busy.value) return
   busy.value = true
   error.value = ''
+  const mine = ++attempt
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const result = await productVersions(props.productId, nextBefore.value)
+    const result = await Promise.race([
+      productVersions(props.productId, nextBefore.value),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('VERSIONS_TIMEOUT')), giveUpMs)
+      }),
+    ])
+    if (mine !== attempt) return
     versions.value.push(...result.versions)
     nextBefore.value = result.nextBefore
     loaded.value = true
   } catch (e) {
-    error.value = errorMessage(e)
+    if (mine !== attempt) return
+    error.value =
+      (e as Error)?.message === 'VERSIONS_TIMEOUT'
+        ? 'История версий не загрузилась за 15 секунд. Проверьте связь и повторите.'
+        : errorMessage(e)
   } finally {
-    busy.value = false
+    if (timer) clearTimeout(timer)
+    if (mine === attempt) busy.value = false
   }
 }
+onBeforeUnmount(() => attempt++)
 function onToggle(event: Event) {
   if ((event.target as HTMLDetailsElement).open && !loaded.value) void load()
 }
@@ -34,7 +51,9 @@ const verdictLabel = (value: string) => verdict[value as keyof typeof verdict]?.
 <template>
   <details class="history" @toggle="onToggle">
     <summary>История версий</summary>
-    <p v-if="busy && !versions.length" class="small muted">Загружаем</p>
+    <p v-if="busy && !versions.length" class="small muted" role="status">
+      Загружаем историю версий…
+    </p>
     <ol v-if="versions.length" class="versions">
       <li v-for="v in versions" :key="v.version">
         <div class="v-head">
