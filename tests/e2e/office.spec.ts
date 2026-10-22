@@ -381,6 +381,13 @@ test.describe('office behaviour', () => {
     expect(posted[0]).toEqual({ url: '/api/auth/login', body: { password: 'owner-password' } })
   })
 
+  test('the site root shows the public storefront, not the office login', async ({ page }) => {
+    await page.goto('/')
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('heading', { name: /Тексты для малого бизнеса/ })).toBeVisible()
+    await expect(page.getByText('Вход в кабинет')).toHaveCount(0)
+  })
+
   test('old links lead to the new sections', async ({ page }) => {
     await stubOffice(page, fx)
     await page.goto('/?view=strategies')

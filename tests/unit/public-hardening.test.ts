@@ -41,10 +41,10 @@ describe('raw request paths', () => {
   })
 
   it('lets search engines index only the storefront, services and terms', () => {
-    for (const path of ['/storefront', '/terms', '/services/description'])
+    // The site root renders the storefront.
+    for (const path of ['/', '/storefront', '/terms', '/services/description'])
       expect(indexablePage(path)).toBe(true)
     for (const path of [
-      '/',
       '/order/abc',
       '/office',
       '/office/trading',

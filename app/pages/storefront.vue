@@ -2,6 +2,8 @@
 import type { PublicCatalog } from '../../core/contracts/public'
 import { publicWhen, savedOrders, tokenFromLink, type SavedOrder } from '~/utils/public-site'
 
+// Visitors who open the site root see the storefront; the owner signs in at /office.
+definePageMeta({ alias: '/' })
 useHead({ title: 'AI Farm: тексты для малого бизнеса за 5 минут' })
 const { data, error, refresh, pending } = await useFetch<PublicCatalog>('/api/public/catalog')
 const services = computed(() => data.value?.services || [])
