@@ -428,7 +428,7 @@ for (const width of [1440, 390]) {
       await expect(page.getByRole('heading', { name: 'Как ферма зарабатывает' })).toBeVisible()
       const kpis = page.getByLabel('Деньги за период')
       await expect(kpis).toContainText('Реальный доход')
-      await expect(kpis).toContainText('настоящих денег пока нет')
+      await expect(kpis).toContainText('пока нет: торговля в тренировке')
       await expect(kpis).toContainText('Не выручка')
       await expect(kpis).toContainText(/−118,40\s₽/)
       await page.getByRole('button', { name: 'Сегодня' }).click()

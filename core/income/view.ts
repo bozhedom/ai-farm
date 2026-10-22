@@ -396,7 +396,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       result: {
         unit: 'USDT',
         value: row.pnl,
-        label: mode === 'live' ? 'результат счёта' : 'результат, не выручка',
+        label: mode === 'live' ? 'реальный счёт' : 'не выручка',
         test: mode !== 'live',
       },
       detail:
@@ -477,13 +477,13 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
         ? {
             unit: trackCurrency[track],
             value: decimal(big(row.realized)),
-            label: mode === 'live' ? 'зафиксировано' : 'зафиксировано, не выручка',
+            label: mode === 'live' ? 'зафиксировано' : 'не выручка',
             test: mode !== 'live',
           }
         : null,
       detail:
         status === 'disabled'
-          ? `${modeWord[mode]}: не запущено. Запуск в разделе «Направления».`
+          ? `${modeWord[mode]}: не запущено.`
           : `${modeWord[mode]}: операций за 30 дней ${ops}.` +
             (problem ? ` Нужна проверка: ${readiness || row?.reason}.` : ''),
       lastAt: latest(iso(row?.last_scan), iso(row?.heartbeat)),
@@ -504,9 +504,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       label: allTime!.real ? 'настоящих оплат' : 'настоящих оплат пока нет',
       test: false,
     },
-    detail:
-      `В продаже ${publicProducts}, заказов ${funnel!.orders}, выдано ${funnel!.delivered}. ` +
-      `Оплата тестовая (${c.PAYMENT_MODE}); заказов через API ${scouts!.api_requests}.`,
+    detail: `В продаже ${publicProducts}, заказов ${funnel!.orders}, выдано ${funnel!.delivered}. Оплата тестовая.`,
     lastAt: office.feed.find((f) => /order|заказ|payment/i.test(f.kind))?.at ?? null,
     link: '/office/products',
   })
@@ -540,10 +538,10 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     mode: null,
     result: null,
     detail: !mon?.enabled
-      ? 'Наблюдение выключено. Только чтение публичных данных, без сделок.'
+      ? 'Выключено.'
       : mon.error
         ? `Последний обзор не получен: ${mon.error}.`
-        : 'Собирает публичные ставки и цены. Права на сделки нет.',
+        : 'Собирает ставки и цены, сделок не делает.',
     lastAt: iso(mon?.finished_at),
     link: '/office/earnings',
   })
@@ -563,10 +561,10 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     mode: null,
     result: null,
     detail: cuBlocker
-      ? 'Не подключён. Виртуальная машина для работы агента ещё не настроена.'
+      ? 'Не подключён: нет виртуальной машины.'
       : !cu?.enabled
-        ? 'Готов, но выключен. Включите на странице раздела.'
-        : `Заданий выполнено: ${cu.done}, найдено возможностей: ${cu.found}${cu.approvals ? `, ждут вашего решения: ${cu.approvals}` : ''}.`,
+        ? 'Выключен.'
+        : `Заданий: ${cu.done}, находок: ${cu.found}${cu.approvals ? `, ждут решения: ${cu.approvals}` : ''}.`,
     lastAt: iso(cu?.last_step),
     link: '/office/computer',
   })
@@ -615,8 +613,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'worker',
       title: 'Фоновый процесс не отвечает',
-      detail:
-        'Агенты не работают, пока он не отвечает. Попросите администратора перезапустить ферму на сервере.',
+      detail: 'Агенты стоят. Перезапустите ферму на сервере.',
       link: '/office/settings',
       severity: 'block',
     })
@@ -627,9 +624,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'keys:bybit',
       title: 'Bybit: нет ключей',
-      detail:
-        'Создайте на Bybit API-ключ только для спота, без вывода средств. Ключ вносит администратор на сервере, ' +
-        'тестовый ключ для проверки тоже.',
+      detail: 'Ключ только для спота, без вывода, с IP сервера. Вписывается в .env на сервере.',
       link: '/office/trading',
       severity: 'block',
     })
@@ -638,7 +633,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'keys:live',
       title: `Нет ключей реальной торговли: ${otherLive.map(exchangeName).join(', ')}`,
-      detail: 'Ключи вносит администратор на сервере. Без них работает тренировка.',
+      detail: 'Без ключей идёт только тренировка.',
       link: '/office/trading',
       severity: 'warn',
     })
@@ -646,8 +641,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'keys:demo',
       title: 'Нет ни одного тестового счёта биржи',
-      detail:
-        'Перед реальной торговлей нужна проверка на тестовом счёте. Тестовые ключи вносит администратор на сервере.',
+      detail: 'Перед реальной торговлей нужна проверка на тестовом счёте.',
       link: '/office/trading',
       severity: 'warn',
     })
@@ -655,8 +649,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'live-disabled',
       title: 'Реальная торговля выключена',
-      detail:
-        'Включает администратор на сервере по вашему решению. Затем вы задаёте бюджет и проходите проверки в разделе биржи.',
+      detail: 'Включается после тренировки и проверки на тестовом счёте.',
       link: '/office/trading',
       severity: 'warn',
     })
@@ -669,8 +662,8 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
           : 'Ключ OpenRouter не задан',
       detail:
         c.MODEL_PROVIDER === 'demo'
-          ? 'Агенты отвечают готовыми примерами. Для настоящей работы администратор вносит ключ OpenRouter на сервере.'
-          : 'Для постоянной работы агентов администратор вносит ключ OpenRouter на сервере.',
+          ? 'Агенты работают на примерах. Нужен ключ OpenRouter на сервере.'
+          : 'Нужен ключ OpenRouter на сервере.',
       link: '/office/settings',
       severity: c.MODEL_PROVIDER === 'demo' ? 'block' : 'warn',
     })
@@ -686,7 +679,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'computer',
       title: 'Компьютер ИИ не настроен',
-      detail: 'Нужна отдельная виртуальная машина для агента. Без неё направление не работает.',
+      detail: 'Нужна виртуальная машина для браузера агента.',
       link: '/office/computer',
       severity: 'warn',
     })
@@ -694,7 +687,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'computer',
       title: 'Компьютер ИИ выключен',
-      detail: 'Машина подключена. Включите раздел, чтобы агент начал искать заработок в браузере.',
+      detail: 'Включите его на странице раздела.',
       link: '/office/computer',
       severity: 'warn',
     })
@@ -702,8 +695,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'computer',
       title: `Компьютер ИИ ждёт решения: ${cu.approvals}`,
-      detail:
-        'Оплата, вход, регистрация или публикация выполняются только после вашего разрешения.',
+      detail: 'Агент ждёт вашего разрешения.',
       link: '/office/computer',
       severity: 'warn',
     })
@@ -711,9 +703,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'wallet-key',
       title: 'Bybit: нет ключа для чтения поступлений',
-      detail:
-        'Создайте на Bybit ключ только для чтения (Read-Only, привязка к IP сервера). ' +
-        'Ключ вносит администратор на сервере.',
+      detail: 'Ключ Read-Only с IP сервера, вписывается в .env на сервере.',
       link: '/office/money',
       severity: 'warn',
     })
@@ -721,8 +711,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'wallet-key',
       title: 'Ключ кошелька Bybit отклонён',
-      detail:
-        'У ключа есть права на изменение. Удалите его на Bybit и создайте новый с правом Read-Only.',
+      detail: 'У ключа есть права на изменение. Нужен ключ Read-Only.',
       link: '/office/money',
       severity: 'block',
     })
@@ -738,8 +727,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'wallet-address',
       title: 'Не задан адрес для оплаты USDT',
-      detail:
-        'Скопируйте на Bybit адрес депозита USDT и сеть и передайте администратору: он вносит их на сервере.',
+      detail: 'Адрес депозита USDT и сеть с Bybit вписываются в .env на сервере.',
       link: '/office/money',
       severity: 'warn',
     })
@@ -747,7 +735,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'wallet-classify',
       title: `Поступления без отметки: ${wallet.unclassifiedCount}`,
-      detail: 'Отметьте каждое: «доход» от клиента или «не доход» (перевод себе).',
+      detail: '«Доход» от клиента или «не доход», если перевели себе.',
       link: '/office/money',
       severity: 'warn',
     })
@@ -757,9 +745,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       id: `office:${item.kind}`,
       title: item.text,
       detail:
-        item.kind === 'ideas'
-          ? 'Эти идеи ферма не исполнит сама: нужны договорённости или доступы человека.'
-          : 'Откройте раздел и примите решение.',
+        item.kind === 'ideas' ? 'Ферма не сделает их сама.' : 'Откройте раздел и примите решение.',
       link: item.link,
       severity: item.kind === 'worker' ? 'block' : 'warn',
     })

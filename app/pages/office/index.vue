@@ -219,7 +219,6 @@ const priceText = (kopecks: number) => rub(kopecks)
         <div class="summary-line">
           <OfficeBadge :badge="modeBadge[v.mode]" />
           <strong>{{ headline }}</strong>
-          <span class="muted small">Реальные деньги и тесты считаются раздельно.</span>
         </div>
         <div class="chips period" role="group" aria-label="Период">
           <button
@@ -233,6 +232,46 @@ const priceText = (kopecks: number) => rub(kopecks)
           >
             {{ p.label }}
           </button>
+        </div>
+      </section>
+
+      <section v-if="t" class="stat-grid kpis" aria-label="Деньги за период">
+        <div class="stat is-money rise">
+          <span class="stat-label"
+            >Реальный доход <small>{{ periodWord }}</small></span
+          >
+          <span class="num">{{ rub(t.realOrdersKopecks) }}</span>
+          <span v-for="line in realExtra" :key="line" class="kpi-extra">{{ line }}</span>
+          <span class="stat-note">{{
+            t.realOrdersKopecks || realExtra.length
+              ? 'оплаченные заказы и реальная торговля'
+              : 'пока нет: торговля в тренировке, оплаты тестовые'
+          }}</span>
+        </div>
+        <div class="stat rise">
+          <span class="stat-label"
+            >Расходы на модели <small>{{ periodWord }}</small></span
+          >
+          <span class="num">{{ rub(t.spendKopecks) }}</span>
+          <span class="stat-note">GPT-6 Astra и поиск</span>
+        </div>
+        <div class="stat rise" :class="{ 'is-loss': t.netKopecks < 0 }">
+          <span class="stat-label"
+            >Итог в рублях <small>{{ periodWord }}</small></span
+          >
+          <span class="num">{{ rubSigned(t.netKopecks) }}</span>
+          <span class="stat-note">доход минус расходы</span>
+        </div>
+        <div class="stat is-test rise">
+          <span class="stat-label"
+            >Тренировка и тесты <span class="badge badge-test">Не выручка</span></span
+          >
+          <dl class="test-lines">
+            <div v-for="line in testLines" :key="line.label + line.value">
+              <dt>{{ line.label }}</dt>
+              <dd>{{ line.value }}</dd>
+            </div>
+          </dl>
         </div>
       </section>
 
@@ -277,82 +316,26 @@ const priceText = (kopecks: number) => rub(kopecks)
         </div>
       </section>
 
-      <section v-if="t" class="stat-grid kpis" aria-label="Деньги за период">
-        <div class="stat is-money rise">
-          <span class="stat-label"
-            >Реальный доход <small>{{ periodWord }}</small></span
-          >
-          <span class="num">{{ rub(t.realOrdersKopecks) }}</span>
-          <span v-for="line in realExtra" :key="line" class="kpi-extra">{{ line }}</span>
-          <span class="stat-note">{{
-            t.realOrdersKopecks || realExtra.length
-              ? 'оплаченные заказы и реальная торговля'
-              : 'настоящих денег пока нет: торговля не в Live, оплаты тестовые'
+      <!-- Needs a person -->
+      <section
+        v-if="v.needsHuman.length"
+        class="card card-tint-sun rise needs"
+        aria-labelledby="needs-title"
+      >
+        <div class="card-head">
+          <h2 id="needs-title">Нужен человек</h2>
+          <span class="small">{{
+            withCount(v.needsHuman.length, ['пункт', 'пункта', 'пунктов'])
           }}</span>
         </div>
-        <div class="stat rise">
-          <span class="stat-label"
-            >Расходы на модели <small>{{ periodWord }}</small></span
-          >
-          <span class="num">{{ rub(t.spendKopecks) }}</span>
-          <span class="stat-note">OpenRouter, Astra, поиск: по журналу вызовов</span>
-        </div>
-        <div class="stat rise" :class="{ 'is-loss': t.netKopecks < 0 }">
-          <span class="stat-label"
-            >Итог в рублях <small>{{ periodWord }}</small></span
-          >
-          <span class="num">{{ rubSigned(t.netKopecks) }}</span>
-          <span class="stat-note">доход минус расходы; USDT не пересчитываем в рубли</span>
-        </div>
-        <div class="stat is-test rise">
-          <span class="stat-label"
-            >Тренировка и тесты <span class="badge badge-test">Не выручка</span></span
-          >
-          <dl class="test-lines">
-            <div v-for="line in testLines" :key="line.label + line.value">
-              <dt>{{ line.label }}</dt>
-              <dd>{{ line.value }}</dd>
-            </div>
-          </dl>
-        </div>
-      </section>
-
-      <!-- Bybit wallet deposits -->
-      <section v-if="w" class="card rise wallet" aria-labelledby="wallet-title">
-        <div class="card-head wrap">
-          <div>
-            <h2 id="wallet-title">Поступления на кошелёк</h2>
-            <p class="small muted">
-              Оплата криптой на Bybit, только от зарубежных клиентов. В рубли не пересчитываем.
-            </p>
-          </div>
-          <span class="row wallet-head">
-            <OfficeBadge :badge="walletKeyBadge[v.wallet.keyStatus]" />
-            <NuxtLink class="btn btn-ghost btn-sm" to="/office/money#wallet">Адрес и ключ</NuxtLink>
-          </span>
-        </div>
-        <dl class="wallet-totals">
-          <div class="is-income">
-            <dt>Доход</dt>
-            <dd class="mono">{{ walletAmountsText(w.income) }}</dd>
-            <small>только отмеченное «доход»</small>
-          </div>
-          <div class="is-open">
-            <dt>Не разобрано</dt>
-            <dd class="mono">{{ walletAmountsText(w.unclassified) }}</dd>
-            <small>ждёт вашей отметки, в доход не входит</small>
-          </div>
-          <div>
-            <dt>Не доход</dt>
-            <dd class="mono">{{ walletAmountsText(w.notIncome) }}</dd>
-            <small>переводы себе со своих счетов</small>
-          </div>
-        </dl>
-        <p class="small muted wallet-hint">
-          Перевод со своей биржи или кошелька тоже приходит как поступление. Отметьте его «не
-          доход», чтобы он не попал в выручку.
-        </p>
-        <OfficeWalletDeposits :deposits="v.wallet.recent" :limit="5" />
+        <ul class="needs-list">
+          <li v-for="n in v.needsHuman" :key="n.id" :class="`is-${n.severity}`">
+            <NuxtLink :to="n.link">
+              <strong>{{ n.title }}</strong>
+              <span>{{ n.detail }}</span>
+            </NuxtLink>
+          </li>
+        </ul>
       </section>
 
       <div class="grid-main">
@@ -371,7 +354,6 @@ const priceText = (kopecks: number) => rub(kopecks)
                 </span>
                 <span class="source-badges">
                   <OfficeBadge :badge="sourceStatus[s.status]" />
-                  <OfficeBadge v-if="s.mode" :badge="incomeMode[s.mode]" :dot="false" />
                 </span>
                 <span class="source-result">
                   <b
@@ -395,36 +377,14 @@ const priceText = (kopecks: number) => rub(kopecks)
             <h2 id="feed-title">Что сейчас делают агенты</h2>
             <span class="live small on-air"><i class="live-dot" />в эфире</span>
           </div>
-          <OfficeFeed v-if="v.feed.length" :items="v.feed" :limit="14" />
-          <p v-else class="muted">Пока тихо. События появятся, как только агенты начнут работу.</p>
+          <OfficeFeed v-if="v.feed.length" :items="v.feed" :limit="24" />
+          <p v-else class="muted">Пока событий нет.</p>
           <div class="card-foot">
             <span class="small muted">Обновляется каждые 10 секунд</span>
             <NuxtLink class="small" to="/office/farm">Ферма идей</NuxtLink>
           </div>
         </section>
       </div>
-
-      <!-- Needs a person -->
-      <section
-        v-if="v.needsHuman.length"
-        class="card card-tint-sun rise needs"
-        aria-labelledby="needs-title"
-      >
-        <div class="card-head">
-          <h2 id="needs-title">Нужен человек</h2>
-          <span class="small">{{
-            withCount(v.needsHuman.length, ['пункт', 'пункта', 'пунктов'])
-          }}</span>
-        </div>
-        <ul class="needs-list">
-          <li v-for="n in v.needsHuman" :key="n.id" :class="`is-${n.severity}`">
-            <NuxtLink :to="n.link">
-              <strong>{{ n.title }}</strong>
-              <span>{{ n.detail }}</span>
-            </NuxtLink>
-          </li>
-        </ul>
-      </section>
 
       <!-- Trading analytics -->
       <section class="card rise" aria-labelledby="trading-title">
@@ -510,6 +470,35 @@ const priceText = (kopecks: number) => rub(kopecks)
           </div>
         </div>
         <p v-else class="small muted">Ни одна биржа ещё не запускалась.</p>
+      </section>
+
+      <!-- Bybit wallet deposits -->
+      <section v-if="w" class="card rise wallet" aria-labelledby="wallet-title">
+        <div class="card-head wrap">
+          <div>
+            <h2 id="wallet-title">Поступления на кошелёк</h2>
+            <p class="small muted">USDT на Bybit, только от зарубежных клиентов.</p>
+          </div>
+          <span class="row wallet-head">
+            <OfficeBadge :badge="walletKeyBadge[v.wallet.keyStatus]" />
+            <NuxtLink class="btn btn-ghost btn-sm" to="/office/money#wallet">Адрес и ключ</NuxtLink>
+          </span>
+        </div>
+        <dl class="wallet-totals">
+          <div class="is-income">
+            <dt>Доход</dt>
+            <dd class="mono">{{ walletAmountsText(w.income) }}</dd>
+          </div>
+          <div class="is-open">
+            <dt>Не разобрано</dt>
+            <dd class="mono">{{ walletAmountsText(w.unclassified) }}</dd>
+          </div>
+          <div>
+            <dt>Не доход</dt>
+            <dd class="mono">{{ walletAmountsText(w.notIncome) }}</dd>
+          </div>
+        </dl>
+        <OfficeWalletDeposits :deposits="v.wallet.recent" :limit="5" />
       </section>
 
       <div class="grid-two">
@@ -1149,5 +1138,31 @@ const priceText = (kopecks: number) => rub(kopecks)
   .funnel li {
     grid-template-columns: minmax(0, 1fr) 70px auto;
   }
+}
+
+/* Compact overview */
+.source-detail {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.source {
+  grid-template-columns: minmax(0, 1fr) auto 130px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.feed-card :deep(.feed) {
+  max-height: 900px;
+}
+.needs-list {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--s-2);
+}
+.needs-list a {
+  padding: 10px 12px;
+}
+.wallet-totals {
+  margin-bottom: var(--s-2);
 }
 </style>
