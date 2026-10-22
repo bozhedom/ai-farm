@@ -8,6 +8,7 @@ import { ensureDirections, pickDirection, recordDirectionFinding, rotationSlot }
 import {
   COMPUTER_USE_POLICY as P,
   classifyAction,
+  forbiddenFindingReason,
   forbiddenTextReason,
   hostOf,
   isPrivateHost,
@@ -1487,7 +1488,7 @@ async function runStep(
     const reason =
       !host || isPrivateHost(host)
         ? 'COMPUTER_USE_URL_SCHEME'
-        : forbiddenTextReason(`${call.title} ${call.summary} ${call.reason}`) ||
+        : forbiddenFindingReason(`${call.title} ${call.summary} ${call.reason}`) ||
           ((found!.n as number) >= P.maxOpportunitiesPerTask
             ? 'COMPUTER_USE_OPPORTUNITY_LIMIT'
             : '')

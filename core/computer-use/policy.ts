@@ -227,6 +227,80 @@ export function forbiddenTextReason(text: string) {
   return ''
 }
 
+const negationWords = new Set([
+  'без',
+  'не',
+  'ни',
+  'кроме',
+  'исключая',
+  'no',
+  'not',
+  'without',
+  'except',
+  'excluding',
+])
+/** "не только казино", "not only gambling" still mention the topic positively. */
+const notNegating = new Set(['только', 'просто', 'лишь', 'only', 'just', 'merely'])
+/** A negated window ends before these: "без вложений на казино" keeps "на казино". */
+const windowStops = new Set([
+  'на',
+  'в',
+  'во',
+  'для',
+  'через',
+  'по',
+  'и',
+  'или',
+  'а',
+  'но',
+  'on',
+  'in',
+  'for',
+  'via',
+  'and',
+  'or',
+  'but',
+  'at',
+  'to',
+])
+const bare = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, '')
+/**
+ * The text without negated mentions: a negation ("без", "не", "кроме", no, without, except)
+ * and up to three following words within the same clause, stopping before a preposition or
+ * conjunction. "без политических кампаний" goes away, "кампании для политиков" stays.
+ */
+export function withoutNegatedMentions(text: string) {
+  return text
+    .split(/([.,;:!?()\n]+)/)
+    .map((clause) => {
+      const list = clause.split(/(\s+)/).filter((part) => part.length && !/^\s+$/.test(part))
+      const kept: string[] = []
+      for (let index = 0; index < list.length; index++) {
+        const word = bare(list[index]!)
+        const next = bare(list[index + 1] ?? '')
+        if (!negationWords.has(word) || notNegating.has(next)) {
+          kept.push(list[index]!)
+          continue
+        }
+        let skipped = 0
+        while (skipped < 3 && index + 1 < list.length && !windowStops.has(bare(list[index + 1]!))) {
+          index++
+          skipped++
+        }
+      }
+      return /^[.,;:!?()\n]+$/.test(clause) ? clause : kept.join(' ')
+    })
+    .join('')
+}
+
+/**
+ * The topic and scheme check of a finding the model recorded: a finding often says what a job
+ * excludes ("без политических кампаний"), so negated mentions are ignored; positive mentions
+ * are still blocked.
+ */
+export const forbiddenFindingReason = (text: string) =>
+  forbiddenTextReason(withoutNegatedMentions(text))
+
 /** Owner goals and rotation goals pass the same check before a task exists. */
 export function validateGoal(goal: string) {
   const text = goal.trim()
