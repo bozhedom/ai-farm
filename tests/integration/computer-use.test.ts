@@ -428,10 +428,89 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     )
     expect(budgets[0]).toMatchObject({ steps_left: 30, cost_left_percent: 100 })
     expect(budgets[1]).toMatchObject({ steps_left: 29, wrap_up: true, final_step: true })
-    expect(budgets[1].cost_left_percent).toBe(Math.floor(((cap - 85000) * 100) / cap))
+    // The share left is of what the hard check will still let through, not of the raw cap.
+    expect(budgets[1].cost_left_percent).toBeLessThan(Math.floor(((cap - 85000) * 100) / cap))
     const shown = await computerUseView()
     expect(shown.state.spentTodayMicrousd).toBe(calls.length * 85000)
     expect(shown.history[0]?.spentMicrousd).toBe(calls.length * 85000)
+  })
+
+  it('bases the final-step hint on real step costs, not on the upper estimate', async () => {
+    let cap = 0
+    vi.spyOn(settings, 'config').mockImplementation(() => ({
+      ...original,
+      MODEL_PROVIDER: 'openai',
+      OPENAI_TRANSPORT: 'openrouter',
+      OPENROUTER_API_KEY: 'test-only-key',
+      SEARCH_PROVIDER: 'searxng',
+      VM_AGENT_URL: 'http://10.0.0.9:8787/',
+      VM_AGENT_TOKEN: 'x'.repeat(40),
+      DAILY_BUDGET_KOPECKS: 100000,
+      MONTHLY_BUDGET_KOPECKS: 1000000,
+      OPENAI_TOTAL_BUDGET_MICROUSD: 10_000_000,
+      COMPUTER_USE_TASK_CAP_MICROUSD: cap,
+      COMPUTER_USE_DAILY_CAP_MICROUSD: 50_000_000,
+    }))
+    const estimate = prepareStepRequest({
+      taskId: 'estimate',
+      reservationId: 'estimate',
+      goal: rotationGoals[0]!,
+      stepNo: 1,
+      stepLimit: 30,
+      history: [],
+      page: { url: 'about:blank', title: 'Демонстрация' },
+      png: Buffer.alloc(10),
+      opportunities: 0,
+    }).maximumMicrousd
+    // Room for the upper estimate plus several real steps of $0.085: the old rule
+    // (spent + 2 x estimate > cap) would have said "final step" from the first request.
+    cap = estimate + 5 * 85000
+    expect(2 * estimate).toBeGreaterThan(cap)
+    const answer = () =>
+      new Response(
+        JSON.stringify({
+          id: 'gen-scroll',
+          choices: [
+            {
+              finish_reason: 'tool_calls',
+              message: {
+                content: 'Смотрю страницу.',
+                tool_calls: [
+                  {
+                    type: 'function',
+                    function: {
+                      name: 'scroll',
+                      arguments: JSON.stringify({ x: 600, y: 400, deltaY: 500 }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 8000, completion_tokens: 100, cost: '0.03' },
+        }),
+      )
+    const fetchMock = vi.fn().mockImplementation(async () => answer())
+    vi.stubGlobal('fetch', fetchMock)
+    await controlComputerUse('enable')
+    await computerUseTick({ agent: new FakeVmAgent(), model: astraStep(demoScript) })
+    const row = await task()
+    expect(row.status).toBe('done')
+    expect(row.report).toContain('исчерпан лимит расходов на одно задание')
+    const budgets = fetchMock.mock.calls.map(
+      ([, init]) => JSON.parse(JSON.parse(init.body).messages[1].content[0].text).budget,
+    )
+    expect(budgets.length).toBeGreaterThanOrEqual(3)
+    // The first step has no real cost yet and gets no cost hint; later steps use the cost of
+    // recent steps, so only the last request the hard check allowed is marked final.
+    expect(budgets[0]).toMatchObject({ cost_left_percent: 100, wrap_up: false, final_step: false })
+    expect(budgets.slice(0, -1).every((b) => !b.final_step)).toBe(true)
+    expect(budgets.at(-1)).toMatchObject({ final_step: true, wrap_up: true })
+    const [spent] = await query(
+      'SELECT coalesce(sum(charged_microusd),0)::int AS n FROM tool_calls WHERE reservation_id=$1',
+      [row.reservation_id],
+    )
+    expect(spent!.n).toBeLessThanOrEqual(cap)
   })
 
   it('ends a task at the step limit as done with a report assembled from its records', async () => {

@@ -127,6 +127,20 @@ export async function taskSpend(reservationId: string | null, db?: Connection) {
   )
   return { microusd: Number(row!.microusd), kopecks: row!.kopecks as number }
 }
+/**
+ * What a step of this task really costs: the largest of the last three completed calls (actual
+ * provider cost, else the charge). Null before the first completed call.
+ */
+export async function recentStepCost(reservationId: string | null, db?: Connection) {
+  if (!reservationId) return null
+  const rows = await query<{ cost: string | number }>(
+    `SELECT coalesce(actual_microusd,charged_microusd,0) AS cost FROM tool_calls
+     WHERE reservation_id=$1 AND status='done' ORDER BY created_at DESC LIMIT 3`,
+    [reservationId],
+    db,
+  )
+  return rows.length ? Math.max(...rows.map((row) => Number(row.cost))) : null
+}
 export async function dailySpend(db?: Connection) {
   const [row] = await query(
     `SELECT coalesce(sum(t.charged_microusd),0)::bigint AS microusd,
@@ -1382,16 +1396,23 @@ async function runStep(
       await query("UPDATE computer_use SET last_error='COMPUTER_USE_DAILY_LIMIT' WHERE id=true")
       return { kind: 'stop' }
     }
-    // Another step of the same size would not fit under the cap: this one is the last. The flag
-    // only shortens the request (false -> true), so the estimate above still covers it.
-    if (spent.microusd + 2 * estimate > task.cost_cap_microusd)
+    // The hard checks above use the pessimistic upper estimate; the hints to the model use what
+    // a step of this task really costs. This step is the last one only if, after it costs what
+    // recent steps cost, the next upper estimate would no longer fit under the cap. The usable
+    // part of the cap for `cost_left_percent` is what the hard check will still let through.
+    // Before the first completed call nothing is known: no cost hint at all rather than a
+    // "final step" from the upper estimate; the hard check still ends the task at the cap.
+    const expected = await recentStepCost(task.reservation_id)
+    if (expected !== null) {
+      const usable = Math.max(spent.microusd, task.cost_cap_microusd - estimate + expected)
       input.budget = stepBudget(
         stepNo,
         task.step_limit,
         spent.microusd,
-        task.cost_cap_microusd,
-        true,
+        usable,
+        spent.microusd + expected + estimate > task.cost_cap_microusd,
       )
+    }
   }
   const callKey = `computer-use:${task.id}:${stepNo}`
   const raw = await model(input)
