@@ -5,7 +5,21 @@ import type {
 } from '../../core/contracts/computer-use'
 import type { Badge } from '~/composables/office/labels'
 
-export { computerReason, computerReasons } from '../../core/computer-use/words'
+import { computerReason as serverReason } from '../../core/computer-use/words'
+
+export { computerReasons } from '../../core/computer-use/words'
+
+/** Reasons the owner cannot fix in the office: who does it, without server setting names. */
+const ownerReasons: Record<string, string> = {
+  COMPUTER_USE_DISABLED_ON_SERVER:
+    'Выключено в настройках сервера. Включает администратор, когда машина готова.',
+  COMPUTER_USE_PROVIDER_UNSUPPORTED:
+    'Нужна платная модель через OpenRouter: ключ вносит администратор на сервере.',
+  COMPUTER_USE_VM_NOT_CONFIGURED:
+    'Виртуальная машина не подключена: её адрес и пароль вносит администратор на сервере.',
+}
+export const computerReason = (code: string | null | undefined) =>
+  ownerReasons[String(code ?? '').trim()] ?? serverReason(code)
 
 export const taskStatusBadge: Record<ComputerTaskStatus, Badge> = {
   queued: { label: 'В очереди', tone: 'plain' },

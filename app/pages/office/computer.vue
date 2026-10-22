@@ -8,7 +8,8 @@ import type {
   ComputerUseView,
 } from '../../../core/contracts/computer-use'
 import { useOfficeAction } from '~/composables/office/actions'
-import { ago, rub, when } from '~/composables/office/format'
+import { lowerFirst } from '~/composables/office/errors'
+import { ago, when } from '~/composables/office/format'
 import { officeFetch, useOfficeResource } from '~/composables/office/resource'
 import {
   actionText,
@@ -45,32 +46,90 @@ const issues = computed(() => {
   if (s.lastError && !codes.includes(s.lastError)) codes.push(s.lastError)
   return [...new Set(codes.map(computerReason).filter(Boolean))]
 })
-const stateLabel = computed(() => {
+/**
+ * One status line for the section. The server reports several facts at once (switch, running
+ * task, reasons nothing new starts); the owner sees which one matters now and why.
+ */
+const statusLine = computed(() => {
   const s = state.value
-  if (!s) return ''
-  if (!s.enabled) return 'Выключено'
-  if (manualActive.value) return 'Вы управляете браузером'
-  if (current.value?.status === 'waiting_approval') return 'Ждёт вашего решения'
-  if (s.running) return 'Работает в браузере'
-  if (s.blocked.length) return 'Ждёт условий для запуска'
-  return 'Готов к следующему заданию'
-})
-const stateBadge = computed(() => {
-  const s = state.value
-  if (!s || !s.enabled) return { label: 'Выключено', tone: 'off' as const }
-  if (manualActive.value) return { label: 'Вручную', tone: 'human' as const }
+  if (!s) return { title: '', detail: '', tone: 'off' as const, badge: '' }
+  const why = issues.value[0] ?? ''
+  const busyTask = !!current.value && ['running', 'queued'].includes(current.value.status)
+  if (!s.enabled)
+    return { title: 'Выключено', detail: why, tone: 'off' as const, badge: 'Выключено' }
+  if (manualActive.value)
+    return {
+      title: 'Вы управляете браузером',
+      detail: 'Модель ждёт, пока вы закончите.',
+      tone: 'human' as const,
+      badge: 'Вручную',
+    }
   if (current.value?.status === 'waiting_approval')
-    return { label: 'Нужно решение', tone: 'wait' as const }
-  if (s.running) return { label: 'Работает', tone: 'ok' as const }
-  return { label: 'Ожидание', tone: 'wait' as const }
+    return {
+      title: 'Ждёт вашего решения',
+      detail: 'Задание стоит, пока вы не ответите ниже.',
+      tone: 'wait' as const,
+      badge: 'Нужно решение',
+    }
+  if (s.running || busyTask)
+    return {
+      title: 'Работает в браузере',
+      detail: why ? `Доделывает текущее задание; новые не начнёт: ${lowerFirst(why)}` : '',
+      tone: 'ok' as const,
+      badge: 'Работает',
+    }
+  if (why) return { title: 'Ждёт', detail: why, tone: 'wait' as const, badge: 'Ожидание' }
+  return {
+    title: 'Готов к следующему заданию',
+    detail: '',
+    tone: 'ok' as const,
+    badge: 'Готов',
+  }
 })
+const stateBadge = computed(() => ({ label: statusLine.value.badge, tone: statusLine.value.tone }))
+const otherIssues = computed(() => issues.value.slice(1))
+
+// ---- money: rubles everywhere, dollars (what the model provider bills) in a tooltip ----
+const rubPerUsd = computed(() => {
+  const s = state.value
+  const known = [
+    s ? { k: s.spentTodayKopecks, m: s.spentTodayMicrousd } : null,
+    ...(data.value?.history ?? []).map((t) => ({ k: t.spentKopecks, m: t.spentMicrousd })),
+  ].find((x) => x && x.k > 0 && x.m > 0)
+  // Before the first paid step: the server's default conversion rate (OPENAI_USD_KOPECKS).
+  return known ? known.k / known.m : 12000 / 1_000_000
+})
+const rub2 = (kopecks: number) =>
+  `${(Math.round(kopecks) / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u00a0₽`
+/** A dollar cap in rubles at the rate of the farm's own ledger, approximately. */
+const inUsd = (microusd: number) => `В долларах: ${usd(microusd)}`
+const capRub = (microusd: number) => `≈\u00a0${rub2(microusd * rubPerUsd.value)}`
+
+// ---- tabs and paging: the section grew long; each part has its own tab ----
+const route = useRoute()
+const tabs = [
+  { id: 'now', label: 'Сейчас' },
+  { id: 'found', label: 'Находки' },
+  { id: 'directions', label: 'Направления' },
+  { id: 'profile', label: 'Профиль' },
+  { id: 'history', label: 'История' },
+] as const
+type TabId = (typeof tabs)[number]['id']
+const tab = computed<TabId>({
+  get: () => (tabs.find((t) => t.id === route.query.tab)?.id ?? 'now') as TabId,
+  set: (id) => {
+    void navigateTo({ query: { ...route.query, tab: id === 'now' ? undefined : id } })
+  },
+})
+const pageSize = 10
+const shown = reactive({ opportunities: pageSize, proposals: 5, documents: 5, history: pageSize })
 const screenshotUrl = computed(() =>
   current.value?.latestScreenshotStepId
     ? `/api/computer-use/steps/${current.value.latestScreenshotStepId}/screenshot.png`
     : '',
 )
 const spentLine = (task: ComputerTaskView) =>
-  task.demo ? 'демо, без расходов' : `${usd(task.spentMicrousd)} · ${rub(task.spentKopecks)}`
+  task.demo ? 'демо, без расходов' : rub2(task.spentKopecks)
 const stepLine = (step: ComputerStepView) => actionText(step.action as { name: string })
 const shortGoal = (text: string) => (text.length > 140 ? `${text.slice(0, 140)}…` : text)
 const sourceLabel = (task: ComputerTaskView) =>
@@ -360,14 +419,24 @@ const key = (name: string) => act({ name: 'key', key: name })
         <div class="switch-row">
           <div>
             <h2 id="computer-state" class="state-title">
-              {{ stateLabel }} <OfficeBadge :badge="stateBadge" />
+              {{ statusLine.title }} <OfficeBadge :badge="stateBadge" />
             </h2>
+            <p v-if="statusLine.detail" class="state-detail">{{ statusLine.detail }}</p>
             <p class="small muted">
-              {{
-                state.demo
-                  ? 'Демонстрационный режим: сценарий без настоящей модели и без машины, сеть не используется.'
-                  : `Модель ${state.model}, шагов на задание до ${state.stepLimit}, не дороже ${usd(state.taskCapMicrousd)} за задание и ${usd(state.dailyCapMicrousd)} в сутки.`
-              }}
+              <template v-if="state.demo"
+                >Демонстрационный режим: сценарий без настоящей модели и без машины, сеть не
+                используется.</template
+              ><template v-else
+                >Модель {{ state.model }}, шагов на задание до {{ state.stepLimit }}, не дороже
+                <span :title="inUsd(state.taskCapMicrousd)">{{
+                  capRub(state.taskCapMicrousd)
+                }}</span>
+                за задание и
+                <span :title="inUsd(state.dailyCapMicrousd)">{{
+                  capRub(state.dailyCapMicrousd)
+                }}</span>
+                в сутки.</template
+              >
             </p>
           </div>
           <button
@@ -387,7 +456,7 @@ const key = (name: string) => act({ name: 'key', key: name })
               {{
                 state.autoProposalsAllowed
                   ? `Модель сама отправляет отклики, ответы и результаты на площадках с отмеченным входом: до ${state.proposalsPerDay} откликов в сутки на площадку, одна отправка на одно разрешение сервера.`
-                  : 'Выключено на сервере: COMPUTER_USE_AUTO_PROPOSALS=false в .env. Без этого модель только записывает находки.'
+                  : 'Запрещено в настройках сервера: включает администратор. Пока модель только записывает находки.'
               }}
             </p>
           </div>
@@ -401,39 +470,15 @@ const key = (name: string) => act({ name: 'key', key: name })
             @click="toggleProposals"
           />
         </div>
-        <ul v-if="issues.length" class="issues">
-          <li v-for="issue in issues" :key="issue">{{ issue }}</li>
-        </ul>
+        <details v-if="otherIssues.length" class="fold issues-more">
+          <summary class="small">Ещё причины ({{ otherIssues.length }})</summary>
+          <ul class="issues">
+            <li v-for="issue in otherIssues" :key="issue">{{ issue }}</li>
+          </ul>
+        </details>
         <p v-if="state.blocked.includes('COMPUTER_USE_SYSTEM_PAUSED')" class="small">
           <NuxtLink to="/office/settings">Открыть настройки</NuxtLink>
         </p>
-      </section>
-
-      <section class="stat-grid stats" aria-label="Расходы и лимиты">
-        <div class="stat rise">
-          <span class="stat-label">Расходы сегодня</span>
-          <span class="num">{{ usd(state.spentTodayMicrousd) }}</span>
-          <span class="stat-note"
-            >{{ rub(state.spentTodayKopecks) }} из {{ usd(state.dailyCapMicrousd) }} в сутки</span
-          >
-        </div>
-        <div class="stat rise">
-          <span class="stat-label">Одно задание</span>
-          <span class="num">{{ usd(state.taskCapMicrousd) }}</span>
-          <span class="stat-note">до {{ state.stepLimit }} шагов</span>
-        </div>
-        <div class="stat rise">
-          <span class="stat-label">Откликов сегодня</span>
-          <span class="num">{{ data.platforms.reduce((n, p) => n + p.sentToday, 0) }}</span>
-          <span class="stat-note">лимит {{ state.proposalsPerDay }} на площадку в сутки</span>
-        </div>
-        <div class="stat rise">
-          <span class="stat-label">Найдено</span>
-          <span class="num">{{ data.opportunities.length }}</span>
-          <span class="stat-note"
-            >берёт сама: {{ data.opportunities.filter((o) => o.decision === 'take').length }}</span
-          >
-        </div>
       </section>
 
       <section
@@ -472,620 +517,746 @@ const key = (name: string) => act({ name: 'key', key: name })
         </div>
       </section>
 
-      <section class="card rise current" aria-labelledby="computer-current">
-        <div class="card-head">
-          <h2 id="computer-current">Текущее задание</h2>
-          <OfficeBadge v-if="current" :badge="taskStatusBadge[current.status]" />
-        </div>
-        <template v-if="current">
-          <p class="goal">{{ current.goal }}</p>
-          <p class="small muted">
-            {{ sourceLabel(current) }} · шаг {{ current.stepCount }} из {{ current.stepLimit }} ·
-            {{ spentLine(current) }} · начато {{ ago(current.startedAt || current.createdAt) }}
-            <span v-if="current.demo" class="badge badge-plain demo-note">Демо</span>
-          </p>
-          <div class="live">
-            <figure class="screen">
-              <img
-                v-if="screenshotUrl"
-                :key="screenshotUrl"
-                :src="screenshotUrl"
-                alt="Последний снимок экрана браузера"
-                width="1280"
-                height="800"
-              />
-              <div v-else class="screen-empty muted small">Снимок появится после первого шага.</div>
-              <figcaption class="small muted">
-                {{
-                  current.steps[0]?.urlAfter ||
-                  current.steps[0]?.urlBefore ||
-                  'Браузер ещё не открыл страницу'
-                }}
-              </figcaption>
-            </figure>
-            <ol class="log" aria-label="Журнал шагов">
-              <li v-for="step in current.steps" :key="step.id">
-                <div class="log-head">
-                  <span class="mono small">{{ step.stepNo }}</span>
-                  <OfficeBadge :badge="stepBadge[step.decision]" />
-                  <span class="small muted">{{ when(step.createdAt) }}</span>
-                </div>
-                <p class="log-action">{{ stepLine(step) }}</p>
-                <p v-if="step.reason" class="small muted">{{ computerReason(step.reason) }}</p>
-                <p v-if="step.reasoning" class="small quote">{{ step.reasoning }}</p>
-              </li>
-              <li v-if="!current.steps.length" class="muted small">Шагов ещё нет.</li>
-            </ol>
-          </div>
-          <div class="row-wrap actions">
-            <button
-              type="button"
-              class="btn btn-sm btn-danger"
-              :disabled="!!busy"
-              @click="cancel(current)"
+      <nav class="chips tabs-nav" aria-label="Разделы компьютера ИИ">
+        <button
+          v-for="t in tabs"
+          :key="t.id"
+          type="button"
+          class="chip"
+          :class="{ 'is-active': tab === t.id }"
+          :aria-current="tab === t.id ? 'page' : undefined"
+          @click="tab = t.id"
+        >
+          {{ t.label
+          }}<span v-if="t.id === 'found' && data.opportunities.length" class="n">{{
+            data.opportunities.length
+          }}</span>
+        </button>
+      </nav>
+
+      <div v-show="tab === 'now'" class="tab-panel">
+        <section class="stat-grid stats" aria-label="Расходы и лимиты">
+          <div class="stat rise">
+            <span class="stat-label">Расходы сегодня</span>
+            <span class="num" :title="inUsd(state.spentTodayMicrousd)">{{
+              rub2(state.spentTodayKopecks)
+            }}</span>
+            <span class="stat-note" :title="inUsd(state.dailyCapMicrousd)"
+              >из {{ capRub(state.dailyCapMicrousd) }} в сутки</span
             >
-              Отменить задание
-            </button>
           </div>
-        </template>
-        <OfficeEmpty
-          v-else
-          icon="eye"
-          title="Сейчас ничего не выполняется"
-          :text="
-            state.enabled
-              ? 'Следующее задание начнётся, как только worker освободится и условия позволят.'
-              : 'Включите работу выше, чтобы модель начала искать возможности.'
-          "
-        />
-      </section>
+          <div class="stat rise">
+            <span class="stat-label">Одно задание</span>
+            <span class="num" :title="inUsd(state.taskCapMicrousd)">{{
+              capRub(state.taskCapMicrousd)
+            }}</span>
+            <span class="stat-note">до {{ state.stepLimit }} шагов</span>
+          </div>
+          <div class="stat rise">
+            <span class="stat-label">Откликов сегодня</span>
+            <span class="num">{{ data.platforms.reduce((n, p) => n + p.sentToday, 0) }}</span>
+            <span class="stat-note">лимит {{ state.proposalsPerDay }} на площадку в сутки</span>
+          </div>
+          <div class="stat rise">
+            <span class="stat-label">Найдено</span>
+            <span class="num">{{ data.opportunities.length }}</span>
+            <span class="stat-note"
+              >берёт сама:
+              {{ data.opportunities.filter((o) => o.decision === 'take').length }}</span
+            >
+          </div>
+        </section>
 
-      <section class="card rise manual" aria-labelledby="computer-manual">
-        <div class="card-head">
-          <h2 id="computer-manual">Управление вручную</h2>
-          <span v-if="manualActive" class="badge badge-human">Ещё {{ manualLeft }}</span>
-        </div>
-        <p class="small muted">
-          Войдите на площадки под своим аккаунтом один раз: браузер на машине хранит профиль, и
-          модель работает в нём дальше. Пока вы управляете, шаги модели не идут; через 15 минут без
-          действий управление вернётся само. Введённый вами текст не сохраняется и модели не
-          показывается.
-        </p>
-        <div v-if="!manualActive" class="row-wrap actions">
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="!!busy || status.offline"
-            @click="manual('start')"
-          >
-            Взять управление
-          </button>
-        </div>
-        <template v-else>
-          <div class="manual-grid">
-            <figure class="screen">
-              <img
-                v-if="manualSrc"
-                :src="manualSrc"
-                alt="Живой экран браузера: клик по снимку передаётся машине"
-                width="1280"
-                height="800"
-                class="clickable"
-                @click="screenClick"
-              />
-              <div v-else class="screen-empty muted small">Ждём снимок с машины…</div>
-              <figcaption class="small muted">
-                {{ manualPageUrl || 'Клик по снимку = клик в браузере' }}
-              </figcaption>
-            </figure>
-            <div class="manual-controls">
-              <form class="field" @submit.prevent="openUrl">
-                <label for="manual-url">Адрес</label>
-                <div class="inline">
-                  <input
-                    id="manual-url"
-                    v-model="manualUrl"
-                    class="input"
-                    type="text"
-                    inputmode="url"
-                    placeholder="https://www.fl.ru/login"
-                    maxlength="2000"
-                  />
-                  <button type="submit" class="btn btn-sm" :disabled="manualBusy">Открыть</button>
-                </div>
-              </form>
-              <form class="field" @submit.prevent="typeText">
-                <label for="manual-text">Текст в поле под курсором</label>
-                <div class="inline">
-                  <input
-                    id="manual-text"
-                    v-model="manualText"
-                    class="input"
-                    type="text"
-                    autocomplete="off"
-                    maxlength="2000"
-                    placeholder="Логин, пароль, код из SMS"
-                  />
-                  <button type="submit" class="btn btn-sm" :disabled="manualBusy">Ввести</button>
-                </div>
-              </form>
-              <div class="row-wrap keys" aria-label="Клавиши">
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  :disabled="manualBusy"
-                  @click="key('Enter')"
-                >
-                  Enter
-                </button>
-                <button type="button" class="btn btn-sm" :disabled="manualBusy" @click="key('Tab')">
-                  Tab
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  :disabled="manualBusy"
-                  @click="key('Backspace')"
-                >
-                  Backspace
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  :disabled="manualBusy"
-                  @click="key('Escape')"
-                >
-                  Esc
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  :disabled="manualBusy"
-                  @click="key('PageDown')"
-                >
-                  Вниз
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  :disabled="manualBusy"
-                  @click="key('PageUp')"
-                >
-                  Вверх
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-ghost"
-                  :disabled="manualBusy"
-                  @click="act({ name: 'back' })"
-                >
-                  Назад
-                </button>
-              </div>
-              <p v-if="manualNote" class="small hint-err">{{ manualNote }}</p>
-              <div class="row-wrap actions">
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  :disabled="!!busy"
-                  @click="manual('stop')"
-                >
-                  <OfficeIcon name="check" size="sm" />Готово
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-sm"
-                  :disabled="!!busy"
-                  @click="manual('start')"
-                >
-                  Продлить
-                </button>
-              </div>
-            </div>
+        <section class="card rise current" aria-labelledby="computer-current">
+          <div class="card-head">
+            <h2 id="computer-current">Текущее задание</h2>
+            <OfficeBadge v-if="current" :badge="taskStatusBadge[current.status]" />
           </div>
-        </template>
-        <div class="platforms">
-          <h3>Площадки, где выполнен вход</h3>
-          <p class="small muted">
-            Отметьте площадки после входа через управление вручную. По ним модель получает задания
-            «проверить заказы и откликнуться» и «ответить заказчикам и сдать работу»; отклики
-            возможны только здесь.
-          </p>
-          <ul class="platform-list">
-            <li v-for="platform in data.platforms" :key="platform.domain">
-              <label class="check">
-                <input
-                  type="checkbox"
-                  :checked="platform.loggedIn"
-                  :disabled="!!busy"
-                  @change="markPlatform(platform.domain, !platform.loggedIn)"
+          <template v-if="current">
+            <p class="goal">{{ current.goal }}</p>
+            <p class="small muted">
+              {{ sourceLabel(current) }} · шаг {{ current.stepCount }} из {{ current.stepLimit }} ·
+              {{ spentLine(current) }} · начато {{ ago(current.startedAt || current.createdAt) }}
+              <span v-if="current.demo" class="badge badge-plain demo-note">Демо</span>
+            </p>
+            <div class="live">
+              <figure class="screen">
+                <img
+                  v-if="screenshotUrl"
+                  :key="screenshotUrl"
+                  :src="screenshotUrl"
+                  alt="Последний снимок экрана браузера"
+                  width="1280"
+                  height="800"
                 />
-                <span>
-                  {{ platform.domain }}
-                  <span v-if="platform.loggedIn" class="small muted">
-                    · сегодня {{ platform.sentToday }} из {{ state.proposalsPerDay }}
-                  </span>
-                </span>
-              </label>
-            </li>
-          </ul>
-          <p v-if="!loggedIn.length" class="small muted">
-            Пока ни одной площадки: модель только исследует и записывает находки.
-          </p>
-        </div>
-      </section>
-
-      <section class="card rise" aria-labelledby="computer-goal">
-        <h2 id="computer-goal">Своё задание</h2>
-        <p class="small muted">
-          Опишите, что найти или проверить в интернете. Задание выполняется раньше тем по кругу;
-          запрещённые темы сервер отклонит.
-        </p>
-        <form class="goal-form" @submit.prevent="submitGoal">
-          <div class="field" :class="{ 'is-error': goalError }">
-            <label for="computer-goal-text">Что сделать</label>
-            <textarea
-              id="computer-goal-text"
-              v-model="goal"
-              class="textarea"
-              rows="3"
-              maxlength="1000"
-              placeholder="Например: найди конкурсы для разработчиков ИИ-агентов с дедлайном в ближайший месяц"
-            />
-            <p v-if="goalError" class="hint">{{ goalError }}</p>
-          </div>
-          <button type="submit" class="btn btn-primary" :disabled="!!busy || status.offline">
-            {{ busy === 'goal' ? 'Сохраняем' : 'Поставить в очередь' }}
-          </button>
-        </form>
-      </section>
-
-      <OfficePerformerProfile />
-      <section class="card rise directions" aria-labelledby="computer-directions">
-        <div class="card-head">
-          <h2 id="computer-directions">Направления поиска</h2>
-          <span class="small muted"
-            >включено {{ enabledDirections }} из {{ directions.length }}</span
-          >
-        </div>
-        <p class="small muted">
-          Пока нет ваших заданий, модель по кругу берёт включённые направления: чаще те, где находки
-          чаще получаются «брать» или «нужен человек», но ни одно включённое не остаётся без
-          очереди. Площадки с входом идут первыми. Встроенные направления можно выключить и
-          переписать, свои - ещё и удалить; запрещённые схемы сервер отклонит.
-        </p>
-        <ul class="direction-list" aria-label="Направления поиска">
-          <li
-            v-for="d in directions"
-            :key="d.id"
-            class="direction"
-            :class="{ 'is-off': !d.enabled }"
-            :data-direction="d.id"
-          >
-            <div class="direction-row">
-              <button
-                type="button"
-                class="switch"
-                role="switch"
-                :aria-checked="d.enabled"
-                :aria-label="`Направление «${d.title}»`"
-                :disabled="!!busy || status.offline"
-                @click="toggleDirection(d)"
-              />
-              <div class="direction-body">
-                <div class="found-head">
-                  <h3>{{ d.title }}</h3>
-                  <span class="badge badge-plain">Приоритет {{ d.weight }}</span>
-                  <span v-if="!d.builtIn" class="badge badge-copy">Своё</span>
-                  <span v-if="!d.enabled" class="badge badge-off">Выключено</span>
+                <div v-else class="screen-empty muted small">
+                  Снимок появится после первого шага.
                 </div>
-                <p class="small muted">{{ directionStats(d) }}</p>
-                <template v-if="editing === d.id">
-                  <form class="direction-form" @submit.prevent="saveEdit">
-                    <div class="field">
-                      <label :for="`direction-title-${d.id}`">Название</label>
-                      <input
-                        :id="`direction-title-${d.id}`"
-                        v-model="edit.title"
-                        class="input"
-                        type="text"
-                        maxlength="80"
-                      />
-                    </div>
-                    <div class="field">
-                      <label :for="`direction-goal-${d.id}`">Что искать и что записывать</label>
-                      <textarea
-                        :id="`direction-goal-${d.id}`"
-                        v-model="edit.goal"
-                        class="textarea"
-                        rows="4"
-                        maxlength="1000"
-                      />
-                    </div>
-                    <div class="field weight">
-                      <label :for="`direction-weight-${d.id}`">Приоритет</label>
-                      <select :id="`direction-weight-${d.id}`" v-model="edit.weight" class="select">
-                        <option v-for="w in weights" :key="w" :value="w">{{ w }}</option>
-                      </select>
-                    </div>
-                    <div class="row-wrap actions">
-                      <button type="submit" class="btn btn-primary btn-sm" :disabled="!!busy">
-                        Сохранить
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-ghost btn-sm"
-                        :disabled="!!busy"
-                        @click="editing = null"
-                      >
-                        Отмена
-                      </button>
-                    </div>
-                  </form>
-                </template>
-                <template v-else>
-                  <details class="fold">
-                    <summary class="small">Текст задания</summary>
-                    <p class="small report">{{ d.goal }}</p>
-                  </details>
-                  <div class="row-wrap actions">
-                    <button
-                      type="button"
-                      class="btn btn-sm"
-                      :disabled="!!busy"
-                      @click="startEdit(d)"
-                    >
-                      Изменить
-                    </button>
-                    <button
-                      v-if="!d.builtIn"
-                      type="button"
-                      class="btn btn-sm btn-ghost"
-                      :disabled="!!busy"
-                      @click="removeDirection(d)"
-                    >
-                      Удалить
-                    </button>
+                <figcaption class="small muted">
+                  {{
+                    current.steps[0]?.urlAfter ||
+                    current.steps[0]?.urlBefore ||
+                    'Браузер ещё не открыл страницу'
+                  }}
+                </figcaption>
+              </figure>
+              <ol class="log" aria-label="Журнал шагов">
+                <li v-for="step in current.steps" :key="step.id">
+                  <div class="log-head">
+                    <span class="mono small">{{ step.stepNo }}</span>
+                    <OfficeBadge :badge="stepBadge[step.decision]" />
+                    <span class="small muted">{{ when(step.createdAt) }}</span>
                   </div>
-                </template>
-              </div>
+                  <p class="log-action">{{ stepLine(step) }}</p>
+                  <p v-if="step.reason" class="small muted">{{ computerReason(step.reason) }}</p>
+                  <p v-if="step.reasoning" class="small quote">{{ step.reasoning }}</p>
+                </li>
+                <li v-if="!current.steps.length" class="muted small">Шагов ещё нет.</li>
+              </ol>
             </div>
-          </li>
-        </ul>
-        <p v-if="!enabledDirections && !loggedIn.length" class="small hint-err">
-          Все направления выключены и нет площадок с входом: модели нечего искать по кругу.
-        </p>
-        <form class="direction-form add" @submit.prevent="addDirection">
-          <h3>Своё направление</h3>
-          <div class="field" :class="{ 'is-error': directionError }">
-            <label for="direction-new-title">Название</label>
-            <input
-              id="direction-new-title"
-              v-model="newDirection.title"
-              class="input"
-              type="text"
-              maxlength="80"
-              placeholder="Например: редактура подкастов"
-            />
-          </div>
-          <div class="field" :class="{ 'is-error': directionError }">
-            <label for="direction-new-goal">Что искать и что записывать</label>
-            <textarea
-              id="direction-new-goal"
-              v-model="newDirection.goal"
-              class="textarea"
-              rows="4"
-              maxlength="1000"
-              :placeholder="directionPlaceholder"
-            />
-            <p v-if="directionError" class="hint">{{ directionError }}</p>
-          </div>
-          <div class="field weight">
-            <label for="direction-new-weight">Приоритет</label>
-            <select id="direction-new-weight" v-model="newDirection.weight" class="select">
-              <option v-for="w in weights" :key="w" :value="w">{{ w }}</option>
-            </select>
-          </div>
-          <button type="submit" class="btn btn-primary" :disabled="!!busy || status.offline">
-            {{ busy === 'direction-new' ? 'Сохраняем' : 'Добавить направление' }}
-          </button>
-        </form>
-      </section>
-
-      <section class="card rise" aria-labelledby="computer-proposals">
-        <div class="card-head">
-          <h2 id="computer-proposals">Отклики</h2>
-          <span class="small muted"
-            >Написаны от вашего имени; отправка только по разрешению сервера</span
-          >
-        </div>
-        <div v-if="data.proposals.length" class="rows">
-          <article v-for="item in data.proposals" :key="item.id" class="found">
-            <div class="found-head">
-              <OfficeBadge :badge="proposalStatusBadge[item.status]" />
-              <span class="badge badge-plain">{{ item.platformDomain }}</span>
-              <span v-if="item.demo" class="badge badge-test">Демо</span>
-              <span class="small muted">
-                {{ item.sentAt ? `отправлен ${when(item.sentAt)}` : when(item.createdAt) }}
-              </span>
-            </div>
-            <h3>{{ item.opportunityTitle || item.opportunityUrl }}</h3>
-            <p class="small">
-              <a :href="item.opportunityUrl" target="_blank" rel="noopener noreferrer nofollow">{{
-                item.opportunityUrl
-              }}</a>
-              <span v-if="item.priceAmount !== null">
-                · цена {{ money(item.priceAmount, item.priceCurrency) }}</span
-              >
-            </p>
-            <details class="fold">
-              <summary class="small">Текст отклика ({{ item.text.length }} зн.)</summary>
-              <p class="small report">{{ item.text }}</p>
-            </details>
-          </article>
-        </div>
-        <p v-else class="muted">
-          Откликов ещё нет. Они появятся, когда модель возьмёт задание на площадке с отмеченным
-          входом.
-        </p>
-      </section>
-
-      <section class="card rise" aria-labelledby="computer-documents">
-        <div class="card-head">
-          <h2 id="computer-documents">Документы</h2>
-          <span class="small muted">Результаты, подготовленные для сдачи заказчикам</span>
-        </div>
-        <div v-if="data.documents.length" class="rows">
-          <article v-for="item in data.documents" :key="item.id" class="found">
-            <div class="found-head">
-              <span class="badge badge-plain">{{ documentKindLabel[item.kind] || item.kind }}</span>
-              <span v-if="item.demo" class="badge badge-test">Демо</span>
-              <span class="small muted">{{ when(item.createdAt) }}</span>
-            </div>
-            <h3>{{ item.title }}</h3>
-            <p class="small muted">Техзадание: {{ item.brief }}</p>
-            <details class="fold">
-              <summary class="small">Текст ({{ item.text.length }} зн.)</summary>
-              <p class="small report">{{ item.text }}</p>
-            </details>
-          </article>
-        </div>
-        <p v-else class="muted">Документов ещё нет.</p>
-      </section>
-
-      <section class="card rise" aria-labelledby="computer-found">
-        <div class="card-head">
-          <h2 id="computer-found">Найденные возможности</h2>
-          <span class="small muted">Записи и оценка модели, не доход</span>
-        </div>
-        <div v-if="data.opportunities.length" class="rows">
-          <article
-            v-for="item in data.opportunities"
-            :key="item.id"
-            class="found"
-            :class="{ 'is-off': item.status === 'dismissed' }"
-          >
-            <div class="found-head">
-              <span class="badge badge-plain">{{
-                opportunityKindLabel[item.kind] || item.kind
-              }}</span>
-              <OfficeBadge :badge="decisionBadge[item.decision] ?? decisionBadge.human!" />
-              <span class="badge badge-plain">Подходит на {{ item.fit }}%</span>
-              <span v-if="item.aiForbidden" class="badge badge-err">Запрещён ИИ</span>
-              <span v-if="item.demo" class="badge badge-test">Демо</span>
-              <span v-if="item.status === 'saved'" class="badge badge-ok">Сохранено</span>
-              <span class="small muted">{{ when(item.createdAt) }}</span>
-            </div>
-            <h3>{{ item.title }}</h3>
-            <p class="small">{{ item.summary }}</p>
-            <p v-if="item.reason || estimate(item)" class="small muted">
-              <span v-if="estimate(item)">Оценка: {{ estimate(item) }}. </span>{{ item.reason }}
-            </p>
-            <p class="small">
-              <a :href="item.url" target="_blank" rel="noopener noreferrer nofollow">{{
-                item.url
-              }}</a>
-            </p>
             <div class="row-wrap actions">
               <button
-                v-if="item.status !== 'saved'"
                 type="button"
-                class="btn btn-sm"
+                class="btn btn-sm btn-danger"
                 :disabled="!!busy"
-                @click="mark(item.id, 'saved')"
+                @click="cancel(current)"
               >
-                Сохранить
-              </button>
-              <button
-                v-if="item.status !== 'dismissed'"
-                type="button"
-                class="btn btn-sm btn-ghost"
-                :disabled="!!busy"
-                @click="mark(item.id, 'dismissed')"
-              >
-                Не подходит
-              </button>
-              <button
-                v-else
-                type="button"
-                class="btn btn-sm btn-ghost"
-                :disabled="!!busy"
-                @click="mark(item.id, 'new')"
-              >
-                Вернуть
+                Отменить задание
               </button>
             </div>
-          </article>
-        </div>
-        <p v-else class="muted">Пока ничего не найдено. Записи появятся по ходу заданий.</p>
-      </section>
+          </template>
+          <OfficeEmpty
+            v-else
+            icon="eye"
+            title="Сейчас ничего не выполняется"
+            :text="
+              state.enabled
+                ? 'Следующее задание начнётся, как только worker освободится и условия позволят.'
+                : 'Включите работу выше, чтобы модель начала искать возможности.'
+            "
+          />
+        </section>
 
-      <section class="card rise" aria-labelledby="computer-history">
-        <div class="card-head">
-          <h2 id="computer-history">История заданий</h2>
-        </div>
-        <div v-if="data.history.length" class="table-wrap">
-          <table class="table table-stack">
-            <thead>
-              <tr>
-                <th>Когда</th>
-                <th>Задание</th>
-                <th>Статус</th>
-                <th>Шаги</th>
-                <th>Расходы</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="task in data.history" :key="task.id">
-                <td data-l="Когда" class="mono small">
-                  {{ when(task.finishedAt || task.createdAt) }}
-                </td>
-                <td data-l="Задание" data-full>
-                  <p>{{ shortGoal(task.goal) }}</p>
-                  <p class="small muted">
-                    {{ sourceLabel(task) }}<span v-if="task.demo"> · демо</span>
-                  </p>
-                  <details v-if="taskNote(task)" class="fold">
-                    <summary class="small">{{ task.error ? 'Причина' : 'Отчёт' }}</summary>
-                    <p class="small report">{{ taskNote(task) }}</p>
-                  </details>
-                </td>
-                <td data-l="Статус"><OfficeBadge :badge="taskStatusBadge[task.status]" /></td>
-                <td data-l="Шаги">{{ task.stepCount }} из {{ task.stepLimit }}</td>
-                <td data-l="Расходы" class="mono small">{{ spentLine(task) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-else class="muted">Заданий ещё не было.</p>
-      </section>
+        <section class="card rise manual" aria-labelledby="computer-manual">
+          <div class="card-head">
+            <h2 id="computer-manual">Управление вручную</h2>
+            <span v-if="manualActive" class="badge badge-human">Ещё {{ manualLeft }}</span>
+          </div>
+          <p class="small muted">
+            Войдите на площадки под своим аккаунтом один раз: браузер на машине хранит профиль, и
+            модель работает в нём дальше. Пока вы управляете, шаги модели не идут; через 15 минут
+            без действий управление вернётся само. Введённый вами текст не сохраняется и модели не
+            показывается.
+          </p>
+          <div v-if="!manualActive" class="row-wrap actions">
+            <button
+              type="button"
+              class="btn btn-primary"
+              :disabled="!!busy || status.offline"
+              @click="manual('start')"
+            >
+              Взять управление
+            </button>
+          </div>
+          <template v-else>
+            <div class="manual-grid">
+              <figure class="screen">
+                <img
+                  v-if="manualSrc"
+                  :src="manualSrc"
+                  alt="Живой экран браузера: клик по снимку передаётся машине"
+                  width="1280"
+                  height="800"
+                  class="clickable"
+                  @click="screenClick"
+                />
+                <div v-else class="screen-empty muted small">Ждём снимок с машины…</div>
+                <figcaption class="small muted">
+                  {{ manualPageUrl || 'Клик по снимку = клик в браузере' }}
+                </figcaption>
+              </figure>
+              <div class="manual-controls">
+                <form class="field" @submit.prevent="openUrl">
+                  <label for="manual-url">Адрес</label>
+                  <div class="inline">
+                    <input
+                      id="manual-url"
+                      v-model="manualUrl"
+                      class="input"
+                      type="text"
+                      inputmode="url"
+                      placeholder="https://www.fl.ru/login"
+                      maxlength="2000"
+                    />
+                    <button type="submit" class="btn btn-sm" :disabled="manualBusy">Открыть</button>
+                  </div>
+                </form>
+                <form class="field" @submit.prevent="typeText">
+                  <label for="manual-text">Текст в поле под курсором</label>
+                  <div class="inline">
+                    <input
+                      id="manual-text"
+                      v-model="manualText"
+                      class="input"
+                      type="text"
+                      autocomplete="off"
+                      maxlength="2000"
+                      placeholder="Логин, пароль, код из SMS"
+                    />
+                    <button type="submit" class="btn btn-sm" :disabled="manualBusy">Ввести</button>
+                  </div>
+                </form>
+                <div class="row-wrap keys" aria-label="Клавиши">
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    :disabled="manualBusy"
+                    @click="key('Enter')"
+                  >
+                    Enter
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    :disabled="manualBusy"
+                    @click="key('Tab')"
+                  >
+                    Tab
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    :disabled="manualBusy"
+                    @click="key('Backspace')"
+                  >
+                    Backspace
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    :disabled="manualBusy"
+                    @click="key('Escape')"
+                  >
+                    Esc
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    :disabled="manualBusy"
+                    @click="key('PageDown')"
+                  >
+                    Вниз
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    :disabled="manualBusy"
+                    @click="key('PageUp')"
+                  >
+                    Вверх
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost"
+                    :disabled="manualBusy"
+                    @click="act({ name: 'back' })"
+                  >
+                    Назад
+                  </button>
+                </div>
+                <p v-if="manualNote" class="small hint-err">{{ manualNote }}</p>
+                <div class="row-wrap actions">
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    :disabled="!!busy"
+                    @click="manual('stop')"
+                  >
+                    <OfficeIcon name="check" size="sm" />Готово
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    :disabled="!!busy"
+                    @click="manual('start')"
+                  >
+                    Продлить
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div class="platforms">
+            <h3>Площадки, где выполнен вход</h3>
+            <p class="small muted">
+              Отметьте площадки после входа через управление вручную. По ним модель получает задания
+              «проверить заказы и откликнуться» и «ответить заказчикам и сдать работу»; отклики
+              возможны только здесь.
+            </p>
+            <ul class="platform-list">
+              <li v-for="platform in data.platforms" :key="platform.domain">
+                <label class="check">
+                  <input
+                    type="checkbox"
+                    :checked="platform.loggedIn"
+                    :disabled="!!busy"
+                    @change="markPlatform(platform.domain, !platform.loggedIn)"
+                  />
+                  <span>
+                    {{ platform.domain }}
+                    <span v-if="platform.loggedIn" class="small muted">
+                      · сегодня {{ platform.sentToday }} из {{ state.proposalsPerDay }}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            </ul>
+            <p v-if="!loggedIn.length" class="small muted">
+              Пока ни одной площадки: модель только исследует и записывает находки.
+            </p>
+          </div>
+        </section>
 
-      <details class="card rise fold help">
-        <summary>Как это устроено</summary>
-        <p>
-          Браузер работает на отдельной виртуальной машине без ключей бирж, кошельков и базы фермы.
-          Модель видит снимок экрана и предлагает одно действие; сервер проверяет его по правилам и
-          только потом передаёт машине. Каждый шаг заранее резервирует расход модели в общем журнале
-          с теми же дневными и месячными лимитами.
-        </p>
-        <p>
-          На фриланс-площадках, где вы вошли под своим аккаунтом, модель оценивает задания сама,
-          пропускает те, где запрещён ИИ, пишет отклики от вашего имени и отправляет их по
-          разрешению сервера: одно разрешение на одну отправку, не больше лимита в сутки. Выдумывать
-          дипломы, отзывы и опыт, предлагать оплату мимо площадки, оставлять контакты или отрицать
-          использование ИИ сервер не даёт; вопрос заказчика «вы ИИ?» уходит вам.
-        </p>
-        <p>
-          Оплата, пароли, регистрация, переводы и всё, что модель не может сделать сама, ждут вашего
-          решения выше. Обход капч и проверок, мультиаккаунты и чужие документы запрещены на
-          сервере. Найденные возможности и отклики это записи; доходом считаются только деньги,
-          которые реально пришли.
-        </p>
-      </details>
+        <section class="card rise" aria-labelledby="computer-goal">
+          <h2 id="computer-goal">Своё задание</h2>
+          <p class="small muted">
+            Опишите, что найти или проверить в интернете. Задание выполняется раньше тем по кругу;
+            запрещённые темы сервер отклонит.
+          </p>
+          <form class="goal-form" @submit.prevent="submitGoal">
+            <div class="field" :class="{ 'is-error': goalError }">
+              <label for="computer-goal-text">Что сделать</label>
+              <textarea
+                id="computer-goal-text"
+                v-model="goal"
+                class="textarea"
+                rows="3"
+                maxlength="1000"
+                placeholder="Например: найди конкурсы для разработчиков ИИ-агентов с дедлайном в ближайший месяц"
+              />
+              <p v-if="goalError" class="hint">{{ goalError }}</p>
+            </div>
+            <button type="submit" class="btn btn-primary" :disabled="!!busy || status.offline">
+              {{ busy === 'goal' ? 'Сохраняем' : 'Поставить в очередь' }}
+            </button>
+          </form>
+        </section>
+      </div>
+
+      <div v-show="tab === 'profile'" class="tab-panel">
+        <OfficePerformerProfile />
+      </div>
+      <div v-show="tab === 'directions'" class="tab-panel">
+        <section class="card rise directions" aria-labelledby="computer-directions">
+          <div class="card-head">
+            <h2 id="computer-directions">Направления поиска</h2>
+            <span class="small muted"
+              >включено {{ enabledDirections }} из {{ directions.length }}</span
+            >
+          </div>
+          <p class="small muted">
+            Пока нет ваших заданий, модель по кругу берёт включённые направления: чаще те, где
+            находки чаще получаются «брать» или «нужен человек», но ни одно включённое не остаётся
+            без очереди. Площадки с входом идут первыми. Встроенные направления можно выключить и
+            переписать, свои - ещё и удалить; запрещённые схемы сервер отклонит.
+          </p>
+          <ul class="direction-list" aria-label="Направления поиска">
+            <li
+              v-for="d in directions"
+              :key="d.id"
+              class="direction"
+              :class="{ 'is-off': !d.enabled }"
+              :data-direction="d.id"
+            >
+              <div class="direction-row">
+                <button
+                  type="button"
+                  class="switch"
+                  role="switch"
+                  :aria-checked="d.enabled"
+                  :aria-label="`Направление «${d.title}»`"
+                  :disabled="!!busy || status.offline"
+                  @click="toggleDirection(d)"
+                />
+                <div class="direction-body">
+                  <div class="found-head">
+                    <h3>{{ d.title }}</h3>
+                    <span class="badge badge-plain">Приоритет {{ d.weight }}</span>
+                    <span v-if="!d.builtIn" class="badge badge-copy">Своё</span>
+                    <span v-if="!d.enabled" class="badge badge-off">Выключено</span>
+                  </div>
+                  <p class="small muted">{{ directionStats(d) }}</p>
+                  <template v-if="editing === d.id">
+                    <form class="direction-form" @submit.prevent="saveEdit">
+                      <div class="field">
+                        <label :for="`direction-title-${d.id}`">Название</label>
+                        <input
+                          :id="`direction-title-${d.id}`"
+                          v-model="edit.title"
+                          class="input"
+                          type="text"
+                          maxlength="80"
+                        />
+                      </div>
+                      <div class="field">
+                        <label :for="`direction-goal-${d.id}`">Что искать и что записывать</label>
+                        <textarea
+                          :id="`direction-goal-${d.id}`"
+                          v-model="edit.goal"
+                          class="textarea"
+                          rows="4"
+                          maxlength="1000"
+                        />
+                      </div>
+                      <div class="field weight">
+                        <label :for="`direction-weight-${d.id}`">Приоритет</label>
+                        <select
+                          :id="`direction-weight-${d.id}`"
+                          v-model="edit.weight"
+                          class="select"
+                        >
+                          <option v-for="w in weights" :key="w" :value="w">{{ w }}</option>
+                        </select>
+                      </div>
+                      <div class="row-wrap actions">
+                        <button type="submit" class="btn btn-primary btn-sm" :disabled="!!busy">
+                          Сохранить
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-ghost btn-sm"
+                          :disabled="!!busy"
+                          @click="editing = null"
+                        >
+                          Отмена
+                        </button>
+                      </div>
+                    </form>
+                  </template>
+                  <template v-else>
+                    <details class="fold">
+                      <summary class="small">Текст задания</summary>
+                      <p class="small report">{{ d.goal }}</p>
+                    </details>
+                    <div class="row-wrap actions">
+                      <button
+                        type="button"
+                        class="btn btn-sm"
+                        :disabled="!!busy"
+                        @click="startEdit(d)"
+                      >
+                        Изменить
+                      </button>
+                      <button
+                        v-if="!d.builtIn"
+                        type="button"
+                        class="btn btn-sm btn-ghost"
+                        :disabled="!!busy"
+                        @click="removeDirection(d)"
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </li>
+          </ul>
+          <p v-if="!enabledDirections && !loggedIn.length" class="small hint-err">
+            Все направления выключены и нет площадок с входом: модели нечего искать по кругу.
+          </p>
+          <form class="direction-form add" @submit.prevent="addDirection">
+            <h3>Своё направление</h3>
+            <div class="field" :class="{ 'is-error': directionError }">
+              <label for="direction-new-title">Название</label>
+              <input
+                id="direction-new-title"
+                v-model="newDirection.title"
+                class="input"
+                type="text"
+                maxlength="80"
+                placeholder="Например: редактура подкастов"
+              />
+            </div>
+            <div class="field" :class="{ 'is-error': directionError }">
+              <label for="direction-new-goal">Что искать и что записывать</label>
+              <textarea
+                id="direction-new-goal"
+                v-model="newDirection.goal"
+                class="textarea"
+                rows="4"
+                maxlength="1000"
+                :placeholder="directionPlaceholder"
+              />
+              <p v-if="directionError" class="hint">{{ directionError }}</p>
+            </div>
+            <div class="field weight">
+              <label for="direction-new-weight">Приоритет</label>
+              <select id="direction-new-weight" v-model="newDirection.weight" class="select">
+                <option v-for="w in weights" :key="w" :value="w">{{ w }}</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary" :disabled="!!busy || status.offline">
+              {{ busy === 'direction-new' ? 'Сохраняем' : 'Добавить направление' }}
+            </button>
+          </form>
+        </section>
+      </div>
+
+      <div v-show="tab === 'found'" class="tab-panel">
+        <section class="card rise" aria-labelledby="computer-proposals">
+          <div class="card-head">
+            <h2 id="computer-proposals">Отклики</h2>
+            <span class="small muted"
+              >Написаны от вашего имени; отправка только по разрешению сервера</span
+            >
+          </div>
+          <div v-if="data.proposals.length" class="rows">
+            <article
+              v-for="item in data.proposals.slice(0, shown.proposals)"
+              :key="item.id"
+              class="found"
+            >
+              <div class="found-head">
+                <OfficeBadge :badge="proposalStatusBadge[item.status]" />
+                <span class="badge badge-plain">{{ item.platformDomain }}</span>
+                <span v-if="item.demo" class="badge badge-test">Демо</span>
+                <span class="small muted">
+                  {{ item.sentAt ? `отправлен ${when(item.sentAt)}` : when(item.createdAt) }}
+                </span>
+              </div>
+              <h3>{{ item.opportunityTitle || item.opportunityUrl }}</h3>
+              <p class="small">
+                <a :href="item.opportunityUrl" target="_blank" rel="noopener noreferrer nofollow">{{
+                  item.opportunityUrl
+                }}</a>
+                <span v-if="item.priceAmount !== null">
+                  · цена {{ money(item.priceAmount, item.priceCurrency) }}</span
+                >
+              </p>
+              <details class="fold">
+                <summary class="small">Текст отклика ({{ item.text.length }} зн.)</summary>
+                <p class="small report">{{ item.text }}</p>
+              </details>
+            </article>
+          </div>
+          <button
+            v-if="data.proposals.length > shown.proposals"
+            type="button"
+            class="btn btn-sm btn-ghost more"
+            @click="shown.proposals += 5"
+          >
+            Показать ещё (осталось {{ data.proposals.length - shown.proposals }} откликов)
+          </button>
+          <p v-else class="muted">
+            Откликов ещё нет. Они появятся, когда модель возьмёт задание на площадке с отмеченным
+            входом.
+          </p>
+        </section>
+
+        <section class="card rise" aria-labelledby="computer-documents">
+          <div class="card-head">
+            <h2 id="computer-documents">Документы</h2>
+            <span class="small muted">Результаты, подготовленные для сдачи заказчикам</span>
+          </div>
+          <div v-if="data.documents.length" class="rows">
+            <article
+              v-for="item in data.documents.slice(0, shown.documents)"
+              :key="item.id"
+              class="found"
+            >
+              <div class="found-head">
+                <span class="badge badge-plain">{{
+                  documentKindLabel[item.kind] || item.kind
+                }}</span>
+                <span v-if="item.demo" class="badge badge-test">Демо</span>
+                <span class="small muted">{{ when(item.createdAt) }}</span>
+              </div>
+              <h3>{{ item.title }}</h3>
+              <p class="small muted">Техзадание: {{ item.brief }}</p>
+              <details class="fold">
+                <summary class="small">Текст ({{ item.text.length }} зн.)</summary>
+                <p class="small report">{{ item.text }}</p>
+              </details>
+            </article>
+          </div>
+          <button
+            v-if="data.documents.length > shown.documents"
+            type="button"
+            class="btn btn-sm btn-ghost more"
+            @click="shown.documents += 5"
+          >
+            Показать ещё (осталось {{ data.documents.length - shown.documents }} документов)
+          </button>
+          <p v-else class="muted">Документов ещё нет.</p>
+        </section>
+
+        <section class="card rise" aria-labelledby="computer-found">
+          <div class="card-head">
+            <h2 id="computer-found">Найденные возможности</h2>
+            <span class="small muted">Записи и оценка модели, не доход</span>
+          </div>
+          <div v-if="data.opportunities.length" class="rows">
+            <article
+              v-for="item in data.opportunities.slice(0, shown.opportunities)"
+              :key="item.id"
+              class="found"
+              :class="{ 'is-off': item.status === 'dismissed' }"
+            >
+              <div class="found-head">
+                <span class="badge badge-plain">{{
+                  opportunityKindLabel[item.kind] || item.kind
+                }}</span>
+                <OfficeBadge :badge="decisionBadge[item.decision] ?? decisionBadge.human!" />
+                <span class="badge badge-plain">Подходит на {{ item.fit }}%</span>
+                <span v-if="item.aiForbidden" class="badge badge-err">Запрещён ИИ</span>
+                <span v-if="item.demo" class="badge badge-test">Демо</span>
+                <span v-if="item.status === 'saved'" class="badge badge-ok">Сохранено</span>
+                <span class="small muted">{{ when(item.createdAt) }}</span>
+              </div>
+              <h3>{{ item.title }}</h3>
+              <p class="small">{{ item.summary }}</p>
+              <p v-if="item.reason || estimate(item)" class="small muted">
+                <span v-if="estimate(item)">Оценка: {{ estimate(item) }}. </span>{{ item.reason }}
+              </p>
+              <p class="small">
+                <a :href="item.url" target="_blank" rel="noopener noreferrer nofollow">{{
+                  item.url
+                }}</a>
+              </p>
+              <div class="row-wrap actions">
+                <button
+                  v-if="item.status !== 'saved'"
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="!!busy"
+                  @click="mark(item.id, 'saved')"
+                >
+                  Сохранить
+                </button>
+                <button
+                  v-if="item.status !== 'dismissed'"
+                  type="button"
+                  class="btn btn-sm btn-ghost"
+                  :disabled="!!busy"
+                  @click="mark(item.id, 'dismissed')"
+                >
+                  Не подходит
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn btn-sm btn-ghost"
+                  :disabled="!!busy"
+                  @click="mark(item.id, 'new')"
+                >
+                  Вернуть
+                </button>
+              </div>
+            </article>
+          </div>
+          <button
+            v-if="data.opportunities.length > shown.opportunities"
+            type="button"
+            class="btn btn-sm btn-ghost more"
+            @click="shown.opportunities += 10"
+          >
+            Показать ещё (осталось {{ data.opportunities.length - shown.opportunities }} находок)
+          </button>
+          <p v-else class="muted">Пока ничего не найдено. Записи появятся по ходу заданий.</p>
+        </section>
+      </div>
+
+      <div v-show="tab === 'history'" class="tab-panel">
+        <section class="card rise" aria-labelledby="computer-history">
+          <div class="card-head">
+            <h2 id="computer-history">История заданий</h2>
+          </div>
+          <div v-if="data.history.length" class="table-wrap">
+            <table class="table table-stack">
+              <thead>
+                <tr>
+                  <th>Когда</th>
+                  <th>Задание</th>
+                  <th>Статус</th>
+                  <th>Шаги</th>
+                  <th>Расходы</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="task in data.history.slice(0, shown.history)" :key="task.id">
+                  <td data-l="Когда" class="mono small">
+                    {{ when(task.finishedAt || task.createdAt) }}
+                  </td>
+                  <td data-l="Задание" data-full>
+                    <p>{{ shortGoal(task.goal) }}</p>
+                    <p class="small muted">
+                      {{ sourceLabel(task) }}<span v-if="task.demo"> · демо</span>
+                    </p>
+                    <details v-if="taskNote(task)" class="fold">
+                      <summary class="small">{{ task.error ? 'Причина' : 'Отчёт' }}</summary>
+                      <p class="small report">{{ taskNote(task) }}</p>
+                    </details>
+                  </td>
+                  <td data-l="Статус"><OfficeBadge :badge="taskStatusBadge[task.status]" /></td>
+                  <td data-l="Шаги">{{ task.stepCount }} из {{ task.stepLimit }}</td>
+                  <td data-l="Расходы" class="mono small">{{ spentLine(task) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <button
+            v-if="data.history.length > shown.history"
+            type="button"
+            class="btn btn-sm btn-ghost more"
+            @click="shown.history += 10"
+          >
+            Показать ещё (осталось {{ data.history.length - shown.history }} заданий)
+          </button>
+          <p v-else-if="!data.history.length" class="muted">Заданий ещё не было.</p>
+        </section>
+
+        <details class="card rise fold help">
+          <summary>Как это устроено</summary>
+          <p>
+            Браузер работает на отдельной виртуальной машине без ключей бирж, кошельков и базы
+            фермы. Модель видит снимок экрана и предлагает одно действие; сервер проверяет его по
+            правилам и только потом передаёт машине. Каждый шаг заранее резервирует расход модели в
+            общем журнале с теми же дневными и месячными лимитами.
+          </p>
+          <p>
+            На фриланс-площадках, где вы вошли под своим аккаунтом, модель оценивает задания сама,
+            пропускает те, где запрещён ИИ, пишет отклики от вашего имени и отправляет их по
+            разрешению сервера: одно разрешение на одну отправку, не больше лимита в сутки.
+            Выдумывать дипломы, отзывы и опыт, предлагать оплату мимо площадки, оставлять контакты
+            или отрицать использование ИИ сервер не даёт; вопрос заказчика «вы ИИ?» уходит вам.
+          </p>
+          <p>
+            Оплата, пароли, регистрация, переводы и всё, что модель не может сделать сама, ждут
+            вашего решения выше. Обход капч и проверок, мультиаккаунты и чужие документы запрещены
+            на сервере. Найденные возможности и отклики это записи; доходом считаются только деньги,
+            которые реально пришли.
+          </p>
+        </details>
+      </div>
     </template>
   </div>
 </template>
 <style scoped>
+.tabs-nav {
+  margin: var(--s-6) 0 var(--s-4);
+  flex-wrap: wrap;
+}
+.tab-panel {
+  min-width: 0;
+}
+.state-detail {
+  margin: 4px 0;
+  color: var(--ink-2);
+}
+.more {
+  margin-top: var(--s-3);
+}
 .control,
 .stats,
 .approvals,
