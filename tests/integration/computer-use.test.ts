@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -14,6 +15,7 @@ import {
   computerUseTick,
   controlComputerUse,
   resolveApproval,
+  rotationPaced,
   screenshotRoot,
 } from '../../core/computer-use/runtime'
 import { computerUseView } from '../../core/computer-use/view'
@@ -738,6 +740,54 @@ describe('computer use: one task at a time, validated actions, owner approvals',
       (await query('SELECT status FROM computer_use_tasks WHERE id=$1', [id]))[0]!.status,
     ).toBe('cancelled')
     await expect(cancelTask(id)).rejects.toThrow('COMPUTER_USE_TASK_FINISHED')
+  })
+
+  it('paces rotation over the UTC day but lets owner tasks run within the cap', async () => {
+    const paid = {
+      ...original,
+      MODEL_PROVIDER: 'openai' as const,
+      OPENAI_TRANSPORT: 'openrouter' as const,
+      OPENROUTER_API_KEY: 'test-only-key',
+      SEARCH_PROVIDER: 'searxng' as const,
+      VM_AGENT_URL: 'http://10.0.0.9:8787/',
+      VM_AGENT_TOKEN: 'x'.repeat(40),
+      COMPUTER_USE_TASK_CAP_MICROUSD: 1,
+    }
+    // Today's spend just under the daily cap: within the cap, far ahead of the day's pace
+    // (except in the last half second of the UTC day).
+    const reservation = randomUUID()
+    await query(
+      `INSERT INTO budget_reservations(id,dedupe_key,category,limit_kopecks,status)
+       VALUES($1,'computer-use:pacing','computer_use',1000,'closed')`,
+      [reservation],
+    )
+    await query(
+      `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo,charged_microusd)
+       VALUES($1,'computer-use:pacing:1',$2,'computer_use','done',10,10,false,170000)`,
+      [randomUUID(), reservation],
+    )
+    vi.spyOn(settings, 'config').mockImplementation(() => ({
+      ...paid,
+      COMPUTER_USE_DAILY_CAP_MICROUSD: 170001,
+    }))
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent()
+    const model = scripted([() => ({ name: 'finish', arguments: { report: 'Готово.' } })])
+    expect(await computerUseTick({ agent, model })).toBe(false)
+    expect(await query('SELECT id FROM computer_use_tasks')).toHaveLength(0)
+    expect((await computerUseView()).state.blocked).toContain('COMPUTER_USE_DAILY_PACING')
+    // An owner task is not paced: it is claimed and ends at its own cap.
+    await addOwnerGoal('Найди конкурсы для разработчиков с призами')
+    expect((await computerUseView()).state.blocked).not.toContain('COMPUTER_USE_DAILY_PACING')
+    expect(await computerUseTick({ agent, model })).toBe(true)
+    expect((await task()).source).toBe('owner')
+    // Pure rule: the share of the cap for the elapsed part of the day plus one task cap.
+    const midnight = Date.UTC(2026, 9, 22)
+    expect(rotationPaced(0, 4_000_000, 1_000_000, midnight)).toBe(true)
+    expect(rotationPaced(1_000_000, 4_000_000, 1_000_000, midnight)).toBe(true)
+    expect(rotationPaced(1_000_001, 4_000_000, 1_000_000, midnight)).toBe(false)
+    expect(rotationPaced(3_000_000, 4_000_000, 1_000_000, midnight + 43_200_000)).toBe(true)
+    expect(rotationPaced(3_000_001, 4_000_000, 1_000_000, midnight + 43_200_000)).toBe(false)
   })
 
   it('fails the task when the VM link is lost and pauses after repeated failures', async () => {

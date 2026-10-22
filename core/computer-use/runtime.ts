@@ -462,6 +462,22 @@ export function canOmitScreenshot(
   return previous.action.name === 'note_opportunity' && previous.decision === 'allowed'
 }
 
+/**
+ * Daily pacing of rotation: a new rotation task may start only while today's spend is within
+ * the share of the daily cap for the part of the UTC day that has passed, plus one task cap.
+ * Without it the whole daily cap went in the first minutes after midnight UTC.
+ */
+export function rotationPaced(
+  spentMicrousd: number,
+  dailyCapMicrousd: number,
+  taskCapMicrousd: number,
+  now = Date.now(),
+) {
+  const day = 86_400_000
+  const elapsed = (now % day) / day
+  return spentMicrousd <= Math.floor(dailyCapMicrousd * elapsed) + taskCapMicrousd
+}
+
 async function claimTask(): Promise<Claim | null> {
   return transaction(async (db) => {
     // The same first locks as meteredCall; nothing else is held across the model request.
@@ -520,6 +536,17 @@ async function claimTask(): Promise<Claim | null> {
         if (age < P.rotationPauseMs) return null
       }
       const provider = computerUseProvider()
+      // The daily cap is spread over the UTC day; owner-queued tasks above are not paced.
+      if (
+        !provider.demo &&
+        !rotationPaced(
+          spent.microusd,
+          c.COMPUTER_USE_DAILY_CAP_MICROUSD,
+          c.COMPUTER_USE_TASK_CAP_MICROUSD,
+          now,
+        )
+      )
+        return null
       const next = await pickRotationGoal(owner.rotation_index, db)
       // Nothing enabled and no logged-in platform: the office shows COMPUTER_USE_NO_DIRECTIONS.
       if (!next) return null

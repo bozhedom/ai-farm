@@ -18,6 +18,7 @@ import { effectiveProposalsPerDay, readProfile } from './profile'
 import {
   computerUseProvider,
   dailySpend,
+  rotationPaced,
   ensureComputerUse,
   type ComputerUseRow,
   type TaskRow,
@@ -119,6 +120,17 @@ export async function computerUseView(): Promise<ComputerUseView> {
   if (state.failures >= P.maxFailuresInRow) blocked.push('COMPUTER_USE_FAILURES')
   if (!provider.demo && spent.microusd >= c.COMPUTER_USE_DAILY_CAP_MICROUSD)
     blocked.push('COMPUTER_USE_DAILY_LIMIT')
+  else if (
+    !provider.demo &&
+    !queued[0]!.n &&
+    !rotationPaced(
+      spent.microusd,
+      c.COMPUTER_USE_DAILY_CAP_MICROUSD,
+      c.COMPUTER_USE_TASK_CAP_MICROUSD,
+      now,
+    )
+  )
+    blocked.push('COMPUTER_USE_DAILY_PACING')
   const manualActive = !!state.manual_until && state.manual_until.getTime() > now
   if (manualActive) blocked.push('COMPUTER_USE_MANUAL_CONTROL')
   const loggedIn = new Map(platformRows.map((row) => [row.domain as string, !!row.logged_in]))
