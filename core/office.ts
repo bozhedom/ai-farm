@@ -1084,7 +1084,10 @@ async function jobNow(job: { id: string; kind: string; payload: Record<string, s
 const errorTexts: [RegExp, string][] = [
   [/^LEASE_(EXPIRED|LOST)$/, 'Сервер перезапустился, задача вернулась в очередь.'],
   [/^WORKER_DRAINING$/, 'Сервер остановлен штатно, задача продолжится.'],
-  [/DAILY_BUDGET_WAIT$/, 'Ждёт следующего дня: дневной лимит исчерпан.'],
+  [
+    /DAILY_BUDGET_WAIT$/,
+    'Ждёт следующего дня: дневной бюджет потрачен или занят начатыми задачами.',
+  ],
   [/PACING_WAIT$/, 'Ждёт своего часа: бюджет модели распределяется по суткам.'],
   [/SLOT_EXPIRED$/, 'Пропущена: день уже прошёл.'],
   [/^SEARCH_INSUFFICIENT_SOURCES$/, 'Поиск вернул мало источников.'],
