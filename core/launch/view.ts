@@ -3,6 +3,7 @@ import { query } from '../db'
 import { budgetSummary } from '../budget'
 import { COMPUTER_USE_POLICY } from '../computer-use/policy'
 import { platformDomains } from '../computer-use/platforms'
+import { effectiveProposalsPerDay, readProfile } from '../computer-use/profile'
 import { executionReady } from '../execution/config'
 import { executionTracks, type ExecutionTrack } from '../execution/types'
 import { TRADING_POLICY } from '../policy'
@@ -44,6 +45,7 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
     paper,
     [manager],
     execution,
+    performer,
   ] = await Promise.all([
     query(
       'SELECT mode,worker_heartbeat,schedule_enabled,research_enabled,provider_readiness FROM system_state WHERE id=true',
@@ -83,6 +85,7 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
     paperCandidates('bybit'),
     query('SELECT enabled FROM trading_manager WHERE id=true'),
     query('SELECT track,mode,status FROM execution_portfolios'),
+    readProfile(),
   ])
   const alive =
     !!state?.worker_heartbeat && now.getTime() - new Date(state.worker_heartbeat).getTime() < 90_000
@@ -134,7 +137,10 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
       approvals: cu?.approvals ?? 0,
       autoProposalsAllowed: c.COMPUTER_USE_AUTO_PROPOSALS,
       autoProposals: !!cu?.auto_proposals,
-      proposalsPerDay: c.COMPUTER_USE_PROPOSALS_PER_DAY,
+      proposalsPerDay: effectiveProposalsPerDay(
+        performer.profile,
+        c.COMPUTER_USE_PROPOSALS_PER_DAY,
+      ),
       platforms: platformDomains().map((domain) => ({
         domain,
         loggedIn: loggedIn.get(domain) ?? false,

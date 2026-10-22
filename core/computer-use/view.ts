@@ -12,12 +12,13 @@ import type {
   ComputerUseView,
 } from '../contracts/computer-use'
 import { listDirections } from './directions'
-import { platformDomains } from './platforms'
+import { isFreelancePlatform, platformDomains, platformOf } from './platforms'
 import { COMPUTER_USE_POLICY as P } from './policy'
 import { effectiveProposalsPerDay, readProfile } from './profile'
 import {
   computerUseProvider,
   dailySpend,
+  rotationPaced,
   ensureComputerUse,
   type ComputerUseRow,
   type TaskRow,
@@ -119,11 +120,27 @@ export async function computerUseView(): Promise<ComputerUseView> {
   if (state.failures >= P.maxFailuresInRow) blocked.push('COMPUTER_USE_FAILURES')
   if (!provider.demo && spent.microusd >= c.COMPUTER_USE_DAILY_CAP_MICROUSD)
     blocked.push('COMPUTER_USE_DAILY_LIMIT')
+  else if (
+    !provider.demo &&
+    !queued[0]!.n &&
+    !rotationPaced(
+      spent.microusd,
+      c.COMPUTER_USE_DAILY_CAP_MICROUSD,
+      c.COMPUTER_USE_TASK_CAP_MICROUSD,
+      now,
+    )
+  )
+    blocked.push('COMPUTER_USE_DAILY_PACING')
   const manualActive = !!state.manual_until && state.manual_until.getTime() > now
   if (manualActive) blocked.push('COMPUTER_USE_MANUAL_CONTROL')
   const loggedIn = new Map(platformRows.map((row) => [row.domain as string, !!row.logged_in]))
   const enabledDirections = directionRows.filter((row) => row.enabled).length
-  const rotationGoals = enabledDirections + 2 * [...loggedIn.values()].filter(Boolean).length
+  // Only platforms the rotation actually uses (`loggedInPlatforms`): a stale row for a domain
+  // that is no longer a configured platform yields no goals.
+  const platformGoalCount = [...loggedIn].filter(
+    ([domain, on]) => on && isFreelancePlatform(domain),
+  ).length
+  const rotationGoals = enabledDirections + 2 * platformGoalCount
   if (!rotationGoals && !queued[0]!.n) blocked.push('COMPUTER_USE_NO_DIRECTIONS')
   let currentView: ComputerTaskView | null = null
   if (current[0]) {
@@ -207,7 +224,8 @@ export async function computerUseView(): Promise<ComputerUseView> {
         o.estimated_value_minor === null ? null : Number(o.estimated_value_minor),
       estimatedCurrency: o.estimated_currency,
       reason: o.reason,
-      platformDomain: o.platform_domain,
+      // Rows recorded before the domain was filled server-side get it from their address.
+      platformDomain: o.platform_domain || platformOf(String(o.url)),
     })),
     proposals: proposals.map((p): ComputerProposalView => ({
       id: p.id,

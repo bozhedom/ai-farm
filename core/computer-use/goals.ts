@@ -91,7 +91,7 @@ export const builtInDirections: readonly BuiltInDirection[] = Object.freeze([
   {
     key: 'small_tenders',
     title: 'Малые закупки текстов и переводов',
-    goal: 'Найди малые закупки и тендеры на тексты, переводы, редактуру и контент для сайтов: zakupki.gov.ru и площадки малых закупок до 600 тысяч рублей, зарубежные порталы для фрилансеров и малого бизнеса. Запиши предмет, сумму, сроки и требования к исполнителю; заявку подписывает человек.',
+    goal: 'Найди малые коммерческие закупки и запросы на тексты, переводы, редактуру и контент для сайтов: агрегаторы коммерческих тендеров, B2B-доски заявок от компаний, разделы заказов на деловых порталах, а также зарубежные порталы для фрилансеров и малого бизнеса. Государственные порталы закупок часто не открываются с зарубежных адресов: если страница не загрузилась, не трать на неё шаги и переходи к коммерческим источникам. Запиши предмет, сумму, сроки и требования к исполнителю; заявку подписывает человек.',
   },
   {
     key: 'user_research',
@@ -114,6 +114,17 @@ export const builtInDirections: readonly BuiltInDirection[] = Object.freeze([
     goal: 'Найди издания, блоги и платформы, которые платят за статьи и гостевые материалы (страницы write for us, авторские программы, Дзен, VC, корпоративные блоги с оплатой за текст): тематика, ставка за статью, требования к автору, политика по ИИ-текстам. Запиши условия и адреса страниц редакций; предложение редакции отправляет человек.',
   },
 ])
+
+/**
+ * Earlier seed texts of built-in goals the server has since reworded. A stored goal still equal
+ * to one of them was never edited by the owner and is moved to the current text; any owner edit
+ * stays. `small_tenders` pointed at zakupki.gov.ru, which the farm's server abroad cannot open.
+ */
+export const retiredBuiltInGoals: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  small_tenders: [
+    'Найди малые закупки и тендеры на тексты, переводы, редактуру и контент для сайтов: zakupki.gov.ru и площадки малых закупок до 600 тысяч рублей, зарубежные порталы для фрилансеров и малого бизнеса. Запиши предмет, сумму, сроки и требования к исполнителю; заявку подписывает человек.',
+  ],
+})
 
 /** Goal texts of the built-in directions, in seed order. Kept for the model and the tests. */
 export const rotationGoals: readonly string[] = Object.freeze(

@@ -145,33 +145,89 @@ const aiDenial = [
  * rules, fee circumvention bans accounts), invented credentials, reviews, experience or
  * portfolio, external links, and any denial of AI use. The owner decides what to answer when a
  * client asks about AI; the model escalates with request_approval. `verified` is the owner's
- * performer profile: a claim repeated from it word for word is a fact, not an invention.
+ * performer profile: a claim is a fact only when a positive clause of the profile states the
+ * same claim (`claimVerified`).
  */
 export function forbiddenClaimReason(text: string, verified = ''): string {
+  const other = platformTextReason(text)
+  if (other) return other
+  if (fabricatedClaims.some((pattern) => unverifiedMatch(pattern, text, verified)))
+    return 'COMPUTER_USE_UNVERIFIED_CLAIM'
+  return ''
+}
+
+/** Every rule of `forbiddenClaimReason` except invented claims: for the owner's own profile. */
+export function platformTextReason(text: string): string {
   if (aiDenial.some((pattern) => pattern.test(text))) return 'COMPUTER_USE_AI_DENIAL'
   if (offPlatformPayment.some((pattern) => pattern.test(text)))
     return 'COMPUTER_USE_OFF_PLATFORM_PAYMENT'
   if (phoneLike(text) || contactDetails.some((pattern) => pattern.test(text)))
     return 'COMPUTER_USE_CONTACT_DETAILS'
   if (externalLinks.test(text)) return 'COMPUTER_USE_EXTERNAL_LINK'
-  if (fabricatedClaims.some((pattern) => unverifiedMatch(pattern, text, verified)))
-    return 'COMPUTER_USE_UNVERIFIED_CLAIM'
   return ''
 }
 
-const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim()
+/** Clauses: sentences split further at commas, semicolons, colons, brackets and line breaks. */
+const clauses = (value: string) => value.split(/[.!?;:,()\n…]+/u)
+/** Words of a clause: lower case, ё as е, apostrophes dropped, other punctuation as spaces. */
+const words = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/['’`]/g, '')
+    .replace(/[^\p{L}\p{N}+%]+/gu, ' ')
+    .split(' ')
+    .filter(Boolean)
+/** Leading words that state nothing themselves: "у меня", "я", "есть", "могу показать", "I have a". */
+const fillers = new Set(
+  (
+    'здравствуйте добрый день привет у меня я мой моя мое мои есть имею имеется также тоже ' +
+    'а и еще уже могу можно показать покажу вот это hello hi i have has a an the my also can ' +
+    'show am im ive got and'
+  ).split(' '),
+)
+/** A profile clause with any of these words is never a positive statement of a fact. */
+const negations = new Set(
+  (
+    'не нет ни без никогда нету пока not no never without none dont didnt doesnt havent hasnt ' +
+    'isnt wasnt werent cannot cant wont'
+  ).split(' '),
+)
+function claimWords(clause: string) {
+  const list = words(clause)
+  let start = 0
+  while (start < list.length && fillers.has(list[start]!)) start++
+  return list.slice(start)
+}
+
 /**
- * A claim pattern matches and at least one match is not repeated word for word in the owner's
- * verified facts (the performer profile). Without facts every match is unverified.
+ * A claim clause is verified only when a positive clause of the profile states it: after the
+ * leading filler words of both, the profile clause starts with the whole claim on word
+ * boundaries. "работала в компании Ромашка" verifies "Я работала в компании Ромашка", but not
+ * "работала в компании Google", "красный диплом МГУ" or "сертифицированный специалист". A
+ * profile clause with a negation ("диплом не получала") never verifies anything.
+ */
+export function claimVerified(claim: string, verified: string) {
+  const wanted = claimWords(claim)
+  if (!wanted.length) return false
+  const needle = ` ${wanted.join(' ')} `
+  return clauses(verified).some((clause) => {
+    if (words(clause).some((word) => negations.has(word))) return false
+    return ` ${claimWords(clause).join(' ')} `.startsWith(needle)
+  })
+}
+
+/**
+ * A claim pattern matches and at least one clause with a match is not stated in the owner's
+ * verified facts (the performer profile). Without facts every match is unverified; a match that
+ * spans clauses is unverified too: when in doubt, block.
  */
 function unverifiedMatch(pattern: RegExp, text: string, verified: string) {
-  if (!verified) return pattern.test(text)
-  const facts = normalize(verified)
-  const all = new RegExp(
-    pattern.source,
-    pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
-  )
-  return [...text.matchAll(all)].some((match) => !facts.includes(normalize(match[0])))
+  if (!pattern.test(text)) return false
+  if (!verified) return true
+  const matched = clauses(text).filter((clause) => pattern.test(clause))
+  if (!matched.length) return true
+  return matched.some((clause) => !claimVerified(clause, verified))
 }
 
 /**

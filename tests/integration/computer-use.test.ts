@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -14,6 +15,7 @@ import {
   computerUseTick,
   controlComputerUse,
   resolveApproval,
+  rotationPaced,
   screenshotRoot,
 } from '../../core/computer-use/runtime'
 import { computerUseView } from '../../core/computer-use/view'
@@ -376,7 +378,7 @@ describe('computer use: one task at a time, validated actions, owner approvals',
       .mockResolvedValueOnce(answer('navigate', { url: 'https://example.com/jobs' }))
     vi.stubGlobal('fetch', fetchMock)
     await controlComputerUse('enable')
-    // Earlier real failures stay counted until a task ends normally; the cap is a normal end.
+    // Earlier real failures stay counted; a limit reached with nothing recorded is one more.
     await query('UPDATE computer_use SET failures=2 WHERE id=true')
     const agent = new FakeVmAgent()
     await computerUseTick({ agent, model: astraStep(demoScript) })
@@ -392,7 +394,12 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     expect(row.report).toContain('https://example.com/jobs')
     expect(row.report).toContain(`из $${(cap / 1_000_000).toFixed(2)}`)
     const [owner] = await query('SELECT failures,last_error FROM computer_use WHERE id=true')
-    expect(owner).toMatchObject({ failures: 0, last_error: '' })
+    expect(owner).toMatchObject({ failures: 3, last_error: 'COMPUTER_USE_LIMIT_EMPTY' })
+    const [audited] = await query(
+      "SELECT data FROM audit_events WHERE kind='computer_use_task' ORDER BY id DESC LIMIT 1",
+    )
+    expect(audited?.data).toMatchObject({ status: 'done', endedBy: 'limit', emptyRun: true })
+    expect((await computerUseView()).state.blocked).toContain('COMPUTER_USE_FAILURES')
     expect(agent.sessions.size).toBe(0)
     const calls = await query(
       "SELECT * FROM tool_calls WHERE call_key LIKE 'computer-use:%' ORDER BY created_at",
@@ -423,10 +430,89 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     )
     expect(budgets[0]).toMatchObject({ steps_left: 30, cost_left_percent: 100 })
     expect(budgets[1]).toMatchObject({ steps_left: 29, wrap_up: true, final_step: true })
-    expect(budgets[1].cost_left_percent).toBe(Math.floor(((cap - 85000) * 100) / cap))
+    // The share left is of what the hard check will still let through, not of the raw cap.
+    expect(budgets[1].cost_left_percent).toBeLessThan(Math.floor(((cap - 85000) * 100) / cap))
     const shown = await computerUseView()
     expect(shown.state.spentTodayMicrousd).toBe(calls.length * 85000)
     expect(shown.history[0]?.spentMicrousd).toBe(calls.length * 85000)
+  })
+
+  it('bases the final-step hint on real step costs, not on the upper estimate', async () => {
+    let cap = 0
+    vi.spyOn(settings, 'config').mockImplementation(() => ({
+      ...original,
+      MODEL_PROVIDER: 'openai',
+      OPENAI_TRANSPORT: 'openrouter',
+      OPENROUTER_API_KEY: 'test-only-key',
+      SEARCH_PROVIDER: 'searxng',
+      VM_AGENT_URL: 'http://10.0.0.9:8787/',
+      VM_AGENT_TOKEN: 'x'.repeat(40),
+      DAILY_BUDGET_KOPECKS: 100000,
+      MONTHLY_BUDGET_KOPECKS: 1000000,
+      OPENAI_TOTAL_BUDGET_MICROUSD: 10_000_000,
+      COMPUTER_USE_TASK_CAP_MICROUSD: cap,
+      COMPUTER_USE_DAILY_CAP_MICROUSD: 50_000_000,
+    }))
+    const estimate = prepareStepRequest({
+      taskId: 'estimate',
+      reservationId: 'estimate',
+      goal: rotationGoals[0]!,
+      stepNo: 1,
+      stepLimit: 30,
+      history: [],
+      page: { url: 'about:blank', title: 'Демонстрация' },
+      png: Buffer.alloc(10),
+      opportunities: 0,
+    }).maximumMicrousd
+    // Room for the upper estimate plus several real steps of $0.085: the old rule
+    // (spent + 2 x estimate > cap) would have said "final step" from the first request.
+    cap = estimate + 5 * 85000
+    expect(2 * estimate).toBeGreaterThan(cap)
+    const answer = () =>
+      new Response(
+        JSON.stringify({
+          id: 'gen-scroll',
+          choices: [
+            {
+              finish_reason: 'tool_calls',
+              message: {
+                content: 'Смотрю страницу.',
+                tool_calls: [
+                  {
+                    type: 'function',
+                    function: {
+                      name: 'scroll',
+                      arguments: JSON.stringify({ x: 600, y: 400, deltaY: 500 }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 8000, completion_tokens: 100, cost: '0.03' },
+        }),
+      )
+    const fetchMock = vi.fn().mockImplementation(async () => answer())
+    vi.stubGlobal('fetch', fetchMock)
+    await controlComputerUse('enable')
+    await computerUseTick({ agent: new FakeVmAgent(), model: astraStep(demoScript) })
+    const row = await task()
+    expect(row.status).toBe('done')
+    expect(row.report).toContain('исчерпан лимит расходов на одно задание')
+    const budgets = fetchMock.mock.calls.map(
+      ([, init]) => JSON.parse(JSON.parse(init.body).messages[1].content[0].text).budget,
+    )
+    expect(budgets.length).toBeGreaterThanOrEqual(3)
+    // The first step has no real cost yet and gets no cost hint; later steps use the cost of
+    // recent steps, so only the last request the hard check allowed is marked final.
+    expect(budgets[0]).toMatchObject({ cost_left_percent: 100, wrap_up: false, final_step: false })
+    expect(budgets.slice(0, -1).every((b) => !b.final_step)).toBe(true)
+    expect(budgets.at(-1)).toMatchObject({ final_step: true, wrap_up: true })
+    const [spent] = await query(
+      'SELECT coalesce(sum(charged_microusd),0)::int AS n FROM tool_calls WHERE reservation_id=$1',
+      [row.reservation_id],
+    )
+    expect(spent!.n).toBeLessThanOrEqual(cap)
   })
 
   it('ends a task at the step limit as done with a report assembled from its records', async () => {
@@ -654,6 +740,112 @@ describe('computer use: one task at a time, validated actions, owner approvals',
       (await query('SELECT status FROM computer_use_tasks WHERE id=$1', [id]))[0]!.status,
     ).toBe('cancelled')
     await expect(cancelTask(id)).rejects.toThrow('COMPUTER_USE_TASK_FINISHED')
+  })
+
+  it('paces rotation over the UTC day but lets owner tasks run within the cap', async () => {
+    const paid = {
+      ...original,
+      MODEL_PROVIDER: 'openai' as const,
+      OPENAI_TRANSPORT: 'openrouter' as const,
+      OPENROUTER_API_KEY: 'test-only-key',
+      SEARCH_PROVIDER: 'searxng' as const,
+      VM_AGENT_URL: 'http://10.0.0.9:8787/',
+      VM_AGENT_TOKEN: 'x'.repeat(40),
+      COMPUTER_USE_TASK_CAP_MICROUSD: 1,
+    }
+    // Today's spend just under the daily cap: within the cap, far ahead of the day's pace
+    // (except in the last half second of the UTC day).
+    const reservation = randomUUID()
+    await query(
+      `INSERT INTO budget_reservations(id,dedupe_key,category,limit_kopecks,status)
+       VALUES($1,'computer-use:pacing','computer_use',1000,'closed')`,
+      [reservation],
+    )
+    await query(
+      `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo,charged_microusd)
+       VALUES($1,'computer-use:pacing:1',$2,'computer_use','done',10,10,false,170000)`,
+      [randomUUID(), reservation],
+    )
+    vi.spyOn(settings, 'config').mockImplementation(() => ({
+      ...paid,
+      COMPUTER_USE_DAILY_CAP_MICROUSD: 170001,
+    }))
+    await controlComputerUse('enable')
+    const agent = new FakeVmAgent()
+    const model = scripted([() => ({ name: 'finish', arguments: { report: 'Готово.' } })])
+    expect(await computerUseTick({ agent, model })).toBe(false)
+    expect(await query('SELECT id FROM computer_use_tasks')).toHaveLength(0)
+    expect((await computerUseView()).state.blocked).toContain('COMPUTER_USE_DAILY_PACING')
+    // An owner task is not paced: it is claimed and ends at its own cap.
+    await addOwnerGoal('Найди конкурсы для разработчиков с призами')
+    expect((await computerUseView()).state.blocked).not.toContain('COMPUTER_USE_DAILY_PACING')
+    expect(await computerUseTick({ agent, model })).toBe(true)
+    expect((await task()).source).toBe('owner')
+    // Pure rule: the share of the cap for the elapsed part of the day plus one task cap.
+    const midnight = Date.UTC(2026, 9, 22)
+    expect(rotationPaced(0, 4_000_000, 1_000_000, midnight)).toBe(true)
+    expect(rotationPaced(1_000_000, 4_000_000, 1_000_000, midnight)).toBe(true)
+    expect(rotationPaced(1_000_001, 4_000_000, 1_000_000, midnight)).toBe(false)
+    expect(rotationPaced(3_000_000, 4_000_000, 1_000_000, midnight + 43_200_000)).toBe(true)
+    expect(rotationPaced(3_000_001, 4_000_000, 1_000_000, midnight + 43_200_000)).toBe(false)
+  })
+
+  it('records findings with their platform and real notes, and clears a stale daily notice', async () => {
+    await controlComputerUse('enable')
+    await query("UPDATE computer_use SET last_error='COMPUTER_USE_DAILY_LIMIT' WHERE id=true")
+    const agent = new FakeVmAgent()
+    const model = scripted([
+      () => ({
+        name: 'note_opportunity',
+        note: '   ',
+        arguments: {
+          title: 'Описания товаров для магазина посуды',
+          url: 'https://www.fl.ru/projects/77/',
+          summary: 'Нужно 30 описаний посуды, без политических кампаний и без казино.',
+          kind: 'freelance',
+          requiresHuman: false,
+          decision: 'take',
+          fit: 70,
+          ai_forbidden: false,
+          estimated_value: null,
+          reason: 'Текстовая работа на площадке.',
+        },
+      }),
+      () => ({
+        name: 'note_opportunity',
+        note: 'Записываю второе задание.',
+        arguments: {
+          title: 'Статьи для политической кампании',
+          url: 'https://jobs.example/9',
+          summary: 'Нужны тексты для предвыборной кампании кандидата.',
+          kind: 'freelance',
+          requiresHuman: false,
+          decision: 'take',
+          fit: 50,
+          ai_forbidden: false,
+          estimated_value: null,
+          reason: 'Тексты.',
+        },
+      }),
+    ])
+    // The daily limit no longer applies: the claim clears the stale notice.
+    expect(await computerUseTick({ agent, model })).toBe(true)
+    const row = await task()
+    expect(row.status).toBe('done')
+    const recorded = await steps(row.id)
+    expect(recorded.map((s) => [s.decision, s.reason, s.reasoning])).toEqual([
+      // A negated mention is not a forbidden topic; an empty note stores nothing.
+      ['allowed', '', ''],
+      ['blocked', 'POLICY_IDEA_TOPIC_BLOCKED', 'Записываю второе задание.'],
+      ['allowed', '', 'Тестовый шаг'],
+    ])
+    const [found] = await query('SELECT platform_domain FROM computer_use_opportunities')
+    expect(found!.platform_domain).toBe('fl.ru')
+    const [owner] = await query('SELECT last_error FROM computer_use WHERE id=true')
+    expect(owner!.last_error).toBe('')
+    // Older rows without the domain show it from their address.
+    await query("UPDATE computer_use_opportunities SET platform_domain=''")
+    expect((await computerUseView()).opportunities[0]!.platformDomain).toBe('fl.ru')
   })
 
   it('fails the task when the VM link is lost and pauses after repeated failures', async () => {

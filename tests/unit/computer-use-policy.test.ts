@@ -1,11 +1,41 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyAction,
+  forbiddenFindingReason,
   isPrivateHost,
   validateGoal,
+  withoutNegatedMentions,
   type ElementInfo,
 } from '../../core/computer-use/policy'
 import { rotationGoals } from '../../core/computer-use/goals'
+
+describe('finding topic check ignores negated mentions', () => {
+  it('lets a finding say what a job excludes and still blocks positive mentions', () => {
+    for (const text of [
+      'Тексты для сайта клиники красоты, без политических кампаний и без казино.',
+      'Копирайтинг для магазина, кроме азартных игр.',
+      'Writing product pages, no gambling, without political campaigns.',
+      'Статьи не связаны с политикой, только ремонт.',
+    ])
+      expect([text, forbiddenFindingReason(text)]).toEqual([text, ''])
+    for (const text of [
+      'Тексты для политической кампании кандидата.',
+      'Не только казино, но и букмекеры.',
+      'Без вложений на казино: обзоры слотов.',
+      'Без опыта. Пишем обзоры казино.',
+      'Обзоры казино, без опыта.',
+    ])
+      expect([text, forbiddenFindingReason(text)]).toEqual([text, 'POLICY_IDEA_TOPIC_BLOCKED'])
+    // Schemes stay blocked when stated positively.
+    expect(forbiddenFindingReason('Нужно обойти капчу на сайте.')).toBe(
+      'COMPUTER_USE_SCHEME_BLOCKED',
+    )
+    const stripped = withoutNegatedMentions('Описания, без политических кампаний. Срок неделя.')
+    expect(stripped).not.toMatch(/без|политическ|кампани/)
+    expect(stripped).toContain('Описания')
+    expect(stripped).toContain('Срок неделя')
+  })
+})
 
 const page = (
   url: string,

@@ -8,6 +8,7 @@ import { ensureDirections, pickDirection, recordDirectionFinding, rotationSlot }
 import {
   COMPUTER_USE_POLICY as P,
   classifyAction,
+  forbiddenFindingReason,
   forbiddenTextReason,
   hostOf,
   isPrivateHost,
@@ -126,6 +127,20 @@ export async function taskSpend(reservationId: string | null, db?: Connection) {
     db,
   )
   return { microusd: Number(row!.microusd), kopecks: row!.kopecks as number }
+}
+/**
+ * What a step of this task really costs: the largest of the last three completed calls (actual
+ * provider cost, else the charge). Null before the first completed call.
+ */
+export async function recentStepCost(reservationId: string | null, db?: Connection) {
+  if (!reservationId) return null
+  const rows = await query<{ cost: string | number }>(
+    `SELECT coalesce(actual_microusd,charged_microusd,0) AS cost FROM tool_calls
+     WHERE reservation_id=$1 AND status='done' ORDER BY created_at DESC LIMIT 3`,
+    [reservationId],
+    db,
+  )
+  return rows.length ? Math.max(...rows.map((row) => Number(row.cost))) : null
 }
 export async function dailySpend(db?: Connection) {
   const [row] = await query(
@@ -448,6 +463,22 @@ export function canOmitScreenshot(
   return previous.action.name === 'note_opportunity' && previous.decision === 'allowed'
 }
 
+/**
+ * Daily pacing of rotation: a new rotation task may start only while today's spend is within
+ * the share of the daily cap for the part of the UTC day that has passed, plus one task cap.
+ * Without it the whole daily cap went in the first minutes after midnight UTC.
+ */
+export function rotationPaced(
+  spentMicrousd: number,
+  dailyCapMicrousd: number,
+  taskCapMicrousd: number,
+  now = Date.now(),
+) {
+  const day = 86_400_000
+  const elapsed = (now % day) / day
+  return spentMicrousd <= Math.floor(dailyCapMicrousd * elapsed) + taskCapMicrousd
+}
+
 async function claimTask(): Promise<Claim | null> {
   return transaction(async (db) => {
     // The same first locks as meteredCall; nothing else is held across the model request.
@@ -476,6 +507,9 @@ async function claimTask(): Promise<Claim | null> {
       )
       return null
     }
+    // The daily limit no longer applies: a stale notice would hang there until the next task.
+    if (owner.last_error === 'COMPUTER_USE_DAILY_LIMIT')
+      await query("UPDATE computer_use SET last_error='' WHERE id=true", [], db)
     let [task] = await query<TaskRow>(
       "SELECT * FROM computer_use_tasks WHERE status='running' LIMIT 1 FOR UPDATE",
       [],
@@ -506,6 +540,17 @@ async function claimTask(): Promise<Claim | null> {
         if (age < P.rotationPauseMs) return null
       }
       const provider = computerUseProvider()
+      // The daily cap is spread over the UTC day; owner-queued tasks above are not paced.
+      if (
+        !provider.demo &&
+        !rotationPaced(
+          spent.microusd,
+          c.COMPUTER_USE_DAILY_CAP_MICROUSD,
+          c.COMPUTER_USE_TASK_CAP_MICROUSD,
+          now,
+        )
+      )
+        return null
       const next = await pickRotationGoal(owner.rotation_index, db)
       // Nothing enabled and no logged-in platform: the office shows COMPUTER_USE_NO_DIRECTIONS.
       if (!next) return null
@@ -691,17 +736,25 @@ async function finishTask(
   error: string,
   agent: VmAgentClient,
   endedBy: 'model' | 'limit' = 'model',
+  emptyRun = '',
 ) {
   await transaction(async (db) => {
     await query('SELECT id FROM computer_use WHERE id=true FOR UPDATE', [], db)
     await endTask(db, task, status, report, error)
-    // Only a real failure counts towards the pause after three in a row; a task that reached its
-    // step or cost limit worked normally.
+    // A real failure, or a limit reached with nothing recorded (`emptyRun`), counts towards the
+    // pause after three in a row; a task that recorded work at its limit worked normally.
+    const failure = status !== 'done' ? error : emptyRun
+    // A success clears the last error, unless the daily limit applies right now: then that is
+    // what the owner should see.
+    const limited =
+      !failure &&
+      !task.is_demo &&
+      (await dailySpend(db)).microusd >= config().COMPUTER_USE_DAILY_CAP_MICROUSD
     await query(
-      status === 'done'
-        ? "UPDATE computer_use SET failures=0,last_error='' WHERE id=true"
-        : 'UPDATE computer_use SET failures=failures+1,last_error=$1 WHERE id=true',
-      status === 'done' ? [] : [error],
+      failure
+        ? 'UPDATE computer_use SET failures=failures+1,last_error=$1 WHERE id=true'
+        : 'UPDATE computer_use SET failures=0,last_error=$1 WHERE id=true',
+      [failure || (limited ? 'COMPUTER_USE_DAILY_LIMIT' : '')],
       db,
     )
     await audit(
@@ -709,9 +762,11 @@ async function finishTask(
       status !== 'done'
         ? 'Задание браузера остановлено без отчёта.'
         : endedBy === 'limit'
-          ? 'Задание браузера завершено по лимиту, отчёт собран сервером из записей задания.'
+          ? emptyRun
+            ? 'Задание браузера завершено по лимиту без единой записи: считается неудачей.'
+            : 'Задание браузера завершено по лимиту, отчёт собран сервером из записей задания.'
           : 'Задание браузера завершено, отчёт сохранён.',
-      { taskId: task.id, status, error, source: task.source, endedBy },
+      { taskId: task.id, status, error, source: task.source, endedBy, emptyRun: !!emptyRun },
       db,
     )
   })
@@ -800,9 +855,28 @@ export async function limitReport(task: TaskRow, reason: LimitReason, db?: Conne
   return lines.join('\n').slice(0, 4000)
 }
 
-/** Reaching the step or cost limit is a normal end: done, the server's report, no failure. */
+/**
+ * Reaching the step or cost limit ends the task as done with the server's report. It is a normal
+ * end when the task recorded something; a limit reached with no opportunity, proposal or
+ * document is an empty run and counts towards the pause after failures in a row.
+ */
 async function finishAtLimit(task: TaskRow, reason: LimitReason, agent: VmAgentClient) {
-  await finishTask(task, 'done', await limitReport(task, reason), '', agent, 'limit')
+  const [recorded] = await query<{ n: number }>(
+    `SELECT (SELECT count(*) FROM computer_use_opportunities WHERE task_id=$1)
+       + (SELECT count(*) FROM computer_use_proposals WHERE task_id=$1)
+       + (SELECT count(*) FROM computer_use_documents WHERE task_id=$1) AS n`,
+    [task.id],
+  )
+  const empty = Number(recorded?.n ?? 0) === 0
+  await finishTask(
+    task,
+    'done',
+    await limitReport(task, reason),
+    '',
+    agent,
+    'limit',
+    empty ? 'COMPUTER_USE_LIMIT_EMPTY' : '',
+  )
 }
 
 function safeError(error: unknown) {
@@ -1049,18 +1123,12 @@ async function draftProposal(task: TaskRow, stepNo: number, call: DraftCall, bas
     if (!opportunity) return 'COMPUTER_USE_OPPORTUNITY_REQUIRED'
     if (opportunity.ai_forbidden) return 'COMPUTER_USE_AI_FORBIDDEN'
     if (opportunity.decision !== 'take') return 'COMPUTER_USE_DECISION_NOT_TAKE'
-    // The owner's minimum price per currency (performer profile); the job budget counts as the
-    // bid when the proposal names no price.
+    // The owner's minimum price per currency (performer profile): an explicit price is required
+    // when minimums are set, and amounts written in the text may not undercut it.
     const price = priceReason(
       profile,
       { amount: call.price_amount, currency: call.price_currency },
-      {
-        amount:
-          opportunity.estimated_value_minor === null
-            ? null
-            : Number(opportunity.estimated_value_minor),
-        currency: opportunity.estimated_currency,
-      },
+      call.text,
     )
     if (price) return price
     const [count] = await query(
@@ -1365,16 +1433,23 @@ async function runStep(
       await query("UPDATE computer_use SET last_error='COMPUTER_USE_DAILY_LIMIT' WHERE id=true")
       return { kind: 'stop' }
     }
-    // Another step of the same size would not fit under the cap: this one is the last. The flag
-    // only shortens the request (false -> true), so the estimate above still covers it.
-    if (spent.microusd + 2 * estimate > task.cost_cap_microusd)
+    // The hard checks above use the pessimistic upper estimate; the hints to the model use what
+    // a step of this task really costs. This step is the last one only if, after it costs what
+    // recent steps cost, the next upper estimate would no longer fit under the cap. The usable
+    // part of the cap for `cost_left_percent` is what the hard check will still let through.
+    // Before the first completed call nothing is known: no cost hint at all rather than a
+    // "final step" from the upper estimate; the hard check still ends the task at the cap.
+    const expected = await recentStepCost(task.reservation_id)
+    if (expected !== null) {
+      const usable = Math.max(spent.microusd, task.cost_cap_microusd - estimate + expected)
       input.budget = stepBudget(
         stepNo,
         task.step_limit,
         spent.microusd,
-        task.cost_cap_microusd,
-        true,
+        usable,
+        spent.microusd + expected + estimate > task.cost_cap_microusd,
       )
+    }
   }
   const callKey = `computer-use:${task.id}:${stepNo}`
   const raw = await model(input)
@@ -1389,7 +1464,7 @@ async function runStep(
       action: { name: raw.name.slice(0, 60) },
       decision: 'invalid',
       reason: 'COMPUTER_USE_TOOL_CALL_INVALID',
-      reasoning: raw.note,
+      reasoning: raw.note.trim(),
       urlBefore: page.url,
       urlAfter: page.url,
       title: page.title,
@@ -1405,7 +1480,7 @@ async function runStep(
   const base: StepRecord = {
     action: call,
     decision: 'allowed',
-    reasoning: raw.note,
+    reasoning: raw.note.trim(),
     urlBefore: page.url,
     urlAfter: page.url,
     title: page.title,
@@ -1422,7 +1497,7 @@ async function runStep(
     const reason =
       !host || isPrivateHost(host)
         ? 'COMPUTER_USE_URL_SCHEME'
-        : forbiddenTextReason(`${call.title} ${call.summary} ${call.reason}`) ||
+        : forbiddenFindingReason(`${call.title} ${call.summary} ${call.reason}`) ||
           ((found!.n as number) >= P.maxOpportunitiesPerTask
             ? 'COMPUTER_USE_OPPORTUNITY_LIMIT'
             : '')

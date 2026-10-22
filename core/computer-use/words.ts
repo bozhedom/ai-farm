@@ -14,9 +14,13 @@ export const computerReasons: Record<string, string> = {
     'Три задания подряд не завершились. Проверьте машину и модель, затем включите заново.',
   COMPUTER_USE_DAILY_LIMIT:
     'Дневной лимит расходов на браузер исчерпан. Продолжим после полуночи UTC.',
+  COMPUTER_USE_DAILY_PACING:
+    'Дневной бюджет распределяется по суткам UTC: следующее задание ротации начнётся позже. Ваши задания идут без ожидания.',
   COMPUTER_USE_TASK_CAP:
     'Достигнут лимит расходов на одно задание: работа завершается с отчётом сервера.',
   COMPUTER_USE_STEP_LIMIT: 'Достигнут лимит шагов задания: работа завершается с отчётом сервера.',
+  COMPUTER_USE_LIMIT_EMPTY:
+    'Задание дошло до лимита, ничего не записав: считается неудачей подряд.',
   COMPUTER_USE_MODEL_INVALID: 'Модель трижды ответила не по формату. Задание остановлено.',
   COMPUTER_USE_VM_UNAVAILABLE: 'Виртуальная машина не отвечает.',
   COMPUTER_USE_SESSION_LOST: 'Сессия браузера на машине потеряна.',
@@ -80,7 +84,8 @@ export const computerReasons: Record<string, string> = {
   COMPUTER_USE_SEND_PERMIT: 'Отправлено по разрешению на одну отправку.',
   COMPUTER_USE_STORED_NOT_FOUND: 'Такого текста в этом задании нет.',
   COMPUTER_USE_PRICE_BELOW_MINIMUM: 'Цена ниже вашей минимальной из профиля исполнителя.',
-  COMPUTER_USE_PRICE_CURRENCY_REQUIRED: 'У цены в отклике не указана валюта.',
+  COMPUTER_USE_PRICE_CURRENCY_REQUIRED:
+    'В отклике нет цены в валюте, для которой в профиле задан минимум.',
   COMPUTER_USE_NO_DIRECTIONS:
     'Нет ни одного включённого направления поиска и ни одной площадки с входом: ротации нечего делать.',
   COMPUTER_USE_DIRECTION_NOT_FOUND: 'Такого направления нет.',

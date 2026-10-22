@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { audit, query, transaction, type Connection } from '../db'
-import { builtInDirections } from './goals'
+import { builtInDirections, retiredBuiltInGoals } from './goals'
 import { forbiddenTextReason, validateGoal } from './policy'
 
 /**
@@ -148,8 +148,23 @@ export function validateWeight(weight: number) {
 // ---------------------------------------------------------------------------------------------
 // Database.
 
-/** Seeds the built-in directions once; owner edits and switches are never overwritten. */
+/**
+ * Seeds the built-in directions once; owner edits and switches are never overwritten. A
+ * built-in goal whose text the server later reworded is updated only while the stored goal is
+ * still exactly a retired seed text, i.e. the owner never edited it.
+ */
 export async function ensureDirections(db?: Connection) {
+  const retired = builtInDirections.flatMap((d) =>
+    (retiredBuiltInGoals[d.key] ?? []).map((old) => ({ key: d.key, old, goal: d.goal })),
+  )
+  if (retired.length)
+    await query(
+      `UPDATE computer_use_directions d SET goal=s.goal
+       FROM unnest($1::text[],$2::text[],$3::text[]) AS s(key,old,goal)
+       WHERE d.key=s.key AND d.built_in AND d.goal=s.old`,
+      [retired.map((r) => r.key), retired.map((r) => r.old), retired.map((r) => r.goal)],
+      db,
+    )
   await query(
     `INSERT INTO computer_use_directions(id,key,title,goal,built_in,position)
      SELECT gen_random_uuid(),s.key,s.title,s.goal,true,s.position
@@ -187,6 +202,9 @@ export async function createDirection(input: { title: string; goal: string; weig
   const goal = validateGoal(input.goal)
   const weight = validateWeight(input.weight ?? DIRECTION_LIMITS.defaultWeight)
   return transaction(async (db) => {
+    // Concurrent creates serialise here, so the count below cannot be raced past the limit.
+    // SHARE ROW EXCLUSIVE conflicts with itself and with inserts, not with plain reads.
+    await query('LOCK TABLE computer_use_directions IN SHARE ROW EXCLUSIVE MODE', [], db)
     await ensureDirections(db)
     const [count] = await query('SELECT count(*)::int AS n FROM computer_use_directions', [], db)
     if (count!.n >= DIRECTION_LIMITS.maxDirections) throw new Error('COMPUTER_USE_DIRECTIONS_LIMIT')

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { prepareStepRequest } from '../../core/computer-use/model'
-import { forbiddenClaimReason } from '../../core/computer-use/platforms'
+import { claimVerified, forbiddenClaimReason } from '../../core/computer-use/platforms'
 import {
   effectiveProposalsPerDay,
   emptyProfile,
   isEmptyProfile,
   priceReason,
+  textAmounts,
   profileForModel,
   validateProfile,
   verifiedFacts,
@@ -157,17 +158,49 @@ describe('performer profile limits', () => {
     expect(priceReason(profile, { amount: 1999, currency: 'USD' })).toBe(
       'COMPUTER_USE_PRICE_BELOW_MINIMUM',
     )
-    // No minimum in this currency: no rule to apply.
-    expect(priceReason(profile, { amount: 1, currency: 'EUR' })).toBe('')
-    expect(priceReason(profile, { amount: 500, currency: null })).toBe(
-      'COMPUTER_USE_PRICE_CURRENCY_REQUIRED',
-    )
-    // Without an explicit price the recorded job budget is the bid.
-    expect(priceReason(profile, none, { amount: 50000, currency: 'RUB' })).toBe(
-      'COMPUTER_USE_PRICE_BELOW_MINIMUM',
-    )
-    expect(priceReason(profile, none, none)).toBe('')
+    // With minimums set the price must be explicit and in a currency that has a minimum.
+    for (const price of [{ amount: 1, currency: 'EUR' }, { amount: 500, currency: null }, none])
+      expect(priceReason(profile, price), JSON.stringify(price)).toBe(
+        'COMPUTER_USE_PRICE_CURRENCY_REQUIRED',
+      )
     expect(priceReason(emptyProfile(), { amount: 1, currency: 'RUB' })).toBe('')
+    expect(priceReason(emptyProfile(), none, 'Сделаю за 300 ₽')).toBe('')
+  })
+
+  it('blocks explicit amounts in the text below the minimum of their currency', () => {
+    const profile = filled()
+    const ok = { amount: 100000, currency: 'RUB' }
+    for (const text of [
+      'Сделаю за 300 ₽ до пятницы.',
+      'Стоимость 300 руб за описание.',
+      'Цена 500 рублей.',
+      'Могу за 999,99 р. за штуку',
+      'Бюджет 300-500 ₽ подходит.',
+      'От 500 до 2 000 ₽ за статью.',
+      'I can do it for $5.',
+      'Price: 5 USD per item.',
+      'Всего 15 долларов.',
+    ])
+      expect([text, priceReason(profile, ok, text)]).toEqual([
+        text,
+        'COMPUTER_USE_PRICE_BELOW_MINIMUM',
+      ])
+    for (const text of [
+      'Сделаю за 1 000 ₽.',
+      'Стоимость 1500 руб., срок 3 дня.',
+      'Цена 2 тыс. рублей.',
+      'I can do it for $20.',
+      'Около 5 EUR, в евро минимума нет.',
+      'Сделаю 20 описаний за 3 дня.',
+    ])
+      expect([text, priceReason(profile, ok, text)]).toEqual([text, ''])
+    expect(textAmounts('за 1 500,50 ₽ или $7.5 или 3 тыс. руб')).toEqual(
+      expect.arrayContaining([
+        { currency: 'RUB', amount: 150050 },
+        { currency: 'USD', amount: 750 },
+        { currency: 'RUB', amount: 300000 },
+      ]),
+    )
   })
 
   it('lowers but never raises the proposal limit', () => {
@@ -195,5 +228,43 @@ describe('performer profile limits', () => {
     expect(forbiddenClaimReason('Пишите в телеграм @anna_texts', facts)).toBe(
       'COMPUTER_USE_CONTACT_DETAILS',
     )
+  })
+
+  it('verifies whole claims, never single words or negated profile facts', () => {
+    const facts = verifiedFacts(
+      filled({
+        bio: 'Сертифицированный бухгалтер. Окончила школу, диплом не получала. Работала в компании Ромашка. Очень отзывчивая.',
+        samples: [],
+      }),
+    )
+    for (const text of [
+      'У меня красный диплом МГУ.',
+      'Сертифицированный специалист.',
+      'Я работала в компании Google пять лет.',
+      'Есть отзыв от клиента.',
+      'Есть диплом.',
+      'Работала в компании Ромашка и Яндекс.',
+      'Сертифицированный бухгалтер с опытом аудита.',
+      'Покажу портфолио.',
+    ])
+      expect([text, forbiddenClaimReason(text, facts)]).toEqual([
+        text,
+        'COMPUTER_USE_UNVERIFIED_CLAIM',
+      ])
+    for (const text of [
+      'Я работала в компании Ромашка.',
+      'я работала в компании ромашка',
+      'Здравствуйте! Я сертифицированный бухгалтер, работала в компании Ромашка.',
+      'Я  СЕРТИФИЦИРОВАННЫЙ   бухгалтер!',
+    ])
+      expect([text, forbiddenClaimReason(text, facts)]).toEqual([text, ''])
+    // ё and е are the same letter; a modifier before the claim in the profile is not a fact.
+    expect(claimVerified('Есть отзыв клиента', 'Отзыв клиента «Ёлки»')).toBe(true)
+    expect(claimVerified('Есть отзыв клиента «Елки»', 'Отзыв клиента «Ёлки»')).toBe(true)
+    expect(claimVerified('Есть диплом МГУ', 'Неоконченный диплом МГУ')).toBe(false)
+    expect(claimVerified('Есть диплом МГУ', 'Диплом МГУ я не получила')).toBe(false)
+    expect(claimVerified('I have a degree from MIT', 'Degree from MIT, 2019')).toBe(true)
+    expect(claimVerified('I have a degree from MIT', "I don't have a degree from MIT")).toBe(false)
+    expect(claimVerified('у меня', 'у меня')).toBe(false)
   })
 })
