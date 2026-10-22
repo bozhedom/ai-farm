@@ -689,6 +689,12 @@ html:where(.ds) {
   color: var(--muted);
   font-weight: 500;
 }
+/* The period of a number, e.g. «за 30 дней»: the same words wherever totals are shown. */
+:where(.ds) .stat .stat-label small {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  white-space: nowrap;
+}
 :where(.ds) .stat .num {
   font-size: var(--num-lg);
   margin-top: 2px;

@@ -50,6 +50,14 @@ const periods: { id: PeriodKey; label: string }[] = [
   { id: 'all', label: 'Всё время' },
 ]
 const period = ref<PeriodKey>('month')
+/** Period words for every number on the page: «за 30 дней» is rolling, unlike the money page's month. */
+const periodWords: Record<PeriodKey, string> = {
+  today: 'за сегодня',
+  week: 'за 7 дней',
+  month: 'за 30 дней',
+  all: 'за всё время',
+}
+const periodWord = computed(() => periodWords[period.value])
 const t = computed<IncomeTotals | null>(() =>
   v.value ? (period.value === 'all' ? v.value.allTime : v.value.periods[period.value]) : null,
 )
@@ -271,7 +279,9 @@ const priceText = (kopecks: number) => rub(kopecks)
 
       <section v-if="t" class="stat-grid kpis" aria-label="Деньги за период">
         <div class="stat is-money rise">
-          <span class="stat-label">Реальный доход</span>
+          <span class="stat-label"
+            >Реальный доход <small>{{ periodWord }}</small></span
+          >
           <span class="num">{{ rub(t.realOrdersKopecks) }}</span>
           <span v-for="line in realExtra" :key="line" class="kpi-extra">{{ line }}</span>
           <span class="stat-note">{{
@@ -281,12 +291,16 @@ const priceText = (kopecks: number) => rub(kopecks)
           }}</span>
         </div>
         <div class="stat rise">
-          <span class="stat-label">Расходы на модели</span>
+          <span class="stat-label"
+            >Расходы на модели <small>{{ periodWord }}</small></span
+          >
           <span class="num">{{ rub(t.spendKopecks) }}</span>
           <span class="stat-note">OpenRouter, Astra, поиск: по журналу вызовов</span>
         </div>
         <div class="stat rise" :class="{ 'is-loss': t.netKopecks < 0 }">
-          <span class="stat-label">Итог в рублях</span>
+          <span class="stat-label"
+            >Итог в рублях <small>{{ periodWord }}</small></span
+          >
           <span class="num">{{ rubSigned(t.netKopecks) }}</span>
           <span class="stat-note">доход минус расходы; USDT не пересчитываем в рубли</span>
         </div>

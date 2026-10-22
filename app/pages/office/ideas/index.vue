@@ -495,16 +495,14 @@ const shortReason = (text: string) => (text.length > 70 ? text.slice(0, 68).trim
   padding: 2px 0 6px;
   scrollbar-width: thin;
 }
+/* On a phone the filters wrap onto several lines: a scrolled row hid chips behind the edge. */
 @media (max-width: 639px) {
-  .industry {
-    flex-wrap: nowrap;
-    margin: 0 calc(-1 * var(--gutter));
-    padding: 2px var(--gutter);
-    max-width: none;
-    scrollbar-width: none;
-  }
-  .industry::-webkit-scrollbar {
-    display: none;
+  .toolbar .chips.industry,
+  .toolbar .chips.views {
+    flex-wrap: wrap;
+    overflow: visible;
+    margin: 0;
+    padding: 2px 0;
   }
 }
 </style>
