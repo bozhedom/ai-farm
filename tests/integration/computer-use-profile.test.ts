@@ -14,6 +14,7 @@ import {
 } from '../../core/computer-use/runtime'
 import { saveProfile } from '../../core/computer-use/profile'
 import { computerUseView } from '../../core/computer-use/view'
+import { launchInput } from '../../core/launch/view'
 import type { ComputerUseModel, ModelInput } from '../../core/computer-use/model'
 import security from '../../server/middleware/security'
 import profileGet from '../../server/api/computer-use/profile.get'
@@ -218,6 +219,8 @@ describe('performer profile in draft_proposal', () => {
     })
     expect(seen[0]!.platforms?.proposalsPerDay).toBe(5)
     expect((await computerUseView()).state.proposalsPerDay).toBe(5)
+    // The launch checklist shows the same effective limit.
+    expect((await launchInput()).computer.proposalsPerDay).toBe(5)
   })
 
   it('keeps the strict claim check when the profile is empty', async () => {
