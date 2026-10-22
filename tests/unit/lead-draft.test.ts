@@ -27,6 +27,25 @@ describe('reply draft validation', () => {
     )
   })
 
+  it('accepts a product link whose host contains an IP address, but not phones next to it', () => {
+    const ipUrl = 'https://farm.89.19.215.46.sslip.io/services/description'
+    const draft = ok.replace(url, ipUrl)
+    expect(validateReplyDraft(draft, ipUrl, 'Описание товара')).toBe(draft)
+    expect(() => validateReplyDraft(draft + ' Звоните +7 999 123-45-67', ipUrl)).toThrow(
+      'POLICY_REPLY_CONTACT',
+    )
+    expect(() => validateReplyDraft(draft + ' Пишите в телеграм', ipUrl)).toThrow(
+      'POLICY_REPLY_CONTACT',
+    )
+    // The same IP outside the allowed link is still a phone-like run.
+    expect(() => validateReplyDraft(draft + ' Адрес 89.19.215.46', ipUrl)).toThrow(
+      /POLICY_REPLY_(CONTACT|URL)/,
+    )
+    expect(() => validateReplyDraft(draft.replace(ipUrl, `${ipUrl}?ref=1`), ipUrl)).toThrow(
+      'POLICY_REPLY_URL',
+    )
+  })
+
   it('rejects any other link, bare domains included', () => {
     expect(() => validateReplyDraft(ok + ' Портфолио: https://evil.example/p', url)).toThrow(
       'POLICY_REPLY_URL',

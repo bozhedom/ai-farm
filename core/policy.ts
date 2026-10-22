@@ -671,7 +671,15 @@ export function validateReplyDraft(
   replyDraftSchema.parse({ draft: text })
   text = softenDashes(text)
   validateContent(text)
-  if (/@|＠/.test(text) || hasPhoneNumber(text) || obfuscated.test(text) || messengers.test(text))
+  // The allowed product link is checked as a link below; its host may be an IP address
+  // (farm.89.19.215.46.sslip.io) whose digits are not a phone number.
+  const contactText = allowedUrl ? text.split(allowedUrl).join(' ') : text
+  if (
+    /@|＠/.test(contactText) ||
+    hasPhoneNumber(contactText) ||
+    obfuscated.test(contactText) ||
+    messengers.test(contactText)
+  )
     throw new Error('POLICY_REPLY_CONTACT')
   const urls = [...text.matchAll(/(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s]+/giu)].map((m) =>
     m[0].replace(/[.,;:!?)»"']+$/u, ''),
