@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { managerFloor, pacingDecision, type PacingInput } from '../../core/pacing'
+import { expectedTaskCost, managerFloor, pacingDecision, type PacingInput } from '../../core/pacing'
 
 const at = (hour: number, minute = 0) => new Date(Date.UTC(2026, 9, 21, hour, minute))
 const base: PacingInput = {
@@ -52,6 +52,32 @@ describe('budget pacing', () => {
     const manager = { ...held, category: 'trading_manager' as const, limit: 12000 }
     expect(pacingDecision({ ...manager, usedThisHour: 100000 }).allowed).toBe(true)
     expect(pacingDecision({ ...base, category: 'order', usedThisHour: 100000 }).allowed).toBe(true)
+  })
+  it('paces by the realistic cost, while the envelope must still fit the day', () => {
+    // A 200 ₽ lead envelope for a task that really costs about 25 ₽.
+    const lead = { ...base, category: 'lead' as const, limit: 20000, expectedKopecks: 2500 }
+    expect(pacingDecision({ ...lead, usedThisHour: 2500 }).allowed).toBe(false)
+    expect(pacingDecision({ ...lead, expectedKopecks: undefined, usedThisHour: 1 }).allowed).toBe(
+      false,
+    )
+    // Allowance 3000 at hour 0 (120000 / 24 * 0.6); several 25 ₽ tasks fit in the hour.
+    expect(pacingDecision({ ...lead, usedThisHour: 500 }).allowed).toBe(true)
+    // The expected cost never exceeds the envelope.
+    expect(pacingDecision({ ...lead, expectedKopecks: 999999, usedThisHour: 1 }).allowed).toBe(
+      false,
+    )
+    // The full envelope must fit what is left of the day, whatever the estimate.
+    expect(
+      pacingDecision({ ...lead, spentBeforeHour: 101000, usedThisHour: 0, now: at(22) }).allowed,
+    ).toBe(false)
+  })
+  it('estimates the task cost from enough history, never above the reservation', () => {
+    expect(expectedTaskCost(20000, { count: 27, p90: 2697.4 })).toBe(2698)
+    expect(expectedTaskCost(20000, { count: 4, p90: 2697 })).toBe(20000)
+    expect(expectedTaskCost(20000, { count: 30, p90: 50000 })).toBe(20000)
+    expect(expectedTaskCost(20000, { count: 30, p90: 0 })).toBe(1)
+    expect(expectedTaskCost(20000, { count: 0, p90: Number.NaN })).toBe(20000)
+    expect(expectedTaskCost(0, { count: 30, p90: 2000 })).toBe(0)
   })
   it('reserves the manager only for its remaining runs within its cap', () => {
     const args = {
