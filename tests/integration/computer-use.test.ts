@@ -790,6 +790,64 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     expect(rotationPaced(3_000_001, 4_000_000, 1_000_000, midnight + 43_200_000)).toBe(false)
   })
 
+  it('records findings with their platform and real notes, and clears a stale daily notice', async () => {
+    await controlComputerUse('enable')
+    await query("UPDATE computer_use SET last_error='COMPUTER_USE_DAILY_LIMIT' WHERE id=true")
+    const agent = new FakeVmAgent()
+    const model = scripted([
+      () => ({
+        name: 'note_opportunity',
+        note: '   ',
+        arguments: {
+          title: 'Описания товаров для магазина посуды',
+          url: 'https://www.fl.ru/projects/77/',
+          summary: 'Нужно 30 описаний посуды, без политических кампаний и без казино.',
+          kind: 'freelance',
+          requiresHuman: false,
+          decision: 'take',
+          fit: 70,
+          ai_forbidden: false,
+          estimated_value: null,
+          reason: 'Текстовая работа на площадке.',
+        },
+      }),
+      () => ({
+        name: 'note_opportunity',
+        note: 'Записываю второе задание.',
+        arguments: {
+          title: 'Статьи для политической кампании',
+          url: 'https://jobs.example/9',
+          summary: 'Нужны тексты для предвыборной кампании кандидата.',
+          kind: 'freelance',
+          requiresHuman: false,
+          decision: 'take',
+          fit: 50,
+          ai_forbidden: false,
+          estimated_value: null,
+          reason: 'Тексты.',
+        },
+      }),
+    ])
+    // The daily limit no longer applies: the claim clears the stale notice.
+    expect(await computerUseTick({ agent, model })).toBe(true)
+    const row = await task()
+    expect(row.status).toBe('done')
+    const recorded = await steps(row.id)
+    expect(recorded.map((s) => [s.decision, s.reason, s.reasoning])).toEqual([
+      // A negated mention is not a forbidden topic; an empty note stores nothing.
+      ['allowed', '', ''],
+      ['blocked', 'POLICY_IDEA_TOPIC_BLOCKED', 'Записываю второе задание.'],
+      ['allowed', '', 'Тестовый шаг'],
+    ])
+    const [found] = await query('SELECT platform_domain FROM computer_use_opportunities')
+    expect(found!.platform_domain).toBe('fl.ru')
+    const [owner] = await query('SELECT last_error FROM computer_use WHERE id=true')
+    expect(owner!.last_error).toBe('')
+    // Older rows without the domain show it from their address.
+    await query("UPDATE computer_use_opportunities SET platform_domain=''")
+    expect((await computerUseView()).opportunities[0]!.platformDomain).toBe('fl.ru')
+  })
+
   it('fails the task when the VM link is lost and pauses after repeated failures', async () => {
     await controlComputerUse('enable')
     const broken = new FakeVmAgent()

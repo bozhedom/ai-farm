@@ -12,7 +12,7 @@ import type {
   ComputerUseView,
 } from '../contracts/computer-use'
 import { listDirections } from './directions'
-import { isFreelancePlatform, platformDomains } from './platforms'
+import { isFreelancePlatform, platformDomains, platformOf } from './platforms'
 import { COMPUTER_USE_POLICY as P } from './policy'
 import { effectiveProposalsPerDay, readProfile } from './profile'
 import {
@@ -224,7 +224,8 @@ export async function computerUseView(): Promise<ComputerUseView> {
         o.estimated_value_minor === null ? null : Number(o.estimated_value_minor),
       estimatedCurrency: o.estimated_currency,
       reason: o.reason,
-      platformDomain: o.platform_domain,
+      // Rows recorded before the domain was filled server-side get it from their address.
+      platformDomain: o.platform_domain || platformOf(String(o.url)),
     })),
     proposals: proposals.map((p): ComputerProposalView => ({
       id: p.id,

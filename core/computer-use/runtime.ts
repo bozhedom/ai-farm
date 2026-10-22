@@ -507,6 +507,9 @@ async function claimTask(): Promise<Claim | null> {
       )
       return null
     }
+    // The daily limit no longer applies: a stale notice would hang there until the next task.
+    if (owner.last_error === 'COMPUTER_USE_DAILY_LIMIT')
+      await query("UPDATE computer_use SET last_error='' WHERE id=true", [], db)
     let [task] = await query<TaskRow>(
       "SELECT * FROM computer_use_tasks WHERE status='running' LIMIT 1 FOR UPDATE",
       [],
@@ -741,11 +744,17 @@ async function finishTask(
     // A real failure, or a limit reached with nothing recorded (`emptyRun`), counts towards the
     // pause after three in a row; a task that recorded work at its limit worked normally.
     const failure = status !== 'done' ? error : emptyRun
+    // A success clears the last error, unless the daily limit applies right now: then that is
+    // what the owner should see.
+    const limited =
+      !failure &&
+      !task.is_demo &&
+      (await dailySpend(db)).microusd >= config().COMPUTER_USE_DAILY_CAP_MICROUSD
     await query(
       failure
         ? 'UPDATE computer_use SET failures=failures+1,last_error=$1 WHERE id=true'
-        : "UPDATE computer_use SET failures=0,last_error='' WHERE id=true",
-      failure ? [failure] : [],
+        : 'UPDATE computer_use SET failures=0,last_error=$1 WHERE id=true',
+      [failure || (limited ? 'COMPUTER_USE_DAILY_LIMIT' : '')],
       db,
     )
     await audit(
@@ -1455,7 +1464,7 @@ async function runStep(
       action: { name: raw.name.slice(0, 60) },
       decision: 'invalid',
       reason: 'COMPUTER_USE_TOOL_CALL_INVALID',
-      reasoning: raw.note,
+      reasoning: raw.note.trim(),
       urlBefore: page.url,
       urlAfter: page.url,
       title: page.title,
@@ -1471,7 +1480,7 @@ async function runStep(
   const base: StepRecord = {
     action: call,
     decision: 'allowed',
-    reasoning: raw.note,
+    reasoning: raw.note.trim(),
     urlBefore: page.url,
     urlAfter: page.url,
     title: page.title,
