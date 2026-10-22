@@ -80,6 +80,28 @@ describe('farm guards from the review', () => {
     )
   })
 
+  it('skips topics the idea policy always refuses before any money is reserved', async () => {
+    await expect(requestScout('crypto-quests')).rejects.toThrow('POLICY_IDEA_TOPIC_BLOCKED')
+    const strategy = (await query('SELECT id FROM strategies LIMIT 1'))[0]!.id
+    // A job queued before the topic left the rotation.
+    await enqueue('scout', 'scout-blocked-topic', {
+      strategyId: strategy,
+      topicId: 'creators-posts',
+    })
+    const model = vi.spyOn(providers, 'model')
+    const search = vi.spyOn(providers, 'searchQuery')
+    await runAll(['scout'])
+    expect(model).not.toHaveBeenCalled()
+    expect(search).not.toHaveBeenCalled()
+    expect(await query("SELECT id FROM budget_reservations WHERE category='scout'")).toHaveLength(0)
+    expect(await query('SELECT id FROM tool_calls')).toHaveLength(0)
+    expect(
+      await query(
+        "SELECT id FROM audit_events WHERE kind='scout_skipped' AND data->>'topicId'='creators-posts'",
+      ),
+    ).toHaveLength(1)
+  })
+
   it('does not save an idea for an agent archived while the model answered', async () => {
     await requestScout(taxonomyTopics[0]!.id)
     const job = (await claimJob(['scout']))!
@@ -108,7 +130,7 @@ describe('farm guards from the review', () => {
     expect(product!.visibility).toBe('public')
     await setProductVisibility(product!.id, { visibility: 'private' })
     // A second accepted idea for the same service type.
-    const second = await acceptedIdea('marketplaces-reviews')
+    const second = await acceptedIdea('shop-print')
     await query(
       "UPDATE ideas SET status='accepted',suggested_template=$1,farm_executable=true,critique=$2 WHERE id=$3",
       [product!.template, { verdict: 'PASS', reason: 'Проверка.' }, second.id],

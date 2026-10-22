@@ -9,11 +9,13 @@ import {
   ideaSchemaForEvidence,
   ideaSourceDomains,
   reviewSchema,
+  validateContent,
   validateIdea,
+  validateIdeaTopic,
   type Evidence,
 } from '../policy'
 import { enqueue, type Job } from '../queue'
-import { categoryById, isTaxonomyTopic, topicById } from '../taxonomy'
+import { categoryById, isScoutTopic, isTaxonomyTopic, topicById, topicTexts } from '../taxonomy'
 import { serviceCatalog } from '../service-catalog'
 import { defaultParams, ensureStrategyParams, parseParams } from '../agents'
 import { findDuplicate, ideaFingerprint, jaccard, rankScore, recentIdeas } from '../ideas'
@@ -28,6 +30,19 @@ export const farmRules = [
   'Сервер может проверить результат по структуре и исходнику.',
   'Выдача занимает минуты, а себестоимость укладывается в лимит заказа.',
 ]
+
+/** Why a topic may not be scouted, or null. Checked before anything is reserved. */
+export function scoutTopicBlock(topicId: string) {
+  if (!isScoutTopic(topicId)) return 'POLICY_IDEA_TOPIC_BLOCKED'
+  try {
+    const text = topicTexts(topicById[topicId]!).join('\n')
+    validateContent(text)
+    validateIdeaTopic(text)
+  } catch (error) {
+    return error instanceof Error ? error.message : 'POLICY_IDEA_TOPIC_BLOCKED'
+  }
+  return null
+}
 
 /**
  * One scout: two server searches on an assigned taxonomy topic, one idea from the scout, one
@@ -49,6 +64,18 @@ export async function scout(job: Job) {
     return
   }
   if ((await query('SELECT id FROM ideas WHERE job_id=$1', [job.id])).length) return
+  // Policy before money: a topic whose ideas the server always refuses is skipped before any
+  // reservation, search or model call (older queued jobs included).
+  const blocked = scoutTopicBlock(topicId)
+  if (blocked) {
+    await audit('scout_skipped', 'Разведка пропущена: тема не проходит правила фермы.', {
+      jobId: job.id,
+      agentId: strategy.id,
+      topicId,
+      reason: blocked,
+    })
+    return
+  }
   // Hard daily cap on ideas, whoever asked for the scouting.
   const [today] = await query(
     `SELECT count(*)::int AS n FROM ideas
@@ -115,7 +142,7 @@ export async function scout(job: Job) {
       })),
       canDoItselfOnlyIf: farmRules,
     },
-    task: `Найди одну легальную идею заработка в теме «${topic.label}» для аудитории «${topic.audience}». Опиши аудиторию, проблему, признаки спроса (каждый со ссылкой из evidence, не меньше ${params.evidenceMinimum} из разных доменов, если они есть), конкурентов, модель дохода, стартовые и ежемесячные расходы в рублях, риски и быстрый способ проверить спрос. Честно оцени farmExecutable: true только если идею полностью закрывает одна из services и выполнены все правила canDoItselfOnlyIf, тогда укажи её template в suggestedTemplate. Иначе farmExecutable=false, suggestedTemplate=null и дай план запуска для человека в launchPlanForHuman: каждый шаг одно действие человека (где зарегистрироваться, что подтвердить, что оплатить или отправить), один честный аккаунт на человека, без обхода правил площадок. Не выдумывай спрос: конкурент в выдаче не доказывает продажи. Неизвестное перечисли в uncertainties.`,
+    task: `Найди одну легальную идею заработка в теме «${topic.label}» для аудитории «${topic.audience}». Опиши аудиторию, проблему, признаки спроса (каждый со ссылкой из evidence, не меньше ${params.evidenceMinimum} из разных доменов, если они есть), конкурентов, модель дохода, стартовые и ежемесячные расходы в рублях, риски и быстрый способ проверить спрос. Честно оцени farmExecutable: true только если идею полностью закрывает одна из services и выполнены все правила canDoItselfOnlyIf, тогда укажи её template в suggestedTemplate. Иначе farmExecutable=false, suggestedTemplate=null и дай план запуска для человека в launchPlanForHuman: каждый шаг одно действие человека (где зарегистрироваться, что подтвердить, что оплатить или отправить), один честный аккаунт на человека, строго по правилам площадок. Не выдумывай спрос: конкурент в выдаче не доказывает продажи. Неизвестное перечисли в uncertainties.`,
   }
   const raw = await model({
     role: 'Разведчик',

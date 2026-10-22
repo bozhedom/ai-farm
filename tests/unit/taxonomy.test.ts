@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   allowedSearchPhrases,
   categoryById,
+  isScoutTopic,
   isTaxonomyTopic,
+  notScoutedTopics,
   taxonomyCategories,
   taxonomyTopics,
   topicsOf,
@@ -10,6 +12,7 @@ import {
 import { serviceTemplates } from '../../core/service-catalog'
 import { validateContent } from '../../core/policy'
 import { chooseTopic } from '../../core/autonomy'
+import { scoutTopicBlock } from '../../core/jobs/scout'
 
 describe('server taxonomy of legal industries', () => {
   it('covers 12 to 24 industries and earning directions with at least two topics each', () => {
@@ -102,5 +105,26 @@ describe('server taxonomy of legal industries', () => {
     const local = rows.find((r) => r.topic_id === 'food-local')!
     local.last_scouted_at = new Date('2026-10-05T00:00:00Z')
     expect(chooseTopic(rows, ['food'], new Date('2026-10-09T00:00:00Z')).topic_id).toBe('food-menu')
+  })
+
+  it('checks the policy before money: every rotated topic passes, blocked ones never rotate', () => {
+    for (const topic of taxonomyTopics)
+      expect(scoutTopicBlock(topic.id), topic.id).toBe(
+        notScoutedTopics.has(topic.id) ? 'POLICY_IDEA_TOPIC_BLOCKED' : null,
+      )
+    for (const id of ['crypto-quests', 'marketplaces-reviews', 'creators-posts']) {
+      expect(isTaxonomyTopic(id)).toBe(true)
+      expect(isScoutTopic(id)).toBe(false)
+    }
+    // Never scouted and least recently used: still not assigned.
+    const rows = taxonomyTopics.map((t) => ({
+      topic_id: t.id,
+      category: t.category,
+      scout_count: notScoutedTopics.has(t.id) ? 0 : 5,
+      last_scouted_at: notScoutedTopics.has(t.id) ? null : new Date('2026-10-01T00:00:00Z'),
+    }))
+    const day = new Date('2026-10-08T00:00:00Z')
+    for (const focus of [['crypto-rewards'], ['marketplaces'], ['creators'], []])
+      expect(notScoutedTopics.has(chooseTopic(rows, focus, day).topic_id)).toBe(false)
   })
 })

@@ -13,7 +13,7 @@ import {
 } from './agents'
 import { maybeScheduleEvolution } from './evolution'
 import { POLICY } from './policy'
-import { categoryById, isTaxonomyTopic, taxonomyTopics, topicById } from './taxonomy'
+import { categoryById, isScoutTopic, isTaxonomyTopic, taxonomyTopics, topicById } from './taxonomy'
 import type { budgetSummary } from './budget'
 import { operationsStatus } from './operations'
 import { enqueueResearchCampaign } from './research-campaign'
@@ -168,7 +168,8 @@ type TopicRow = {
  * choice is recorded at once, so four agents get four topics.
  */
 export function chooseTopic(rows: TopicRow[], focus: string[], dayStart: Date): TopicRow {
-  const known = rows.filter((row) => isTaxonomyTopic(row.topic_id))
+  // Topics the idea policy always refuses are not assigned: no money on a blocked answer.
+  const known = rows.filter((row) => isScoutTopic(row.topic_id))
   const today = known.filter(
     (row) => row.last_scouted_at && new Date(row.last_scouted_at) >= dayStart,
   )
@@ -341,6 +342,7 @@ async function scheduleFarm(db: Connection, state: FarmState, now: Date, weekNum
  */
 export async function requestScout(topicId?: string) {
   if (topicId !== undefined && !isTaxonomyTopic(topicId)) throw new Error('TOPIC_NOT_FOUND')
+  if (topicId !== undefined && !isScoutTopic(topicId)) throw new Error('POLICY_IDEA_TOPIC_BLOCKED')
   return transaction(async (db) => {
     const state = (await lockResearchWindow(db)) as FarmState
     if (!state.research_enabled) throw new Error('RESEARCH_WINDOW_CLOSED')
