@@ -306,7 +306,7 @@
 }
 .e-mode-tabs button[aria-pressed='true'] {
   background: var(--brand);
-  color: #fff;
+  color: var(--on-brand);
   border-color: var(--brand);
 }
 .e-mode-tabs button:focus-visible {
