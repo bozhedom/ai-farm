@@ -9,7 +9,7 @@ import { BPS, abs, cost, decimal, fee, max, proceeds, ratioBps, units } from './
 import { applyFill, markAgent, paperFill, riskReason } from './accounting'
 import { eligible, fitness, mutate, signal, sizeOrder, validateMarket } from './strategy'
 import { classicPlan, isClassic, settleClassic } from './classic'
-import { OrderRejected } from './wire'
+import { OrderRejected, hasKeys } from './wire'
 import { createVenue } from './venues'
 import { exchangeCatalog } from './catalog'
 import { applyManagerTask } from '../manager/tasks'
@@ -833,13 +833,18 @@ export async function tradingTick(
   )
 }
 
-export async function checkTrading(s: TradingScope, factory: VenueFactory = venues) {
+export async function checkTrading(
+  s: TradingScope,
+  factory: VenueFactory = venues,
+  scheduled = false,
+) {
   const { mode, exchange } = s
   await ensurePortfolios()
   return withTradingLock(s, async (db) => {
     const venue = factory(s)
+    const before = await portfolio(s, db)
     try {
-      const p = await portfolio(s, db)
+      const p = before
       const team = await agents(s, db)
       const scout = await refreshScout(
         s,
@@ -861,17 +866,52 @@ export async function checkTrading(s: TradingScope, factory: VenueFactory = venu
         [mode, exchange],
         db,
       )
-      await event(s, 'connection', 'CONNECTION_OK', {}, db)
+      // The hourly check records only a change, the owner's check always.
+      if (!scheduled || before.check_error || !before.checked_at)
+        await event(s, 'connection', 'CONNECTION_OK', { scheduled }, db)
     } catch (error) {
       const reason = safeTradingError(error)
+      if (scheduled && reason !== before.check_error)
+        await event(s, 'connection', reason, { scheduled }, db)
+      // checked_at is the time of the last attempt; every reader also requires an empty error.
       await query(
-        'UPDATE trading_portfolios SET check_error=$2 WHERE mode=$1 AND exchange=$3',
+        'UPDATE trading_portfolios SET checked_at=now(),check_error=$2 WHERE mode=$1 AND exchange=$3',
         [mode, reason, s.exchange],
         db,
       )
       throw new Error(reason)
     }
   })
+}
+
+export const TRADING_KEY_CHECK_MS = 3_600_000
+
+/**
+ * Re-checks configured Demo/Live keys of portfolios that have never started, so the office shows
+ * whether a key is accepted instead of guessing. It reuses `checkTrading`: public market data,
+ * the account, fees and open orders are read with GET requests; nothing is placed or initialized.
+ * Started portfolios are checked by their own trading tick.
+ */
+export async function verifyTradingKeys(
+  factory: VenueFactory = venues,
+  isStopping = () => false,
+  now = Date.now(),
+) {
+  await ensurePortfolios()
+  const checked: string[] = []
+  for (const exchange of exchanges)
+    for (const mode of ['demo', 'live'] as const) {
+      if (isStopping()) return checked
+      const s = scope(exchange, mode)
+      if (!hasKeys(s)) continue
+      const p = await portfolio(s)
+      if (p.started_at || (p.checked_at && now - p.checked_at.getTime() < TRADING_KEY_CHECK_MS))
+        continue
+      checked.push(`${exchange}:${mode}`)
+      // The error is persisted in check_error; one exchange never blocks the others.
+      await checkTrading(s, factory, true).catch(() => {})
+    }
+  return checked
 }
 
 export async function startTrading(

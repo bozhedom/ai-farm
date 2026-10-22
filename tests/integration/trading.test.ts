@@ -12,6 +12,7 @@ import {
   tradingTick,
   stopAllTrading,
   resumeDailyLoss,
+  verifyTradingKeys,
 } from '../../core/trading/engine'
 import {
   agents,
@@ -46,6 +47,7 @@ class Exchange implements TradingVenue {
   loseRequest = false
   stale = false
   foreignOrder = false
+  accountError = ''
   identity = 'isolated-test-account'
   balances: Account['balances'] = {
     USDT: { total: units('100'), available: units('100') },
@@ -80,6 +82,7 @@ class Exchange implements TradingVenue {
     return m
   }
   async account(symbols: readonly TradingSymbol[]): Promise<Account> {
+    if (this.accountError) throw new Error(this.accountError)
     return {
       identity: this.identity,
       balances: this.balances,
@@ -473,6 +476,44 @@ describe('durable trading lifecycle', () => {
       status: 'paused',
       reason: 'DAILY_LOSS_LIMIT',
     })
+  })
+
+  it('checks configured keys hourly with reads only and persists the result', async () => {
+    const c = config()
+    const saved = { key: c.BYBIT_LIVE_API_KEY, secret: c.BYBIT_LIVE_SECRET }
+    c.BYBIT_LIVE_API_KEY = 'test-live-key'
+    c.BYBIT_LIVE_SECRET = 'test-live-secret'
+    try {
+      const live = scope('bybit', 'live')
+      expect((await portfolio(live)).checked_at).toBeNull()
+      expect(await verifyTradingKeys(factory)).toContain('bybit:live')
+      expect(await portfolio(live)).toMatchObject({
+        check_error: '',
+        started_at: null,
+        account_identity: null,
+        status: 'idle',
+      })
+      expect((await portfolio(live)).checked_at).not.toBeNull()
+      expect(exchange.placed).toEqual([])
+      // Within the hour nothing is checked again.
+      expect(await verifyTradingKeys(factory)).not.toContain('bybit:live')
+
+      exchange.accountError = 'TRADING_KEY_PERMISSIONS'
+      const later = Date.now() + 2 * 3_600_000
+      await verifyTradingKeys(factory, () => false, later)
+      expect((await portfolio(live)).check_error).toBe('TRADING_KEY_PERMISSIONS')
+      await verifyTradingKeys(factory, () => false, later + 2 * 3_600_000)
+      expect(
+        await query(
+          "SELECT reason FROM trading_events WHERE exchange='bybit' AND mode='live' AND kind='connection' ORDER BY created_at",
+        ),
+      ).toEqual([{ reason: 'CONNECTION_OK' }, { reason: 'TRADING_KEY_PERMISSIONS' }])
+      expect(exchange.placed).toEqual([])
+      expect(await query('SELECT id FROM trading_orders')).toEqual([])
+    } finally {
+      c.BYBIT_LIVE_API_KEY = saved.key
+      c.BYBIT_LIVE_SECRET = saved.secret
+    }
   })
 
   it('requires independent live opt-in, a demo round trip and mature profitable paper evidence', async () => {

@@ -86,6 +86,7 @@ function production(overrides: Partial<LaunchInput> = {}): LaunchInput {
           reason: '',
           capitalOk: false,
           startedAt: null,
+          checkedAt: '2026-10-20T11:00:00.000Z',
         },
         paper: { status: 'running', qualified: false },
       },
@@ -287,6 +288,35 @@ describe('launch checklist', () => {
     expect(byId(error, 'wallet-key').codes).toEqual(['BYBIT_HTTP_403'])
   })
 
+  it('never reports an unchecked live key as accepted', () => {
+    const base = production()
+    const withLive = (live: Partial<typeof base.trading.bybit.live>) =>
+      byId(
+        launchSteps(
+          production({
+            trading: {
+              ...base.trading,
+              bybit: { ...base.trading.bybit, live: { ...base.trading.bybit.live, ...live } },
+            },
+          }),
+        ),
+        'bybit-live-key',
+      )
+    const unchecked = withLive({ checkError: '', checkedAt: null })
+    expect(unchecked.status).toBe('needed')
+    expect(unchecked.state).toContain('ещё не проверялся')
+    expect(unchecked.state).not.toContain('принят')
+    const accepted = withLive({ checkError: '', checkedAt: minutesAgo(5) })
+    expect(accepted).toMatchObject({ status: 'done' })
+    expect(accepted.state).toContain('Ключ принят, проверен 5 мин назад')
+    const unfunded = withLive({
+      checkError: 'TRADING_INSUFFICIENT_FUNDS',
+      checkedAt: minutesAgo(5),
+    })
+    expect(unfunded.status).toBe('done')
+    expect(unfunded.state).toContain('счёт не готов')
+  })
+
   it('opens live trading only when every gate passes, and reports a running portfolio', () => {
     const base = production()
     const ready = {
@@ -296,7 +326,14 @@ describe('launch checklist', () => {
         demoKeys: true,
         liveKeys: true,
         demo: { status: 'running', checkError: '', checkedAt: minutesAgo(2), roundTrips: true },
-        live: { status: 'idle', checkError: '', reason: '', capitalOk: true, startedAt: null },
+        live: {
+          status: 'idle',
+          checkError: '',
+          reason: '',
+          capitalOk: true,
+          startedAt: null,
+          checkedAt: minutesAgo(30),
+        },
         paper: { status: 'running', qualified: true },
       },
     }
