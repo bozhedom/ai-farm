@@ -105,6 +105,13 @@ function toggleSchedule() {
     next ? 'Расписание включено.' : 'Расписание выключено. Запускайте поиск вручную.',
   )
 }
+function restartResearch() {
+  void run(
+    'research-season',
+    () => officeApi.restartResearch(),
+    'Новый сезон открыт: разведка и сборка услуг продолжатся по расписанию.',
+  )
+}
 // The hour is stored in UTC; the owner picks it in the browser's local time.
 const hourOptions = computed(() => {
   const base = new Date()
@@ -201,6 +208,21 @@ onMounted(() => {
 
       <section class="card rise" aria-labelledby="schedule-title">
         <h2 id="schedule-title">Расписание</h2>
+        <div v-if="s.researchEnabled === false" class="season" role="status">
+          <p class="small">
+            <strong>Сезон исследований закрыт.</strong> За 28 дней не было настоящих продаж, чтобы
+            выбрать лучших разведчиков, поэтому разведка идей и сборка услуг остановлены. Откройте
+            новый сезон, чтобы они продолжились; принятые заказы и история сохраняются.
+          </p>
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="!!busy"
+            @click="restartResearch"
+          >
+            Начать новый сезон
+          </button>
+        </div>
         <div class="switch-row">
           <div>
             <strong>Поиск по расписанию</strong>
@@ -577,5 +599,14 @@ details[open] summary::after {
   .fields {
     grid-template-columns: 1fr;
   }
+}
+.season {
+  display: grid;
+  gap: var(--space-2, 8px);
+  justify-items: start;
+  margin-bottom: var(--space-3, 12px);
+  padding: var(--space-3, 12px);
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface-2);
 }
 </style>

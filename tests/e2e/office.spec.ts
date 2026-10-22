@@ -325,6 +325,18 @@ test.describe('office behaviour', () => {
       .toEqual({ scheduleHourUtc: 9 })
   })
 
+  test('settings open a new research season after the old one closed', async ({ page }) => {
+    const closed = officeFixtures()
+    closed.settings.researchEnabled = false
+    const posted = await stubOffice(page, closed)
+    await page.goto('/office/settings')
+    await expect(page.getByText('Сезон исследований закрыт.')).toBeVisible()
+    await page.getByRole('button', { name: 'Начать новый сезон' }).click()
+    await expect
+      .poll(() => posted.find((p) => p.url === '/api/control')?.body)
+      .toEqual({ action: 'restart_research' })
+  })
+
   test('agents run a selection round on request', async ({ page }) => {
     const ready = officeFixtures()
     ready.agents.evolution.ready = true

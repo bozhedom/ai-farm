@@ -51,6 +51,7 @@ export const officeApi = {
   setMode: (mode: OfficeMode) => post('/api/control', { action: mode }),
   setSchedule: (enabled: boolean) =>
     post('/api/control', { action: enabled ? 'schedule_on' : 'schedule_off' }),
+  restartResearch: () => post('/api/control', { action: 'restart_research' }),
   setResearchScope: (scope: 'rotate' | 'all') =>
     post('/api/control', { action: 'research_scope', scope }),
   findIdeas: () => post('/api/office/scout', {}),
