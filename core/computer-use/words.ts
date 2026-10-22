@@ -17,6 +17,8 @@ export const computerReasons: Record<string, string> = {
   COMPUTER_USE_TASK_CAP:
     'Достигнут лимит расходов на одно задание: работа завершается с отчётом сервера.',
   COMPUTER_USE_STEP_LIMIT: 'Достигнут лимит шагов задания: работа завершается с отчётом сервера.',
+  COMPUTER_USE_LIMIT_EMPTY:
+    'Задание дошло до лимита, ничего не записав: считается неудачей подряд.',
   COMPUTER_USE_MODEL_INVALID: 'Модель трижды ответила не по формату. Задание остановлено.',
   COMPUTER_USE_VM_UNAVAILABLE: 'Виртуальная машина не отвечает.',
   COMPUTER_USE_SESSION_LOST: 'Сессия браузера на машине потеряна.',

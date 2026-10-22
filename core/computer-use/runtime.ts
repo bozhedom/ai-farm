@@ -691,17 +691,19 @@ async function finishTask(
   error: string,
   agent: VmAgentClient,
   endedBy: 'model' | 'limit' = 'model',
+  emptyRun = '',
 ) {
   await transaction(async (db) => {
     await query('SELECT id FROM computer_use WHERE id=true FOR UPDATE', [], db)
     await endTask(db, task, status, report, error)
-    // Only a real failure counts towards the pause after three in a row; a task that reached its
-    // step or cost limit worked normally.
+    // A real failure, or a limit reached with nothing recorded (`emptyRun`), counts towards the
+    // pause after three in a row; a task that recorded work at its limit worked normally.
+    const failure = status !== 'done' ? error : emptyRun
     await query(
-      status === 'done'
-        ? "UPDATE computer_use SET failures=0,last_error='' WHERE id=true"
-        : 'UPDATE computer_use SET failures=failures+1,last_error=$1 WHERE id=true',
-      status === 'done' ? [] : [error],
+      failure
+        ? 'UPDATE computer_use SET failures=failures+1,last_error=$1 WHERE id=true'
+        : "UPDATE computer_use SET failures=0,last_error='' WHERE id=true",
+      failure ? [failure] : [],
       db,
     )
     await audit(
@@ -709,9 +711,11 @@ async function finishTask(
       status !== 'done'
         ? 'Задание браузера остановлено без отчёта.'
         : endedBy === 'limit'
-          ? 'Задание браузера завершено по лимиту, отчёт собран сервером из записей задания.'
+          ? emptyRun
+            ? 'Задание браузера завершено по лимиту без единой записи: считается неудачей.'
+            : 'Задание браузера завершено по лимиту, отчёт собран сервером из записей задания.'
           : 'Задание браузера завершено, отчёт сохранён.',
-      { taskId: task.id, status, error, source: task.source, endedBy },
+      { taskId: task.id, status, error, source: task.source, endedBy, emptyRun: !!emptyRun },
       db,
     )
   })
@@ -800,9 +804,28 @@ export async function limitReport(task: TaskRow, reason: LimitReason, db?: Conne
   return lines.join('\n').slice(0, 4000)
 }
 
-/** Reaching the step or cost limit is a normal end: done, the server's report, no failure. */
+/**
+ * Reaching the step or cost limit ends the task as done with the server's report. It is a normal
+ * end when the task recorded something; a limit reached with no opportunity, proposal or
+ * document is an empty run and counts towards the pause after failures in a row.
+ */
 async function finishAtLimit(task: TaskRow, reason: LimitReason, agent: VmAgentClient) {
-  await finishTask(task, 'done', await limitReport(task, reason), '', agent, 'limit')
+  const [recorded] = await query<{ n: number }>(
+    `SELECT (SELECT count(*) FROM computer_use_opportunities WHERE task_id=$1)
+       + (SELECT count(*) FROM computer_use_proposals WHERE task_id=$1)
+       + (SELECT count(*) FROM computer_use_documents WHERE task_id=$1) AS n`,
+    [task.id],
+  )
+  const empty = Number(recorded?.n ?? 0) === 0
+  await finishTask(
+    task,
+    'done',
+    await limitReport(task, reason),
+    '',
+    agent,
+    'limit',
+    empty ? 'COMPUTER_USE_LIMIT_EMPTY' : '',
+  )
 }
 
 function safeError(error: unknown) {

@@ -376,7 +376,7 @@ describe('computer use: one task at a time, validated actions, owner approvals',
       .mockResolvedValueOnce(answer('navigate', { url: 'https://example.com/jobs' }))
     vi.stubGlobal('fetch', fetchMock)
     await controlComputerUse('enable')
-    // Earlier real failures stay counted until a task ends normally; the cap is a normal end.
+    // Earlier real failures stay counted; a limit reached with nothing recorded is one more.
     await query('UPDATE computer_use SET failures=2 WHERE id=true')
     const agent = new FakeVmAgent()
     await computerUseTick({ agent, model: astraStep(demoScript) })
@@ -392,7 +392,12 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     expect(row.report).toContain('https://example.com/jobs')
     expect(row.report).toContain(`из $${(cap / 1_000_000).toFixed(2)}`)
     const [owner] = await query('SELECT failures,last_error FROM computer_use WHERE id=true')
-    expect(owner).toMatchObject({ failures: 0, last_error: '' })
+    expect(owner).toMatchObject({ failures: 3, last_error: 'COMPUTER_USE_LIMIT_EMPTY' })
+    const [audited] = await query(
+      "SELECT data FROM audit_events WHERE kind='computer_use_task' ORDER BY id DESC LIMIT 1",
+    )
+    expect(audited?.data).toMatchObject({ status: 'done', endedBy: 'limit', emptyRun: true })
+    expect((await computerUseView()).state.blocked).toContain('COMPUTER_USE_FAILURES')
     expect(agent.sessions.size).toBe(0)
     const calls = await query(
       "SELECT * FROM tool_calls WHERE call_key LIKE 'computer-use:%' ORDER BY created_at",
