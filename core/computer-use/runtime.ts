@@ -773,10 +773,12 @@ async function finishTask(
   if (task.session_id) await agent.endSession(task.session_id).catch(() => undefined)
 }
 
-export type LimitReason = 'COMPUTER_USE_STEP_LIMIT' | 'COMPUTER_USE_TASK_CAP'
+export type LimitReason =
+  'COMPUTER_USE_STEP_LIMIT' | 'COMPUTER_USE_TASK_CAP' | 'COMPUTER_USE_DAILY_LIMIT'
 const limitWords: Record<LimitReason, string> = {
   COMPUTER_USE_STEP_LIMIT: 'израсходованы все шаги задания',
   COMPUTER_USE_TASK_CAP: 'исчерпан лимит расходов на одно задание',
+  COMPUTER_USE_DAILY_LIMIT: 'исчерпан дневной лимит расходов на браузер',
 }
 const decisionWords: Record<string, string> = {
   take: 'беру сам',
@@ -867,7 +869,8 @@ async function finishAtLimit(task: TaskRow, reason: LimitReason, agent: VmAgentC
        + (SELECT count(*) FROM computer_use_documents WHERE task_id=$1) AS n`,
     [task.id],
   )
-  const empty = Number(recorded?.n ?? 0) === 0
+  // The daily cap cutting a task short says nothing about the task itself.
+  const empty = Number(recorded?.n ?? 0) === 0 && reason !== 'COMPUTER_USE_DAILY_LIMIT'
   await finishTask(
     task,
     'done',
@@ -1430,6 +1433,8 @@ async function runStep(
     }
     const day = await dailySpend()
     if (day.microusd + estimate > c.COMPUTER_USE_DAILY_CAP_MICROUSD) {
+      // A started task ends with its report instead of hanging as running until the next UTC day.
+      if (stepNo > 1) await finishAtLimit(task, 'COMPUTER_USE_DAILY_LIMIT', agent)
       await query("UPDATE computer_use SET last_error='COMPUTER_USE_DAILY_LIMIT' WHERE id=true")
       return { kind: 'stop' }
     }

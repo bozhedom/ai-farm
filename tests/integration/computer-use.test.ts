@@ -437,6 +437,70 @@ describe('computer use: one task at a time, validated actions, owner approvals',
     expect(shown.history[0]?.spentMicrousd).toBe(calls.length * 85000)
   })
 
+  it('ends a started task with its report when the daily cap runs out, without a failure', async () => {
+    let dailyCap = 0
+    vi.spyOn(settings, 'config').mockImplementation(() => ({
+      ...original,
+      MODEL_PROVIDER: 'openai',
+      OPENAI_TRANSPORT: 'openrouter',
+      OPENROUTER_API_KEY: 'test-only-key',
+      SEARCH_PROVIDER: 'searxng',
+      VM_AGENT_URL: 'http://10.0.0.9:8787/',
+      VM_AGENT_TOKEN: 'x'.repeat(40),
+      DAILY_BUDGET_KOPECKS: 100000,
+      MONTHLY_BUDGET_KOPECKS: 1000000,
+      OPENAI_TOTAL_BUDGET_MICROUSD: 10_000_000,
+      COMPUTER_USE_TASK_CAP_MICROUSD: 2_000_000,
+      COMPUTER_USE_DAILY_CAP_MICROUSD: dailyCap,
+    }))
+    const estimate = prepareStepRequest({
+      taskId: 'estimate',
+      reservationId: 'estimate',
+      goal: rotationGoals[0]!,
+      stepNo: 1,
+      stepLimit: 30,
+      history: [],
+      page: { url: 'about:blank', title: 'Демонстрация' },
+      png: Buffer.alloc(10),
+      opportunities: 0,
+    }).maximumMicrousd
+    // Two real steps of $0.085 fit under the daily cap, the third does not.
+    dailyCap = estimate + 2 * 85000 - 1
+    const answer = (name: string, args: unknown) =>
+      new Response(
+        JSON.stringify({
+          id: 'gen-' + name,
+          choices: [
+            {
+              finish_reason: 'tool_calls',
+              message: {
+                content: 'Смотрю страницу.',
+                tool_calls: [
+                  { type: 'function', function: { name, arguments: JSON.stringify(args) } },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 8000, completion_tokens: 100, cost: '0.03' },
+        }),
+      )
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockImplementation(async () => answer('scroll', { x: 600, y: 400, deltaY: 500 }))
+        .mockResolvedValueOnce(answer('navigate', { url: 'https://example.com/jobs' })),
+    )
+    await controlComputerUse('enable')
+    await addOwnerGoal('Найди конкурсы для разработчиков с призами')
+    await computerUseTick({ agent: new FakeVmAgent(), model: astraStep(demoScript) })
+    const row = await task()
+    expect(row).toMatchObject({ status: 'done', error: '', step_count: 2 })
+    expect(row.report).toContain('исчерпан дневной лимит расходов на браузер')
+    const [owner] = await query('SELECT failures,last_error FROM computer_use WHERE id=true')
+    expect(owner).toMatchObject({ failures: 0, last_error: 'COMPUTER_USE_DAILY_LIMIT' })
+  })
+
   it('bases the final-step hint on real step costs, not on the upper estimate', async () => {
     let cap = 0
     vi.spyOn(settings, 'config').mockImplementation(() => ({
