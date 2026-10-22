@@ -5,9 +5,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { pool, query, transaction } from '../../core/db'
 import { attemptLogin } from '../../core/auth'
 import { FakeVmAgent } from '../../core/computer-use/client'
-import { builtInDirections } from '../../core/computer-use/goals'
+import { builtInDirections, retiredBuiltInGoals } from '../../core/computer-use/goals'
+import { validateGoal } from '../../core/computer-use/policy'
 import {
   createDirection,
+  ensureDirections,
   DIRECTION_LIMITS,
   listDirections,
 } from '../../core/computer-use/directions'
@@ -245,6 +247,25 @@ describe('search directions: seed, owner routes, rotation', () => {
     ])
     expect(kept!.direction_id).toBeNull()
     expect((await query('SELECT count(*)::int AS n FROM computer_use_opportunities'))[0]!.n).toBe(1)
+  })
+
+  it('rewords an unedited built-in goal and leaves an owner edit alone', async () => {
+    const [old] = retiredBuiltInGoals.small_tenders!
+    const current = builtInDirections.find((d) => d.key === 'small_tenders')!.goal
+    expect(current).not.toContain('zakupki.gov.ru')
+    expect(() => validateGoal(current)).not.toThrow()
+    await ensureDirections()
+    // A database seeded before the rewording still holds the old text.
+    await query("UPDATE computer_use_directions SET goal=$1 WHERE key='small_tenders'", [old])
+    await ensureDirections()
+    const goalOf = async () =>
+      (await query("SELECT goal FROM computer_use_directions WHERE key='small_tenders'"))[0]!.goal
+    expect(await goalOf()).toBe(current)
+    // The owner's own wording is never overwritten.
+    const mine = 'Найди малые закупки текстов на региональных порталах закупок.'
+    await query("UPDATE computer_use_directions SET goal=$1 WHERE key='small_tenders'", [mine])
+    await ensureDirections()
+    expect(await goalOf()).toBe(mine)
   })
 
   it('keeps the direction limit under concurrent creates', async () => {
