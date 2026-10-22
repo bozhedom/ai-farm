@@ -36,6 +36,7 @@ import {
   type DayBucket,
   type Fill,
 } from './math'
+import { tradingStatus, tradingStatusText } from './trading-status'
 
 /**
  * Owner income overview (`GET /api/office/income`): one read of existing tables, no external
@@ -333,6 +334,17 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
         exchange,
         mode,
         status: conn.status as IncomeTradingRow['status'],
+        statusText: tradingStatusText(
+          tradingStatus({
+            mode,
+            status: conn.status,
+            reason: conn.error,
+            keys: conn.keys,
+            workerAlive: conn.workerAlive,
+            fresh: conn.fresh,
+            autoResume: c.AUTOPILOT_ON_BOOT,
+          }),
+        ),
         keys: conn.keys,
         workerAlive: conn.workerAlive,
         capital: conn.capital,
@@ -362,7 +374,19 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     const error = String(p?.check_error || p?.reason || '')
     const problem =
       row.status !== 'idle' && /LIMIT|STOP|LOSS|DRAWDOWN|UNKNOWN|CREDENTIAL|REVIEW/.test(error)
-    const status = directionStatus({ status: row.status, workerAlive: row.workerAlive, problem })
+    const said = tradingStatus({
+      mode,
+      status: row.status,
+      reason: error,
+      keys: row.keys,
+      workerAlive: row.workerAlive,
+      autoResume: c.AUTOPILOT_ON_BOOT,
+    })
+    // Training paused by the daily loss limit restarts by itself when the autopilot is on.
+    const selfResumes = mode === 'paper' && c.AUTOPILOT_ON_BOOT && /DAILY/.test(error)
+    const status = selfResumes
+      ? 'paper_only'
+      : directionStatus({ status: row.status, workerAlive: row.workerAlive, problem })
     sources.push({
       id: `trading:${exchange}`,
       group: 'trading',
@@ -379,8 +403,10 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
         status === 'disabled'
           ? `${modeWord[mode]}: не запущено.`
           : `${modeWord[mode]}: агентов ${row.activeAgents}, сделок за 30 дней ${row.trades30d}` +
-            (row.trades30d ? `, в плюс ${row.wins30d}.` : '.') +
-            (problem ? ` Остановлено: ${error}.` : ''),
+            (row.trades30d ? `, прибыльных ${row.wins30d}.` : '.') +
+            (row.status !== 'running' || said.tone === 'warning'
+              ? ` ${tradingStatusText(said)}.`
+              : ''),
       lastAt: row.lastAt,
       link: '/office/trading',
     })
@@ -589,7 +615,8 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'worker',
       title: 'Фоновый процесс не отвечает',
-      detail: 'Агенты не работают без воркера. Перезапустите сервис worker на сервере.',
+      detail:
+        'Агенты не работают, пока он не отвечает. Попросите администратора перезапустить ферму на сервере.',
       link: '/office/settings',
       severity: 'block',
     })
@@ -601,8 +628,8 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       id: 'keys:bybit',
       title: 'Bybit: нет ключей',
       detail:
-        'Создайте API-ключ без вывода средств, только спот. Впишите BYBIT_LIVE_API_KEY и BYBIT_LIVE_SECRET ' +
-        '(и BYBIT_DEMO_* для теста) в .env на сервере и перезапустите.',
+        'Создайте на Bybit API-ключ только для спота, без вывода средств. Ключ вносит администратор на сервере, ' +
+        'тестовый ключ для проверки тоже.',
       link: '/office/trading',
       severity: 'block',
     })
@@ -611,7 +638,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'keys:live',
       title: `Нет ключей реальной торговли: ${otherLive.map(exchangeName).join(', ')}`,
-      detail: 'Ключи вносятся только в .env на сервере. Без них работает тренировка.',
+      detail: 'Ключи вносит администратор на сервере. Без них работает тренировка.',
       link: '/office/trading',
       severity: 'warn',
     })
@@ -619,7 +646,8 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
     add({
       id: 'keys:demo',
       title: 'Нет ни одного тестового счёта биржи',
-      detail: 'Перед реальной торговлей нужна проверка на Demo. Добавьте *_DEMO_* ключи.',
+      detail:
+        'Перед реальной торговлей нужна проверка на тестовом счёте. Тестовые ключи вносит администратор на сервере.',
       link: '/office/trading',
       severity: 'warn',
     })
@@ -628,7 +656,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       id: 'live-disabled',
       title: 'Реальная торговля выключена',
       detail:
-        'Включается владельцем: TRADING_LIVE_ENABLED=true в .env, затем бюджет и проверки в разделе биржи.',
+        'Включает администратор на сервере по вашему решению. Затем вы задаёте бюджет и проходите проверки в разделе биржи.',
       link: '/office/trading',
       severity: 'warn',
     })
@@ -640,8 +668,9 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
           ? 'Модель не подключена: работает демо'
           : 'Ключ OpenRouter не задан',
       detail:
-        'Для постоянной работы агентов задайте MODEL_PROVIDER=openai, OPENAI_TRANSPORT=openrouter и OPENROUTER_API_KEY в .env. ' +
-        `Сейчас: ${c.MODEL_PROVIDER}.`,
+        c.MODEL_PROVIDER === 'demo'
+          ? 'Агенты отвечают готовыми примерами. Для настоящей работы администратор вносит ключ OpenRouter на сервере.'
+          : 'Для постоянной работы агентов администратор вносит ключ OpenRouter на сервере.',
       link: '/office/settings',
       severity: c.MODEL_PROVIDER === 'demo' ? 'block' : 'warn',
     })
@@ -683,8 +712,8 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       id: 'wallet-key',
       title: 'Bybit: нет ключа для чтения поступлений',
       detail:
-        'Создайте ключ Bybit только для чтения (Read-Only, IP сервера) и впишите ' +
-        'BYBIT_WALLET_READ_API_KEY и BYBIT_WALLET_READ_SECRET в .env на сервере.',
+        'Создайте на Bybit ключ только для чтения (Read-Only, привязка к IP сервера). ' +
+        'Ключ вносит администратор на сервере.',
       link: '/office/money',
       severity: 'warn',
     })
@@ -710,7 +739,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       id: 'wallet-address',
       title: 'Не задан адрес для оплаты USDT',
       detail:
-        'Впишите PAYMENT_USDT_ADDRESS и PAYMENT_USDT_NETWORK (адрес депозита Bybit) в .env на сервере.',
+        'Скопируйте на Bybit адрес депозита USDT и сеть и передайте администратору: он вносит их на сервере.',
       link: '/office/money',
       severity: 'warn',
     })

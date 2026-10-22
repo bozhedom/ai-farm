@@ -91,6 +91,16 @@ describe('owner feed in human words', () => {
     expect(text('farm_daily_budget_wait', { dailyKopecks: 5000 })).toEqual([
       'Дневной лимит 50 ₽ исчерпан. Работа продолжится завтра.',
     ])
+    // Part spent, the rest reserved by started work: not "exhausted".
+    expect(
+      text('farm_daily_budget_wait', {
+        dailyKopecks: 120000,
+        daySpentKopecks: 64700,
+        reservedKopecks: 60000,
+      }),
+    ).toEqual([
+      'Дневной бюджет 1 200 ₽ распределён: потрачено 647 ₽, остальное занято начатыми задачами. Новая работа продолжится завтра.',
+    ])
     expect(text('control', { mode: 'paused' })).toEqual([
       'Вы поставили ферму на паузу. Начатые заказы доделываем.',
     ])

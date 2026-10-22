@@ -3,6 +3,7 @@ import type { LaunchStepStatus } from '../../../core/contracts/launch'
 import { useOfficeLaunch } from '~/composables/office/data'
 import { ago, withCount } from '~/composables/office/format'
 import type { Badge } from '~/composables/office/labels'
+import { linkWords, splitActions, withoutCodes } from '~/composables/office/launch'
 
 useHead({ title: 'Запуск' })
 const { data: v, status, pending, refresh } = useOfficeLaunch()
@@ -107,29 +108,48 @@ const remaining = computed(() =>
               <h3>{{ step.title }}</h3>
               <OfficeBadge :badge="statusBadge[step.status]" />
             </div>
-            <p class="state"><b>Сейчас:</b> {{ step.state }}</p>
+            <p class="state"><b>Сейчас:</b> {{ withoutCodes(step.state) }}</p>
             <p class="why"><b>Зачем:</b> {{ step.why }}</p>
             <details v-if="step.status !== 'done'" :open="step.status === 'needed'">
               <summary>Что сделать</summary>
-              <ol class="actions">
-                <li v-for="action in step.actions" :key="action">{{ action }}</li>
-              </ol>
+              <template v-for="part in [splitActions(step.actions)]" :key="step.id">
+                <template v-if="part.owner.length">
+                  <h4 class="who">Вы</h4>
+                  <ol class="actions">
+                    <li v-for="action in part.owner" :key="action.text">{{ action.text }}</li>
+                  </ol>
+                </template>
+                <template v-if="part.admin.length">
+                  <h4 class="who">Администратор сервера</h4>
+                  <ol class="actions">
+                    <li v-for="action in part.admin" :key="action.text">{{ action.text }}</li>
+                  </ol>
+                  <details class="tech">
+                    <summary>Подробно для администратора</summary>
+                    <ul>
+                      <li v-for="action in part.admin" :key="action.text">{{ action.tech }}</li>
+                    </ul>
+                    <p>Ключи и пароли вносятся только на сервере, не через чат.</p>
+                  </details>
+                </template>
+              </template>
             </details>
             <div class="step-foot">
               <NuxtLink v-if="step.link" class="btn btn-sm" :to="step.link">{{
-                step.linkLabel
+                linkWords(step.link, step.linkLabel)
               }}</NuxtLink>
-              <span v-if="step.codes.length" class="mono xs muted">{{
-                step.codes.join(', ')
-              }}</span>
+              <details v-if="step.status !== 'done' && step.codes.length" class="tech">
+                <summary>Техническая причина</summary>
+                <span class="mono">{{ step.codes.join(', ') }}</span>
+              </details>
             </div>
           </li>
         </ol>
       </section>
 
       <p class="small muted foot">
-        Что делает человек, а что ферма сама, описано в документе «35-owner-actions». Секреты
-        вносятся только в .env на сервере, не через чат.
+        Ключи, пароли и адреса вносит администратор прямо на сервере. В чат и в письма их не
+        отправляйте.
       </p>
     </template>
   </div>
@@ -249,6 +269,35 @@ details summary {
   gap: 6px;
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
+}
+.who {
+  margin: var(--s-3) 0 0;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tech {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.tech summary {
+  font-weight: 500;
+  color: var(--muted);
+}
+.actions + .tech {
+  margin-top: var(--s-2);
+}
+.tech ul {
+  margin: 6px 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+.tech p {
+  margin: 0;
 }
 .step-foot {
   display: flex;

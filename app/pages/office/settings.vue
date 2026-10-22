@@ -2,6 +2,7 @@
 import type { OfficeMode, OfficeSettingsUpdate } from '../../../core/contracts/office'
 import { officeApi, useOfficeAction } from '~/composables/office/actions'
 import {
+  useAutoProposals,
   useJournal,
   useOfficeOverview,
   useOfficeSettings,
@@ -17,6 +18,7 @@ const { data: health } = useReadiness()
 const journalOpen = ref(false)
 const { data: journal, status: journalStatus } = useJournal(journalOpen)
 const { busy, run } = useOfficeAction()
+const auto = useAutoProposals()
 
 const mode = computed<OfficeMode | undefined>(
   () => overview.value?.mode || (s.value?.mode as OfficeMode | undefined),
@@ -363,7 +365,12 @@ onMounted(() => {
         <h2 id="limits-rules">Чего ферма не делает</h2>
         <ul class="plain-list">
           <li>Не трогает деньги, сервер и аккаунты.</li>
-          <li>Никому не пишет: отклики отправляете вы.</li>
+          <li v-if="auto?.on">
+            Не пишет клиентам с сайта и по почте: им отвечаете вы. На площадках, где вы вошли ({{
+              auto.platforms.join(', ')
+            }}), ИИ откликается сам в пределах дневного лимита.
+          </li>
+          <li v-else>Никому не пишет: отклики отправляете вы.</li>
           <li>Не принимает настоящие платежи: оплата тестовая.</li>
           <li>Не запускает идеи, где нужны люди. Для них готовит план.</li>
         </ul>
@@ -388,6 +395,9 @@ onMounted(() => {
                 <li v-for="job in journal.jobs" :key="job.id">
                   <span>{{ jobLabels[job.kind] || job.kind }}</span>
                   <span class="badge badge-plain">{{ jobStatus[job.status] || job.status }}</span>
+                  <span v-if="job.count > 1" class="badge badge-plain" title="Подряд одинаковых"
+                    >×{{ job.count }}</span
+                  >
                   <span class="xs muted"
                     >попытка {{ job.attempts }}, {{ when(job.created_at) }}</span
                   >
@@ -399,8 +409,16 @@ onMounted(() => {
               <h3>Решения</h3>
               <ul class="tech-list">
                 <li v-for="event in journal.audit" :key="event.id">
-                  <span class="xs muted mono">{{ when(event.created_at) }}</span>
-                  <span>{{ event.message }}</span>
+                  <span class="xs muted mono"
+                    >{{ event.count > 1 ? `${when(event.first_at)} – ` : ''
+                    }}{{ when(event.created_at) }}</span
+                  >
+                  <span
+                    >{{ event.message }}
+                    <span v-if="event.count > 1" class="badge badge-plain" title="Подряд одинаковых"
+                      >×{{ event.count }}</span
+                    ></span
+                  >
                 </li>
               </ul>
             </div>

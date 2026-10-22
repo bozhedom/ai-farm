@@ -3,7 +3,6 @@ import type { TradingView, TradingOverview } from '../../../core/contracts/tradi
 import { exchanges, type TradingMode, type TradingExchange } from '../../../core/trading/types'
 import { exchangeCatalog } from '../../../core/trading/catalog'
 import { officeFetch, useOfficeResource } from '~/composables/office/resource'
-import { officeApi } from '~/composables/office/actions'
 import { pct, shortTime, connectionState, tradingModes, tradingReason, usdt } from '~/utils/trading'
 
 useHead({ title: 'Мои биржи' })
@@ -54,9 +53,24 @@ const allRunning = computed(() => runningCount.value === exchanges.length)
 const offline = computed(
   () => overviewStatus.value.offline || (!!exchange.value && status.value.offline),
 )
-const state = computed(() =>
-  currentConnection.value ? connectionState(currentConnection.value) : null,
+// The autopilot restarts training after a daily loss pause; the status says so only when it is on.
+const { data: autonomy } = useOfficeResource<{ autopilotEnabled: boolean }>(
+  () => 'office-autonomy',
+  () => officeFetch('/api/office/autonomy'),
+  { interval: 60_000 },
 )
+const stateOf = (c: TradingOverview['connections'][number]) =>
+  connectionState(c, mode.value, autonomy.value?.autopilotEnabled)
+const state = computed(() => (currentConnection.value ? stateOf(currentConnection.value) : null))
+const statusSummary = computed(() => {
+  const groups = new Map<string, number>()
+  for (const c of overview.value?.connections ?? []) {
+    const label = stateOf(c).label
+    groups.set(label, (groups.get(label) ?? 0) + 1)
+  }
+  const parts = [...groups].map(([label, n]) => `«${label}» — ${n}`)
+  return `Из ${exchanges.length} бирж: ${parts.join(', ')}`
+})
 const activeAgents = computed(() => v.value?.agents.filter((a) => a.status === 'active') || [])
 const positionCount = computed(() => activeAgents.value.filter((a) => Number(a.base) > 0).length)
 const activity = computed(() => {
@@ -203,10 +217,6 @@ function ask(action: 'start' | 'flatten' | 'resolve') {
   confirmation.value = ''
   dialog.value?.showModal()
 }
-async function logout() {
-  await officeApi.logout()
-  await navigateTo('/office/login')
-}
 function openExchange(value: TradingExchange, tab = 'overview') {
   if (busy.value) return
   exchange.value = value
@@ -219,36 +229,7 @@ async function allocationSaved() {
 </script>
 <template>
   <div class="trading-workspace">
-    <a class="t-skip" href="#trading-main">К содержимому</a>
-    <header class="trading-header">
-      <button class="trading-brand" :disabled="!!busy" @click="exchange = null">
-        Ферма<span>торговый кабинет</span>
-      </button>
-      <div class="header-actions">
-        <NuxtLink class="t-link" to="/office">Обзор</NuxtLink>
-        <NuxtLink class="t-link" to="/office/manager">Менеджер</NuxtLink>
-        <NuxtLink class="t-link" to="/office/earnings">Направления</NuxtLink>
-        <button class="t-link help-link" @click="help?.showModal()">Как это работает</button>
-        <button
-          class="t-button t-stop"
-          :disabled="stopping"
-          title="Остановить новые заявки на всех биржах и во всех режимах. Купленные монеты останутся на счетах."
-          @click="stopAll"
-        >
-          <OfficeIcon name="stop" />{{ stopping ? 'Останавливаем…' : 'Остановить всё' }}
-        </button>
-        <button
-          class="t-icon-button"
-          aria-label="Выйти из кабинета"
-          :disabled="!!busy"
-          @click="logout"
-        >
-          <OfficeIcon name="logout" />
-        </button>
-      </div>
-    </header>
-
-    <main id="trading-main" class="trading-main">
+    <div class="trading-main">
       <div class="context-row">
         <button
           v-if="exchange"
@@ -272,16 +253,27 @@ async function allocationSaved() {
           <h1>{{ exchange ? venue.name : 'Мои биржи' }}</h1>
           <p class="t-muted">{{ currentMode.detail }}</p>
         </div>
-        <button
-          v-if="!exchange && mode === 'paper' && !allRunning && overview"
-          class="t-button t-primary"
-          :disabled="!!busy || offline"
-          @click="startAllPaper"
-        >
-          <OfficeIcon name="play" />{{
-            busy === 'paper_all' ? 'Запускаем…' : 'Запустить тренировку'
-          }}
-        </button>
+        <div class="heading-actions">
+          <button class="t-link" @click="help?.showModal()">Как это работает</button>
+          <button
+            v-if="!exchange && mode === 'paper' && !allRunning && overview"
+            class="t-button t-primary"
+            :disabled="!!busy || offline"
+            @click="startAllPaper"
+          >
+            <OfficeIcon name="play" />{{
+              busy === 'paper_all' ? 'Запускаем…' : 'Запустить тренировку'
+            }}
+          </button>
+          <button
+            class="t-button t-stop"
+            :disabled="stopping"
+            title="Остановить новые заявки на всех биржах и во всех режимах. Купленные монеты останутся на счетах."
+            @click="stopAll"
+          >
+            <OfficeIcon name="stop" />{{ stopping ? 'Останавливаем…' : 'Остановить всё' }}
+          </button>
+        </div>
       </div>
 
       <p v-if="offline" class="t-notice t-warning" role="alert">
@@ -332,9 +324,11 @@ async function allocationSaved() {
                 }}</span
                 ><span
                   ><strong>{{ exchangeCatalog[c.exchange].name }}</strong
-                  ><span class="connection-state" :class="`state-${connectionState(c).tone}`"
-                    ><i />{{ connectionState(c).label }}</span
-                  ></span
+                  ><span class="connection-state" :class="`state-${stateOf(c).tone}`"
+                    ><i />{{ stateOf(c).label }}</span
+                  ><small v-if="stateOf(c).next" class="state-next">{{
+                    stateOf(c).next
+                  }}</small></span
                 ></span
               >
               <span class="exchange-money"><small>Баланс</small>{{ usdt(c.equity) }}</span>
@@ -352,7 +346,7 @@ async function allocationSaved() {
             <p>
               {{
                 mode === 'paper'
-                  ? `Запущены ${runningCount} из 4 бирж. У каждой свой виртуальный бюджет и четыре стратегии.`
+                  ? `${statusSummary}. У каждой биржи свой виртуальный бюджет и свои стратегии.`
                   : 'У каждой биржи свой счёт и свои стратегии. Переводов между счетами нет.'
               }}
             </p>
@@ -425,7 +419,7 @@ async function allocationSaved() {
             >
               <div>
                 <strong class="connection-state" :class="`state-${state?.tone || 'muted'}`"
-                  ><i />{{ state?.label || 'Проверяем состояние' }}</strong
+                  ><i />{{ state?.text || 'Проверяем состояние' }}</strong
                 >
                 <p>{{ activity }}</p>
                 <button class="market-shortcut" @click="section = 'market'">
@@ -547,7 +541,7 @@ async function allocationSaved() {
                 </dl>
                 <p class="t-muted">
                   Лимиты запускают защитную продажу. При резком падении цены или потере связи убыток
-                  может быть больше. Торговля только BTC и ETH, без займов; вывод денег недоступен.
+                  может быть больше. Только спот за USDT, без займов; вывод денег недоступен.
                 </p>
               </div>
             </details>
@@ -636,10 +630,9 @@ async function allocationSaved() {
           mode === 'live'
             ? 'Прибыль не гарантирована. Комиссии учтены, сервер и налоги отдельно.'
             : 'Это тестовые деньги. Результаты тренировки не означают реальный доход.'
-        }}</span
-        ><NuxtLink to="/office">Архив студии</NuxtLink>
+        }}</span>
       </footer>
-    </main>
+    </div>
 
     <dialog
       ref="confirmDialog"
@@ -695,8 +688,8 @@ async function allocationSaved() {
         </button>
       </div>
       <p>
-        Вы выбираете биржу и запускаете бота. Он следит за ценами BTC и ETH, покупает и продаёт по
-        заданным правилам. Заработок не гарантирован.
+        Вы выбираете биржу и запускаете бота. Он следит за ценами монет к USDT, покупает и продаёт
+        по заданным правилам. Заработок не гарантирован.
       </p>
       <ol class="setup-steps">
         <li>

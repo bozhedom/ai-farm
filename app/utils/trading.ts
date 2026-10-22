@@ -1,3 +1,5 @@
+import { tradingStatus, tradingStatusText } from '../../core/income/trading-status'
+
 export const tradingModes = [
   {
     id: 'paper',
@@ -176,22 +178,14 @@ export const strategyDescription = {
   breakout: 'Покупает, когда цена выходит выше недавнего диапазона.',
 }
 
-export function connectionState(c: {
-  status: string
-  keys: boolean
-  error: string
-  workerAlive: boolean
-  fresh: boolean
-}) {
-  if (c.error.startsWith('TRADING_')) return { label: 'Нужна проверка', tone: 'warning' }
-  if (!c.keys) return { label: 'Не подключена', tone: 'muted' }
-  if (c.status === 'stopped') return { label: 'Остановлена', tone: 'muted' }
-  if (c.status === 'idle') return { label: 'Готова к запуску', tone: 'muted' }
-  if (!c.workerAlive) return { label: 'Бот не на связи', tone: 'warning' }
-  if (!c.fresh) return { label: 'Ждём свежие цены', tone: 'warning' }
-  return c.status === 'paused'
-    ? { label: 'Покупки на паузе', tone: 'muted' }
-    : { label: 'Работает', tone: 'good' }
+/** One status per exchange, the same words as on the overview. */
+export function connectionState(
+  c: { status: string; keys: boolean; error: string; workerAlive: boolean; fresh: boolean },
+  mode: 'paper' | 'demo' | 'live',
+  autoResume?: boolean,
+) {
+  const s = tradingStatus({ ...c, mode, reason: c.error, autoResume })
+  return { label: s.label, next: s.next, tone: s.tone, text: tradingStatusText(s) }
 }
 export const orderStatus: Record<string, string> = {
   prepared: 'Подготовлен',

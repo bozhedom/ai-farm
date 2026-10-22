@@ -328,9 +328,46 @@ export function useReadiness() {
   )
 }
 
+/**
+ * Whether the browser agent sends proposals by itself right now: the section is on, the owner's
+ * switch and the server gate allow it, and at least one platform has the owner's login.
+ * Texts about «who writes to clients» follow this instead of a fixed sentence.
+ */
+export function useAutoProposals() {
+  const { data } = useOfficeResource(
+    'computer-use-mode',
+    () =>
+      officeFetch<{
+        state: { enabled: boolean; autoProposals: boolean; autoProposalsAllowed: boolean }
+        platforms: { domain: string; loggedIn: boolean }[]
+      }>('/api/computer-use'),
+    { interval: 60_000 },
+  )
+  return computed(() => {
+    const v = data.value
+    if (!v) return null
+    const platforms = v.platforms.filter((p) => p.loggedIn).map((p) => p.domain)
+    return {
+      on:
+        v.state.enabled &&
+        v.state.autoProposals &&
+        v.state.autoProposalsAllowed &&
+        platforms.length > 0,
+      platforms,
+    }
+  })
+}
+
 /** Technical journal from `/api/office/journal`: events and jobs in plain words. */
 export type Journal = {
-  audit: { id: number | string; message: string; created_at: string }[]
+  /** Consecutive identical events are one row: `count` of them, newest at `created_at`. */
+  audit: {
+    id: number | string
+    message: string
+    created_at: string
+    count: number
+    first_at: string
+  }[]
   jobs: {
     id: string
     kind: string
@@ -338,25 +375,48 @@ export type Journal = {
     attempts: number
     error_code: string | null
     created_at: string
+    count: number
   }[]
+}
+
+/** Folds runs of equal neighbours (by `same`) into one row with a counter. Order is kept. */
+export function groupRuns<T, K>(rows: T[], keyOf: (row: T) => K) {
+  const out: { row: T; count: number; last: T }[] = []
+  for (const row of rows) {
+    const prev = out.at(-1)
+    if (prev && keyOf(prev.row) === keyOf(row)) {
+      prev.count++
+      prev.last = row
+    } else out.push({ row, count: 1, last: row })
+  }
+  return out
 }
 
 export function useJournal(enabled: Ref<boolean>) {
   return useOfficeResource(
     () => (enabled.value ? 'journal' : null),
     () =>
-      officeFetch<Partial<OfficeJournal>>('/api/office/journal').then((raw) => ({
-        audit: (raw.events ?? [])
+      officeFetch<Partial<OfficeJournal>>('/api/office/journal').then((raw): Journal => ({
+        audit: groupRuns(raw.events ?? [], (event) => event.text)
           .slice(0, 50)
-          .map((event) => ({ id: event.id, message: event.text, created_at: event.at })),
-        jobs: (raw.jobs ?? []).slice(0, 20).map((job) => ({
-          id: job.id,
-          kind: job.kind,
-          status: job.status,
-          attempts: job.attempts,
-          error_code: job.error,
-          created_at: job.createdAt,
-        })),
+          .map(({ row, count, last }) => ({
+            id: row.id,
+            message: row.text,
+            created_at: row.at,
+            count,
+            first_at: last.at,
+          })),
+        jobs: groupRuns(raw.jobs ?? [], (job) => `${job.kind}|${job.status}|${job.error ?? ''}`)
+          .slice(0, 20)
+          .map(({ row: job, count }) => ({
+            id: job.id,
+            kind: job.kind,
+            status: job.status,
+            attempts: job.attempts,
+            error_code: job.error,
+            created_at: job.createdAt,
+            count,
+          })),
       })),
     { interval: 10000 },
   )

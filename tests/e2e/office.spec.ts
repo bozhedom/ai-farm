@@ -92,6 +92,11 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (/^\/api\/products\/[^/]+\/versions$/.test(path)) return json(route, fx.versions)
     if (path === '/api/readiness') return json(route, fx.readiness, 503)
     if (path === '/api/dashboard') return json(route, fx.journal)
+    if (path === '/api/computer-use')
+      return json(route, {
+        state: { enabled: true, autoProposals: true, autoProposalsAllowed: true },
+        platforms: [{ domain: 'kwork.ru', loggedIn: true }],
+      })
     return json(route, { statusMessage: 'NOT_STUBBED' }, 404)
   })
   return posted

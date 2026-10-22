@@ -37,7 +37,7 @@ async function copyAddress() {
 }
 const keyNote: Record<string, string> = {
   not_configured:
-    'Ключ не задан. Нужен отдельный ключ Bybit только для чтения: BYBIT_WALLET_READ_API_KEY и BYBIT_WALLET_READ_SECRET в .env на сервере.',
+    'Ключ не задан. Создайте на Bybit отдельный ключ только для чтения (Read-Only) и передайте его администратору: ключ вносится на сервере, не через чат.',
   unchecked: 'Ключ задан. Фоновый процесс проверит его в ближайшие минуты.',
   read_only:
     'Ключ только для чтения: ферма видит поступления, но не может переводить или выводить.',
@@ -62,13 +62,13 @@ const usd = (micro: number) =>
     <template v-else>
       <section class="money-grid" aria-label="Главные цифры">
         <div class="stat rise">
-          <span class="stat-label">Расходы сегодня</span
+          <span class="stat-label">Расходы сегодня <small>· сутки по UTC</small></span
           ><span class="num">{{ rub(m.daySpentKopecks) }}</span>
           <div class="bar" :class="barTone(dayShare)"><i :style="{ width: `${dayShare}%` }" /></div>
           <span class="stat-note">из {{ rub(m.limits.dailyKopecks) }} в день</span>
         </div>
         <div class="stat rise">
-          <span class="stat-label">Расходы за месяц</span
+          <span class="stat-label">Расходы за месяц <small>· с 1-го числа</small></span
           ><span class="num">{{ rub(m.monthSpentKopecks) }}</span>
           <div class="bar" :class="barTone(monthShare)">
             <i :style="{ width: `${monthShare}%` }" />
@@ -76,14 +76,14 @@ const usd = (micro: number) =>
           <span class="stat-note">из {{ rub(m.limits.monthlyKopecks) }} в месяц</span>
         </div>
         <div class="stat rise is-money">
-          <span class="stat-label">Реальная выручка</span
+          <span class="stat-label">Реальная выручка <small>· за всё время</small></span
           ><span class="num">{{ rub(m.realRevenueKopecks) }}</span
           ><span class="stat-note">{{
             m.realRevenueKopecks ? 'только настоящие оплаты' : 'её даст первый настоящий клиент'
           }}</span>
         </div>
         <div class="stat rise test">
-          <span class="stat-label">Тестовые платежи</span
+          <span class="stat-label">Тестовые платежи <small>· за всё время</small></span
           ><span class="num">{{ rub(m.testPayments.kopecks) }}</span
           ><span class="stat-note test-note"
             ><span class="badge badge-off">Не выручка</span
@@ -113,8 +113,8 @@ const usd = (micro: number) =>
           </button>
         </div>
         <p v-else class="small muted">
-          Адрес не задан: PAYMENT_USDT_ADDRESS и PAYMENT_USDT_NETWORK в .env на сервере (адрес
-          депозита USDT на Bybit).
+          Адрес не задан. Скопируйте на Bybit адрес депозита USDT и сеть и передайте администратору:
+          он вносит их на сервере.
         </p>
         <dl class="lines">
           <div>
@@ -151,7 +151,7 @@ const usd = (micro: number) =>
       <div class="duo">
         <section class="card rise" aria-labelledby="cats">
           <div class="card-head">
-            <h2 id="cats">На что ушло за месяц</h2>
+            <h2 id="cats">На что ушло с 1-го числа</h2>
             <span class="muted small">{{ rub(m.monthSpentKopecks) }}</span>
           </div>
           <ul class="cats">

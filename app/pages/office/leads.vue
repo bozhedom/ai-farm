@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { OfficeLead } from '../../../core/contracts/office'
 import { copyText, officeApi, useOfficeAction, useOfficeToast } from '~/composables/office/actions'
-import { useOfficeLeads } from '~/composables/office/data'
+import { useAutoProposals, useOfficeLeads } from '~/composables/office/data'
 import { leadSkipCodes, lowerFirst, reasonText } from '~/composables/office/errors'
 import { ago, domain, withCount } from '~/composables/office/format'
 import { leadBadge, templateLabel } from '~/composables/office/labels'
 
 useHead({ title: 'Клиенты' })
+const auto = useAutoProposals()
 const { data, status, pending, refresh, more } = useOfficeLeads()
 const { busy, run } = useOfficeAction()
 const { show } = useOfficeToast()
@@ -86,7 +87,11 @@ const subtitle = computed(() => {
       </button>
     </div>
     <p class="note rule">
-      <OfficeIcon name="clients" size="sm" />Отправляете вы. Ферма никому не пишет.
+      <OfficeIcon name="clients" size="sm" />{{
+        auto?.on
+          ? 'Этим клиентам пишете вы: на сайте и в почте ферма никому не пишет. На площадках, где вы вошли, ИИ откликается сам.'
+          : 'Отправляете вы. Ферма никому не пишет.'
+      }}
     </p>
 
     <div v-if="all.length" class="toolbar">

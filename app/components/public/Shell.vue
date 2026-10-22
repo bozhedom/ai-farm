@@ -7,7 +7,8 @@ const props = defineProps<{
   seller?: { name: string; contact: string; termsUrl: string | null } | null
   active?: 'catalog' | 'order'
 }>()
-useHead({ htmlAttrs: { class: 'ds' } })
+// The public site is designed and checked in the light theme only; the office follows the system.
+useHead({ htmlAttrs: { class: 'ds', 'data-theme': 'light' } })
 // With exactly one order saved on this device, «Мой заказ» opens it; otherwise the list.
 const myOrder = ref('/storefront#orders')
 onMounted(() => {
