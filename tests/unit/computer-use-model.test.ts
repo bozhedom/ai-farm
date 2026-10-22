@@ -110,6 +110,24 @@ describe('loop guard addresses', () => {
     expect(normalizeUrl('https://plati.example/catalog?page=2')).toBe(
       'https://plati.example/catalog?page=2',
     )
+    // Spellings of one page: www, default port, empty query, parameter order, encoding.
+    for (const same of [
+      'https://www.plati.example/catalog?b=2&a=1',
+      'https://plati.example:443/catalog/?a=1&b=2#x',
+      'HTTPS://WWW.Plati.Example/catalog?a=1&b=2',
+    ])
+      expect(normalizeUrl(same)).toBe('https://plati.example/catalog?a=1&b=2')
+    expect(normalizeUrl('https://www.fl.ru/projects/?')).toBe('https://fl.ru/projects')
+    expect(normalizeUrl('http://fl.ru:80/')).toBe('http://fl.ru/')
+    expect(normalizeUrl('https://fl.ru:8443/')).toBe('https://fl.ru:8443/')
+    expect(
+      normalizeUrl('https://fl.ru/%D0%BF%D0%BE%D0%B8%D1%81%D0%BA?q=%D1%82%D0%B5%D0%BA%D1%81%D1%82'),
+    ).toBe('https://fl.ru/поиск?q=текст')
+    expect(normalizeUrl('https://fl.ru/поиск?q=текст')).toBe('https://fl.ru/поиск?q=текст')
+    // Different pages stay different: other values, an escaped separator, http and https.
+    expect(normalizeUrl('https://fl.ru/p?page=2')).not.toBe(normalizeUrl('https://fl.ru/p?page=3'))
+    expect(normalizeUrl('https://fl.ru/p?q=a%26b')).not.toBe(normalizeUrl('https://fl.ru/p?q=a&b'))
+    expect(normalizeUrl('https://fl.ru/a%2Fb')).toBe('https://fl.ru/a%2Fb')
     expect(normalizeUrl('not a url')).toBe('not a url')
     expect(normalizeUrl('about:blank')).toBe('about:blank')
   })

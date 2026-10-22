@@ -141,17 +141,33 @@ export function hostOf(url: string) {
   const u = new URL(url)
   return ['http:', 'https:'].includes(u.protocol) ? u.hostname.toLowerCase() : ''
 }
+const decoded = (value: string) => {
+  try {
+    return decodeURI(value)
+  } catch {
+    return value
+  }
+}
+/** A query key or value decoded, with only the characters that would change its meaning escaped. */
+const queryPart = (value: string) => value.replace(/[%&=#+\s]/g, (c) => encodeURIComponent(c))
 /**
- * One address for the loop guard and the visited list: no fragment, lower-case host, no trailing
- * slash. The query stays: a different search or page number is a different page.
+ * One address for the loop guard and the visited list: no fragment, lower-case host without
+ * `www.`, no default port, no trailing slash, no empty query, sorted query parameters and a
+ * decoded path. The query values stay: a different search or page number is a different page.
  */
 export function normalizeUrl(url: string) {
   if (!URL.canParse(url)) return url
   const u = new URL(url)
   if (!['http:', 'https:'].includes(u.protocol)) return url
-  u.hash = ''
-  if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '') || '/'
-  return u.href
+  const host = u.host.replace(/^www\./, '')
+  const path = u.pathname.length > 1 ? u.pathname.replace(/\/+$/, '') || '/' : u.pathname
+  const params = [...u.searchParams.entries()].sort(([a, x], [b, y]) =>
+    a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0,
+  )
+  const query = params.length
+    ? '?' + params.map(([key, value]) => `${queryPart(key)}=${queryPart(value)}`).join('&')
+    : ''
+  return `${u.protocol}//${host}${decoded(path)}${query}`
 }
 const hostMatches = (host: string, list: string[]) =>
   list.some((entry) => {
