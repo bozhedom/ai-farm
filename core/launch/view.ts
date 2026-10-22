@@ -177,6 +177,7 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
           reason: String(live?.reason ?? ''),
           capitalOk: !!live && BigInt(live.capital) >= minLive,
           startedAt: iso(live?.started_at),
+          checkedAt: iso(live?.checked_at),
         },
         paper: { status: paperRow?.status ?? 'idle', qualified: paper.length > 0 },
       },

@@ -29,6 +29,8 @@ export const loopSpecs: Record<string, LoopSpec> = {
   // Runs every 5 minutes (WALLET_POLICY.syncMs); a healthy run is at most 10 minutes old.
   wallet: { label: 'Поступления на кошелёк Bybit', expectedMs: 10 * minute, stuckMs: 15 * minute },
   ...tradingLoops,
+  // Hourly read-only check of Demo/Live keys that have not started trading yet.
+  'trading-keys': { label: 'Проверка ключей бирж', expectedMs: 70 * minute, stuckMs: 30 * minute },
   earnings: { label: 'Наблюдение за направлениями', expectedMs: 5 * minute, stuckMs: 30 * minute },
   execution: {
     label: 'Арбитраж, фандинг, DeFi, прогнозы',

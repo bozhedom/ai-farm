@@ -9,7 +9,7 @@ import { BPS, abs, cost, decimal, fee, max, proceeds, ratioBps, units } from './
 import { applyFill, markAgent, paperFill, riskReason } from './accounting'
 import { eligible, fitness, mutate, signal, sizeOrder, validateMarket } from './strategy'
 import { classicPlan, isClassic, settleClassic } from './classic'
-import { OrderRejected } from './wire'
+import { OrderRejected, hasKeys } from './wire'
 import { createVenue } from './venues'
 import { exchangeCatalog } from './catalog'
 import { applyManagerTask } from '../manager/tasks'
@@ -416,9 +416,64 @@ async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db:
       [p.mode, reason, p.exchange],
       db,
     )
-    if (changed.length) await event(p, 'risk', reason, { equity: decimal(equity) }, db)
-  }
+    if (changed.length)
+      await event(
+        p,
+        'risk',
+        reason,
+        { equity: decimal(equity), previousStatus: p.status, previousReason: p.reason },
+        db,
+      )
+  } else if (!reason) await resumeDailyLoss(p, day, db)
   return true
+}
+
+/**
+ * A Paper/Demo daily-loss pause ends at the next UTC day when no other limit applies, so the
+ * training keeps collecting data. Live always needs the owner. Drawdown, stops and owner pauses
+ * are never cleared here.
+ */
+export async function resumeDailyLoss(p: PortfolioRow, day: string, db: Connection) {
+  if (p.mode === 'live' || p.status !== 'paused' || p.reason !== 'DAILY_LOSS_LIMIT') return
+  const [risk] = await query<{ created_at: Date; data: Record<string, unknown> }>(
+    `SELECT created_at,data FROM trading_events WHERE exchange=$1 AND mode=$2 AND kind='risk'
+      AND reason='DAILY_LOSS_LIMIT' ORDER BY created_at DESC LIMIT 1`,
+    [p.exchange, p.mode],
+    db,
+  )
+  if (!risk || risk.created_at.toISOString().slice(0, 10) >= day) return
+  // A pause that existed before the limit fired (owner pause/exit, completed demo probe) is
+  // restored. Older risk events lack that metadata, so the last control event before it decides.
+  const [control] = await query<{ kind: string; reason: string }>(
+    `SELECT kind,reason FROM trading_events WHERE exchange=$1 AND mode=$2
+      AND (kind IN ('start','pause','flatten','stop','demo') OR (kind='risk' AND reason='DRAWDOWN_LIMIT'))
+      AND created_at < $3
+      ORDER BY created_at DESC LIMIT 1`,
+    [p.exchange, p.mode, risk.created_at],
+    db,
+  )
+  const restored =
+    risk.data && 'previousStatus' in risk.data
+      ? risk.data.previousStatus === 'paused'
+        ? String(risk.data.previousReason || 'OWNER_PAUSE')
+        : ''
+      : control && ['pause', 'flatten', 'demo', 'risk'].includes(control.kind)
+        ? control.reason
+        : ''
+  const changed = await query(
+    `UPDATE trading_portfolios SET status=$3,reason=$4 WHERE mode=$1 AND exchange=$2
+      AND status='paused' AND reason='DAILY_LOSS_LIMIT' RETURNING mode`,
+    [p.mode, p.exchange, restored ? 'paused' : 'running', restored],
+    db,
+  )
+  if (changed.length)
+    await event(
+      p,
+      'auto_resume',
+      restored ? 'DAILY_LOSS_RESET_PAUSE_KEPT' : 'DAILY_LOSS_RESET',
+      { day, restoredReason: restored },
+      db,
+    )
 }
 
 async function evolve(exchange: TradingExchange, db: Connection) {
@@ -778,13 +833,18 @@ export async function tradingTick(
   )
 }
 
-export async function checkTrading(s: TradingScope, factory: VenueFactory = venues) {
+export async function checkTrading(
+  s: TradingScope,
+  factory: VenueFactory = venues,
+  scheduled = false,
+) {
   const { mode, exchange } = s
   await ensurePortfolios()
   return withTradingLock(s, async (db) => {
     const venue = factory(s)
+    const before = await portfolio(s, db)
     try {
-      const p = await portfolio(s, db)
+      const p = before
       const team = await agents(s, db)
       const scout = await refreshScout(
         s,
@@ -806,17 +866,52 @@ export async function checkTrading(s: TradingScope, factory: VenueFactory = venu
         [mode, exchange],
         db,
       )
-      await event(s, 'connection', 'CONNECTION_OK', {}, db)
+      // The hourly check records only a change, the owner's check always.
+      if (!scheduled || before.check_error || !before.checked_at)
+        await event(s, 'connection', 'CONNECTION_OK', { scheduled }, db)
     } catch (error) {
       const reason = safeTradingError(error)
+      if (scheduled && reason !== before.check_error)
+        await event(s, 'connection', reason, { scheduled }, db)
+      // checked_at is the time of the last attempt; every reader also requires an empty error.
       await query(
-        'UPDATE trading_portfolios SET check_error=$2 WHERE mode=$1 AND exchange=$3',
+        'UPDATE trading_portfolios SET checked_at=now(),check_error=$2 WHERE mode=$1 AND exchange=$3',
         [mode, reason, s.exchange],
         db,
       )
       throw new Error(reason)
     }
   })
+}
+
+export const TRADING_KEY_CHECK_MS = 3_600_000
+
+/**
+ * Re-checks configured Demo/Live keys of portfolios that have never started, so the office shows
+ * whether a key is accepted instead of guessing. It reuses `checkTrading`: public market data,
+ * the account, fees and open orders are read with GET requests; nothing is placed or initialized.
+ * Started portfolios are checked by their own trading tick.
+ */
+export async function verifyTradingKeys(
+  factory: VenueFactory = venues,
+  isStopping = () => false,
+  now = Date.now(),
+) {
+  await ensurePortfolios()
+  const checked: string[] = []
+  for (const exchange of exchanges)
+    for (const mode of ['demo', 'live'] as const) {
+      if (isStopping()) return checked
+      const s = scope(exchange, mode)
+      if (!hasKeys(s)) continue
+      const p = await portfolio(s)
+      if (p.started_at || (p.checked_at && now - p.checked_at.getTime() < TRADING_KEY_CHECK_MS))
+        continue
+      checked.push(`${exchange}:${mode}`)
+      // The error is persisted in check_error; one exchange never blocks the others.
+      await checkTrading(s, factory, true).catch(() => {})
+    }
+  return checked
 }
 
 export async function startTrading(

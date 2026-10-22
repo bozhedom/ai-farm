@@ -11,6 +11,8 @@ import {
   startTrading,
   tradingTick,
   stopAllTrading,
+  resumeDailyLoss,
+  verifyTradingKeys,
 } from '../../core/trading/engine'
 import {
   agents,
@@ -45,6 +47,7 @@ class Exchange implements TradingVenue {
   loseRequest = false
   stale = false
   foreignOrder = false
+  accountError = ''
   identity = 'isolated-test-account'
   balances: Account['balances'] = {
     USDT: { total: units('100'), available: units('100') },
@@ -79,6 +82,7 @@ class Exchange implements TradingVenue {
     return m
   }
   async account(symbols: readonly TradingSymbol[]): Promise<Account> {
+    if (this.accountError) throw new Error(this.accountError)
     return {
       identity: this.identity,
       balances: this.balances,
@@ -369,6 +373,147 @@ describe('durable trading lifecycle', () => {
     ).toHaveLength(2)
     await tick()
     expect(await query("SELECT * FROM trading_events WHERE kind='risk'")).toHaveLength(1)
+  })
+
+  /** Moves the daily-loss pause into the previous UTC day, as if midnight had passed. */
+  async function nextUtcDay(mode = 'paper') {
+    await query(
+      "UPDATE trading_events SET created_at=created_at - interval '1 day' WHERE mode=$1 AND kind IN ('risk','start','pause','flatten','stop','demo')",
+      [mode],
+    )
+    await query("UPDATE trading_portfolios SET risk_day='2000-01-01' WHERE mode=$1", [mode])
+  }
+
+  it('resumes a paper daily-loss pause at the next UTC day with an audit event', async () => {
+    await startTrading(scope('okx', 'paper'), '', false, factory)
+    await tick()
+    exchange.price = '80'
+    exchange.reference = '80'
+    await tick()
+    expect(await portfolio(scope('okx', 'paper'))).toMatchObject({
+      status: 'paused',
+      reason: 'DAILY_LOSS_LIMIT',
+    })
+    // Still the same UTC day: the pause holds.
+    await tick()
+    expect((await portfolio(scope('okx', 'paper'))).status).toBe('paused')
+    const peak = (await portfolio(scope('okx', 'paper'))).peak
+    await nextUtcDay()
+    await tick()
+    expect(await portfolio(scope('okx', 'paper'))).toMatchObject({
+      status: 'running',
+      reason: '',
+      peak,
+    })
+    expect(await query("SELECT mode,reason FROM trading_events WHERE kind='auto_resume'")).toEqual([
+      { mode: 'paper', reason: 'DAILY_LOSS_RESET' },
+    ])
+  })
+
+  it('never clears an owner pause, a drawdown lock or a live daily-loss pause', async () => {
+    await startTrading(scope('okx', 'paper'), '', false, factory)
+    await tick()
+    await controlTrading(scope('okx', 'paper'), 'pause')
+    await query("UPDATE trading_portfolios SET day_equity=$1 WHERE mode='paper'", [
+      units('103').toString(),
+    ])
+    await tick()
+    expect((await portfolio(scope('okx', 'paper'))).reason).toBe('DAILY_LOSS_LIMIT')
+    await nextUtcDay()
+    await tick()
+    expect(await portfolio(scope('okx', 'paper'))).toMatchObject({
+      status: 'paused',
+      reason: 'OWNER_PAUSE',
+    })
+    expect(await query("SELECT reason FROM trading_events WHERE kind='auto_resume'")).toEqual([
+      { reason: 'DAILY_LOSS_RESET_PAUSE_KEPT' },
+    ])
+
+    // A legacy risk event without metadata still restores the owner's earlier exit.
+    await startTrading(scope('bybit', 'paper'), '', false, factory)
+    await tick()
+    await controlTrading(scope('bybit', 'paper'), 'flatten')
+    await query(
+      "UPDATE trading_portfolios SET status='paused',reason='DAILY_LOSS_LIMIT' WHERE exchange='bybit' AND mode='paper'",
+    )
+    await query(
+      "INSERT INTO trading_events(exchange,mode,kind,reason,data,created_at) VALUES ('bybit','paper','risk','DAILY_LOSS_LIMIT','{}',now() + interval '1 second')",
+    )
+    await nextUtcDay()
+    await tick()
+    expect(await portfolio(scope('bybit', 'paper'))).toMatchObject({
+      status: 'paused',
+      reason: 'OWNER_EXIT',
+    })
+
+    // Drawdown from the peak keeps the portfolio paused on the next day.
+    await startTrading(scope('bitget', 'paper'), '', false, factory)
+    await tick()
+    exchange.price = '80'
+    exchange.reference = '80'
+    await tick()
+    expect((await portfolio(scope('bitget', 'paper'))).reason).toBe('DAILY_LOSS_LIMIT')
+    await query("UPDATE trading_portfolios SET peak=$1 WHERE exchange='bitget' AND mode='paper'", [
+      units('200').toString(),
+    ])
+    await nextUtcDay()
+    await tick()
+    expect(await portfolio(scope('bitget', 'paper'))).toMatchObject({
+      status: 'paused',
+      reason: 'DRAWDOWN_LIMIT',
+    })
+
+    // Live keeps manual resume even on a new day.
+    await query(
+      "UPDATE trading_portfolios SET status='paused',reason='DAILY_LOSS_LIMIT' WHERE exchange='binance' AND mode='live'",
+    )
+    await query(
+      "INSERT INTO trading_events(exchange,mode,kind,reason,data,created_at) VALUES ('binance','live','risk','DAILY_LOSS_LIMIT','{}',now() - interval '2 days')",
+    )
+    const live = await portfolio(scope('binance', 'live'))
+    await resumeDailyLoss(live, new Date().toISOString().slice(0, 10), pool)
+    expect(await portfolio(scope('binance', 'live'))).toMatchObject({
+      status: 'paused',
+      reason: 'DAILY_LOSS_LIMIT',
+    })
+  })
+
+  it('checks configured keys hourly with reads only and persists the result', async () => {
+    const c = config()
+    const saved = { key: c.BYBIT_LIVE_API_KEY, secret: c.BYBIT_LIVE_SECRET }
+    c.BYBIT_LIVE_API_KEY = 'test-live-key'
+    c.BYBIT_LIVE_SECRET = 'test-live-secret'
+    try {
+      const live = scope('bybit', 'live')
+      expect((await portfolio(live)).checked_at).toBeNull()
+      expect(await verifyTradingKeys(factory)).toContain('bybit:live')
+      expect(await portfolio(live)).toMatchObject({
+        check_error: '',
+        started_at: null,
+        account_identity: null,
+        status: 'idle',
+      })
+      expect((await portfolio(live)).checked_at).not.toBeNull()
+      expect(exchange.placed).toEqual([])
+      // Within the hour nothing is checked again.
+      expect(await verifyTradingKeys(factory)).not.toContain('bybit:live')
+
+      exchange.accountError = 'TRADING_KEY_PERMISSIONS'
+      const later = Date.now() + 2 * 3_600_000
+      await verifyTradingKeys(factory, () => false, later)
+      expect((await portfolio(live)).check_error).toBe('TRADING_KEY_PERMISSIONS')
+      await verifyTradingKeys(factory, () => false, later + 2 * 3_600_000)
+      expect(
+        await query(
+          "SELECT reason FROM trading_events WHERE exchange='bybit' AND mode='live' AND kind='connection' ORDER BY created_at",
+        ),
+      ).toEqual([{ reason: 'CONNECTION_OK' }, { reason: 'TRADING_KEY_PERMISSIONS' }])
+      expect(exchange.placed).toEqual([])
+      expect(await query('SELECT id FROM trading_orders')).toEqual([])
+    } finally {
+      c.BYBIT_LIVE_API_KEY = saved.key
+      c.BYBIT_LIVE_SECRET = saved.secret
+    }
   })
 
   it('requires independent live opt-in, a demo round trip and mature profitable paper evidence', async () => {

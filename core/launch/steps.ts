@@ -87,6 +87,8 @@ export type LaunchInput = {
         reason: string
         capitalOk: boolean
         startedAt: string | null
+        /** Last read-only key check; null means the key has never been checked. */
+        checkedAt: string | null
       }
       paper: { status: string; qualified: boolean }
     }
@@ -152,6 +154,12 @@ const tradingWords: Record<string, string> = {
   TRADING_ORDER_UNKNOWN: 'есть ордер с неясным исходом, нужна проверка на бирже',
   TRADING_DEMO_REQUIRED: 'сначала нужна удачная проверка Demo',
 }
+/** Errors raised after the exchange accepted the key and its permissions. */
+const accountStateCodes = new Set([
+  'TRADING_INSUFFICIENT_FUNDS',
+  'TRADING_INITIAL_ASSETS',
+  'TRADING_EXTERNAL_ORDERS',
+])
 const walletWords: Record<WalletKeyStatus | 'unchecked', string> = {
   not_configured: 'Ключ не внесён.',
   unchecked: 'Ключ внесён, проверка пройдёт в ближайшие 5 минут.',
@@ -502,7 +510,9 @@ export function launchSteps(input: LaunchInput): LaunchView {
     codes: b.demo.checkError ? [b.demo.checkError] : [],
   })
 
-  const liveKeyOk = b.liveKeys && !b.live.checkError
+  // The key authenticated and passed the permission check; only the account is not ready yet.
+  const liveAccountIssue = accountStateCodes.has(b.live.checkError)
+  const liveKeyOk = b.liveKeys && !!b.live.checkedAt && (!b.live.checkError || liveAccountIssue)
   add({
     id: 'bybit-live-key',
     group: 'trading',
@@ -519,9 +529,13 @@ export function launchSteps(input: LaunchInput): LaunchView {
     linkLabel: 'Торговая ферма',
     state: !b.liveKeys
       ? 'Ключ реального счёта не внесён.'
-      : b.live.checkError
-        ? `Ключ внесён, но отклонён: ${tradingWord(b.live.checkError)}.`
-        : 'Ключ принят.',
+      : !b.live.checkedAt
+        ? 'Ключ внесён, но ещё не проверялся. Сервер проверяет его раз в час только чтением, без ордеров; можно проверить сразу кнопкой «Проверить связь» в «Торговой ферме».'
+        : liveAccountIssue
+          ? `Ключ принят (проверен ${since(b.live.checkedAt, now)}), но счёт не готов: ${tradingWord(b.live.checkError)}.`
+          : b.live.checkError
+            ? `Ключ внесён, но отклонён: ${tradingWord(b.live.checkError)}. Проверка ${since(b.live.checkedAt, now)}.`
+            : `Ключ принят, проверен ${since(b.live.checkedAt, now)}.`,
     codes: b.live.checkError ? [b.live.checkError] : [],
   })
 

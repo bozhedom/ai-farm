@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFundingDriver } from '../../core/execution/drivers/funding'
+import {
+  createFundingDriver,
+  firstSettlementAfter,
+  FUNDING_STRATEGY,
+} from '../../core/execution/drivers/funding'
 import type {
   BybitFundingAdapter,
   FundingAccount,
@@ -84,6 +88,12 @@ const market: FundingMarket = {
   nextFundingAt: now + 3_600_000,
   at: now,
 }
+const eightHours = 8 * 3_600_000
+/** Three settled positive rates before the next settlement, as Bybit publishes them. */
+const positiveHistory = [3, 2, 1].map((k) => ({
+  at: market.nextFundingAt - k * eightHours,
+  rate: units('0.0001'),
+}))
 const account: FundingAccount = {
   identity: 'separate-account',
   balances: { USDT: { total: units('2000'), available: units('2000') } },
@@ -121,7 +131,7 @@ const methods = () => ({
   positions: vi.fn().mockResolvedValue([]),
   pending: vi.fn().mockResolvedValue([]),
   fundingHistory: vi.fn().mockResolvedValue([]),
-  fundingRates: vi.fn().mockResolvedValue([]),
+  fundingRates: vi.fn().mockResolvedValue(positiveHistory),
   prepare: vi.fn(),
   broadcast: vi.fn(),
   lookup: vi.fn(),
@@ -224,6 +234,57 @@ describe('funding portfolio plans', () => {
     expect(await driver(venue).accounts(portfolio)).toEqual([
       { identity: 'bybit-funding:paper:virtual', venue: 'bybit-funding' },
     ])
+  })
+})
+
+describe('funding entry timing', () => {
+  it('opens only within the window before the next settlement', async () => {
+    const at = (lead: number) => {
+      const venue = methods()
+      venue.market.mockResolvedValue({ ...market, nextFundingAt: now + lead })
+      venue.fundingRates.mockResolvedValue(
+        [3, 2, 1].map((k) => ({ at: now + lead - k * eightHours, rate: units('0.0001') })),
+      )
+      return driver(venue).plan(portfolio)
+    }
+    // Right after a payment the next one is almost eight hours away.
+    expect(await at(eightHours - 60_000)).toBeNull()
+    expect(await at(FUNDING_STRATEGY.entryWindowMs + 1)).toBeNull()
+    expect(await at(FUNDING_STRATEGY.minLeadMs - 1)).toBeNull()
+    expect(await at(FUNDING_STRATEGY.entryWindowMs)).not.toBeNull()
+    expect(await at(30 * 60_000)).not.toBeNull()
+  })
+
+  it('requires the latest settled rates to be positive and a complete history', async () => {
+    const plan = async (rates: { at: number; rate: bigint }[] | Error) => {
+      const venue = methods()
+      if (rates instanceof Error) venue.fundingRates.mockRejectedValue(rates)
+      else venue.fundingRates.mockResolvedValue(rates)
+      return driver(venue).plan(portfolio)
+    }
+    expect(await plan(positiveHistory)).not.toBeNull()
+    expect(
+      await plan(positiveHistory.map((row, i) => (i === 1 ? { ...row, rate: -1n } : row))),
+    ).toBeNull()
+    expect(
+      await plan(positiveHistory.map((row, i) => (i === 2 ? { ...row, rate: 0n } : row))),
+    ).toBeNull()
+    expect(await plan(positiveHistory.slice(1))).toBeNull()
+    expect(await plan(new Error('EXECUTION_HISTORY_INVALID'))).toBeNull()
+    const venue = methods()
+    await driver(venue).plan(portfolio)
+    const [, start, end] = venue.fundingRates.mock.calls[0]!
+    expect(end).toBe(now)
+    expect(start).toBeLessThan(positiveHistory[0]!.at)
+  })
+
+  it('finds the first settlement after the hedge opened on the plan schedule', () => {
+    const plan = { nextPaymentAt: 1_000_000, intervalMs: 100 }
+    expect(firstSettlementAfter(999_000, plan)).toBe(1_000_000)
+    expect(firstSettlementAfter(1_000_000, plan)).toBe(1_000_100)
+    expect(firstSettlementAfter(1_000_250, plan)).toBe(1_000_300)
+    expect(firstSettlementAfter(1_000_250, { ...plan, intervalMs: 0 })).toBeNull()
+    expect(firstSettlementAfter(5, { nextPaymentAt: 0, intervalMs: 100 })).toBeNull()
   })
 })
 
@@ -334,14 +395,30 @@ describe('funding pair execution decisions', () => {
     })
   })
 
-  it('closes for negative funding or maximum holding duration', async () => {
+  it('holds through the first settlement on negative funding, then closes; or at maximum age', async () => {
     const legs = [executionLeg('buy', '20'), executionLeg('short', '20')]
     const venue = methods()
     venue.market.mockResolvedValue({ ...market, fundingRate: units('-0.0001') })
-    expect(await driver(venue).decide(portfolio, operation, legs)).toMatchObject({
-      type: 'leg',
-      role: 'close-short',
-    })
+    // The predicted rate turned negative before the first payment: holding is cheaper than
+    // paying four commissions for nothing.
+    expect((await driver(venue).decide(portfolio, operation, legs)).type).toBe('hold')
+    const settled = operation.plan.nextPaymentAt
+    expect(
+      (
+        await driver(venue, 'paper', () => settled + 60_000).decide(
+          { ...portfolio },
+          operation,
+          legs,
+        )
+      ).type,
+    ).toBe('hold')
+    expect(
+      await driver(venue, 'paper', () => settled + FUNDING_STRATEGY.settlementGraceMs).decide(
+        portfolio,
+        operation,
+        legs,
+      ),
+    ).toMatchObject({ type: 'leg', role: 'close-short' })
     expect(
       await driver(methods(), 'paper', () => now + 73 * 3_600_000).decide(
         portfolio,
@@ -551,5 +628,97 @@ describe('funding settled cashflows', () => {
     } finally {
       time.mockRestore()
     }
+  })
+
+  it('simulated rates: a hedge whose rate turns negative still collects the settlement', async () => {
+    let clock = now
+    const time = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    try {
+      const settlement = now + 30 * 60_000
+      const settled = units('0.02')
+      const history = [...positiveHistory.map((row) => ({ ...row, at: row.at - 30 * 60_000 }))]
+      const venue = methods()
+      let predicted = units('0.01')
+      venue.market.mockImplementation(async () => ({
+        ...market,
+        spot: { ...market.spot, book: { ...market.spot.book, at: clock } },
+        perp: { ...market.perp, book: { ...market.perp.book, at: clock } },
+        fundingRate: predicted,
+        nextFundingAt: clock < settlement ? settlement : settlement + eightHours,
+        at: clock,
+      }))
+      venue.fundingRates.mockImplementation(async (_symbol, start: number, end: number) =>
+        [...history, ...(clock >= settlement ? [{ at: settlement, rate: settled }] : [])].filter(
+          (row) => row.at >= start && row.at <= end,
+        ),
+      )
+      const d = driver(venue, 'paper', () => clock)
+      const selected = await d.plan(portfolio)
+      expect(selected).not.toBeNull()
+      const op = {
+        ...operation,
+        created_at: new Date(clock),
+        reserve: selected!.reserve,
+        plan: selected!.plan,
+      }
+      const legs: ExecutionLeg[] = []
+      const step = async () => {
+        const decision = await d.decide(portfolio, op, legs)
+        if (decision.type !== 'leg') return decision
+        const intent = { ...decision.intent, clientId: `sim-${legs.length}` }
+        const prepared = await d.adapter(intent.venue).prepare(intent)
+        legs.push({
+          id: intent.clientId,
+          operation_id: op.id,
+          sequence: legs.length,
+          role: decision.role,
+          state: 'terminal',
+          prepared,
+          receipt: await d.adapter(intent.venue).lookup(prepared),
+          created_at: new Date(clock),
+        })
+        return decision
+      }
+      expect(await step()).toMatchObject({ role: 'open-spot' })
+      clock += 15_000
+      expect(await step()).toMatchObject({ role: 'open-short' })
+      // Ten minutes later the predicted rate drops below zero: the old rule sold here.
+      clock = now + 10 * 60_000
+      predicted = units('-0.0001')
+      expect((await step()).type).toBe('hold')
+      clock = settlement + 30_000
+      expect((await step()).type).toBe('hold')
+      clock = settlement + FUNDING_STRATEGY.settlementGraceMs
+      expect(await step()).toMatchObject({ role: 'close-short' })
+      expect(await step()).toMatchObject({ role: 'close-spot' })
+      const result = await step()
+      expect(result.type).toBe('close')
+      if (result.type !== 'close') return
+      expect(result.flows).toEqual([
+        expect.objectContaining({ externalId: `paper:SUI-USDT:${settlement}`, kind: 'funding' }),
+      ])
+      expect(units(result.flows![0]!.amount)).toBeGreaterThan(units(result.fees))
+      expect(units(result.pnl)).toBeGreaterThan(0n)
+    } finally {
+      time.mockRestore()
+    }
+  })
+
+  it('simulated rates: a loss or liquidation-distance exit is not delayed by the hold', async () => {
+    const legs = [executionLeg('buy', '20'), executionLeg('short', '20')]
+    const venue = methods()
+    // The spot leg lost most of its value; the hedge cannot cover a 3% reserve loss.
+    venue.market.mockResolvedValue({
+      ...market,
+      fundingRate: units('0.01'),
+      spot: {
+        ...market.spot,
+        book: { ...market.spot.book, bids: [[units('0.5'), units('10000')]] },
+      },
+    })
+    expect(await driver(venue).decide(portfolio, operation, legs)).toMatchObject({
+      type: 'leg',
+      role: 'close-short',
+    })
   })
 })

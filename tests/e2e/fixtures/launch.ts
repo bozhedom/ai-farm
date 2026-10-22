@@ -82,6 +82,7 @@ export function launchFixture(now: Date): LaunchView {
           reason: '',
           capitalOk: false,
           startedAt: null,
+          checkedAt: '2026-10-21T11:00:00.000Z',
         },
         paper: { status: 'paused', qualified: false },
       },

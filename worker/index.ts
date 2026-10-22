@@ -6,7 +6,7 @@ import { reconcilePayments } from '../core/payments'
 import { localProviderReadiness } from '../core/providers/readiness'
 import { scheduleWork } from '../core/autonomy'
 import { setTimeout as pause } from 'node:timers/promises'
-import { tradingTick } from '../core/trading/engine'
+import { tradingTick, verifyTradingKeys, TRADING_KEY_CHECK_MS } from '../core/trading/engine'
 import { exchanges } from '../core/trading/types'
 import { earningsTick } from '../core/earnings/monitor'
 import { managerTick } from '../core/manager/runtime'
@@ -24,6 +24,7 @@ let lastExecutionAt = 0
 let lastAutopilotAt = 0
 // 0: the read-only key is checked and deposits are read right after the worker starts.
 let lastWalletAt = 0
+let lastKeyCheckAt = 0
 let stuckExit = false
 let tickStartedAt = Date.now()
 let tickIdle = false
@@ -123,6 +124,10 @@ while (!stopping) {
     for (const exchange of exchanges)
       background(`trading:${exchange}`, () => tradingTick(undefined, isStopping, [exchange]))
     background('earnings', () => earningsTick())
+    if (Date.now() - lastKeyCheckAt >= TRADING_KEY_CHECK_MS && !loops.busy.has('trading-keys')) {
+      lastKeyCheckAt = Date.now()
+      background('trading-keys', () => verifyTradingKeys(undefined, isStopping))
+    }
     if (Date.now() - lastWalletAt >= WALLET_POLICY.syncMs && !loops.busy.has('wallet')) {
       lastWalletAt = Date.now()
       background('wallet', () => walletTick())
