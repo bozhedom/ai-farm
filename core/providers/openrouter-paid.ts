@@ -4,6 +4,7 @@ import { query } from '../db'
 import { reportProgress } from '../activity'
 import { openaiCost, usdToKopecks } from './openai-cost'
 import { openrouterCost } from './openrouter'
+import { providerHttpError, readErrorBody } from './rejection'
 
 const tokens = z.number().int().nonnegative().max(100000)
 const usageSchema = z.object({
@@ -37,8 +38,9 @@ export function paidRequestEnvelope(maxTokens: number) {
 
 /**
  * Sends one paid request, records billed usage on the pending tool call and returns the single
- * choice. No retries, redirects or fallbacks; an HTTP error leaves nothing recorded because
- * nothing was billed. Callers decide what a valid answer is.
+ * choice. No retries, redirects or fallbacks; an HTTP error leaves no usage recorded. Only the
+ * rejections in `notStartedStatuses` count as not billed; other HTTP errors stay uncertain.
+ * Callers decide what a valid answer is.
  */
 export async function openrouterPaidRequest(args: {
   key: string
@@ -60,8 +62,9 @@ export async function openrouterPaidRequest(args: {
     signal: AbortSignal.timeout(120000),
   })
   if (!response.ok) {
-    await response.body?.cancel()
-    throw new Error(`OPENROUTER_HTTP_${response.status}`)
+    // 400/401/403/404/422 reject the request before generation (ProviderRejectedError). The
+    // provider's short explanation goes to the ledger so the cause is visible.
+    throw providerHttpError('OPENROUTER', response.status, await readErrorBody(response))
   }
   const reader = response.body?.getReader()
   if (!reader) throw new Error('OPENROUTER_RESPONSE_EMPTY')

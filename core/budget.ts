@@ -5,6 +5,7 @@ import { activityContext, checkWorkerDrain, type CallActivity } from './activity
 import { lockResearchWindow } from './research-window'
 import { managerLimits } from './manager/limits'
 import { usdToKopecks } from './providers/openai-cost'
+import { ProviderHttpError, ProviderRejectedError } from './providers/rejection'
 
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
@@ -162,7 +163,16 @@ export async function meteredCall<T>(args: {
         throw new Error('PROVIDER_CHANGED_DURING_JOB')
       return { cached: true as const, value: old.output as T }
     }
-    if (old) {
+    if (old?.status === 'rejected') {
+      // Rejected before generation and never charged: the corrected request takes the key.
+      if (Number(old.charged_kopecks) !== 0 || Number(old.charged_microusd) !== 0)
+        throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
+      await query(
+        `UPDATE tool_calls SET call_key=call_key||':retired:'||id::text WHERE id=$1`,
+        [old.id],
+        db,
+      )
+    } else if (old) {
       const retry = freeRetryAllowed(old, args.activity?.provider, args.maximum, maximumUsd)
       if (!retry) throw new Error('UNCERTAIN_CALL_REQUIRES_REVIEW')
       // A free call that may still be answering: the job comes back after a short pause.
@@ -307,17 +317,61 @@ export async function meteredCall<T>(args: {
       error instanceof Error && /^[A-Z][A-Z0-9_]{2,80}$/.test(error.message)
         ? error.message
         : 'PROVIDER_CALL_FAILED'
+    const detail = error instanceof ProviderHttpError ? error.detail : null
+    if (
+      error instanceof ProviderRejectedError &&
+      (await releaseRejectedCall(claim.id, code, detail, args))
+    )
+      throw error
     await query(
-      "UPDATE tool_calls SET status='uncertain',error_code=$2,finished_at=now() WHERE id=$1",
-      [claim.id, code],
+      "UPDATE tool_calls SET status='uncertain',error_code=$2,error_detail=$3,finished_at=now() WHERE id=$1",
+      [claim.id, code, detail],
     )
     await audit(
       'tool_uncertain',
       'Исход API-вызова неясен. Верхняя оценка расхода сохранена; автоматическое повторное списание запрещено.',
-      { role: args.role, callId: claim.id },
+      { role: args.role, callId: claim.id, errorCode: code, errorDetail: detail },
     )
     throw error
   }
+}
+
+/**
+ * The provider rejected the request before generation (HTTP 400/401/403/404/422) and no usage
+ * was recorded for it: nothing was billed. The charge and the reservation are released and the
+ * call is marked `rejected`, so the task may send a corrected request. A call with any recorded
+ * usage keeps the pessimistic charge and stays uncertain.
+ */
+async function releaseRejectedCall(
+  id: string,
+  code: string,
+  detail: string | null,
+  args: { reservationId: string; role: string; maximum: number },
+) {
+  return transaction(async (db) => {
+    await query('SELECT pg_advisory_xact_lock(735093)', [], db)
+    const [row] = await query(
+      `UPDATE tool_calls SET status='rejected',error_code=$2,error_detail=$3,charged_kopecks=0,
+        charged_microusd=0,finished_at=now() WHERE id=$1 AND status='pending' AND actual_microusd IS NULL
+        AND input_tokens IS NULL AND output_tokens IS NULL AND provider_response_id IS NULL
+       RETURNING reserved_kopecks`,
+      [id, code, detail],
+      db,
+    )
+    if (!row) return false
+    await query(
+      'UPDATE budget_reservations SET spent_kopecks=spent_kopecks-$2 WHERE id=$1',
+      [args.reservationId, row.reserved_kopecks],
+      db,
+    )
+    await audit(
+      'tool_rejected',
+      'Провайдер отклонил запрос до генерации. Деньги не списаны, резерв освобождён.',
+      { role: args.role, callId: id, errorCode: code, errorDetail: detail },
+      db,
+    )
+    return true
+  })
 }
 
 /**

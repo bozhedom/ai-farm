@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
@@ -16,6 +17,7 @@ import {
 import { runJob } from '../../core/jobs/run'
 import { templates, type Template } from '../../core/policy'
 import * as providers from '../../core/providers'
+import { providerHttpError } from '../../core/providers/rejection'
 import { createOrder, orderDetails } from '../../core/orders'
 import { resolveOrder } from '../../core/order-resolution'
 import { opportunityList, saveOpportunities, updateOpportunity } from '../../core/opportunities'
@@ -137,6 +139,128 @@ describe('durable autonomous pipeline', () => {
       status: 'uncertain',
       charged_microusd: 600000,
     })
+  })
+  it('releases a call the provider rejected before generation and keeps ambiguous ones', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'openai',
+      SEARCH_PROVIDER: 'searxng',
+      OPENAI_TOTAL_BUDGET_MICROUSD: 5000000,
+    })
+    const reservationId = await reserveBudget('cloud-rejected', 'research')
+    const args = {
+      key: 'cloud-rejected',
+      reservationId,
+      role: 'test',
+      maximum: 300,
+      maximumMicrousd: 600000,
+      demo: false,
+      activity: { provider: 'openai', model: 'gpt-6-astra', taskLabel: 'test' },
+    }
+    const spent = async () =>
+      (
+        await query('SELECT spent_kopecks FROM budget_reservations WHERE id=$1', [reservationId])
+      )[0]!.spent_kopecks
+    // HTTP 400 for the strict schema: nothing billed, reservation released, retry allowed.
+    await expect(
+      meteredCall({
+        ...args,
+        invoke: async () => {
+          throw providerHttpError(
+            'OPENROUTER',
+            400,
+            JSON.stringify({ error: { code: 400, message: 'Invalid schema: youGet' } }),
+          )
+        },
+      }),
+    ).rejects.toThrow('OPENROUTER_HTTP_400')
+    expect(await spent()).toBe(0)
+    expect((await budgetSummary()).openaiSpentMicrousd).toBe(0)
+    expect(
+      await meteredCall({
+        ...args,
+        invoke: async () => ({ value: 'ok', cost: 20, microusd: 1000 }),
+      }),
+    ).toBe('ok')
+    const rows = await query(
+      'SELECT call_key,status,charged_kopecks,charged_microusd,error_code,error_detail FROM tool_calls ORDER BY created_at',
+    )
+    expect(rows.map((r) => [r.status, r.charged_kopecks, r.charged_microusd])).toEqual([
+      ['rejected', 0, 0],
+      ['done', 20, 1000],
+    ])
+    expect(rows[0]!.call_key).toMatch(/:retired:/)
+    expect(rows[0]!.error_code).toBe('OPENROUTER_HTTP_400')
+    expect(rows[0]!.error_detail).toBe('code 400: Invalid schema: youGet')
+    expect(await spent()).toBe(20)
+    expect(await query("SELECT id FROM audit_events WHERE kind='tool_rejected'")).toHaveLength(1)
+
+    // A rate limit or timeout is ambiguous: the full charge stays and a repeat needs review.
+    const ambiguous = { ...args, key: 'cloud-429' }
+    await expect(
+      meteredCall({
+        ...ambiguous,
+        invoke: async () => {
+          throw providerHttpError('OPENROUTER', 429)
+        },
+      }),
+    ).rejects.toThrow('OPENROUTER_HTTP_429')
+    await expect(
+      meteredCall({ ...ambiguous, invoke: async () => ({ value: 'ok', cost: 0, microusd: 0 }) }),
+    ).rejects.toThrow('UNCERTAIN_CALL_REQUIRES_REVIEW')
+    expect(await spent()).toBe(320)
+
+    // A rejection after usage was recorded is not trusted as unbilled.
+    const billed = { ...args, key: 'cloud-billed' }
+    await expect(
+      meteredCall({
+        ...billed,
+        invoke: async () => {
+          await query("UPDATE tool_calls SET actual_microusd=5000 WHERE call_key='cloud-billed'")
+          throw providerHttpError('OPENROUTER', 422)
+        },
+      }),
+    ).rejects.toThrow('OPENROUTER_HTTP_422')
+    const [kept] = await query(
+      "SELECT status,charged_microusd FROM tool_calls WHERE call_key='cloud-billed'",
+    )
+    expect(kept).toEqual({ status: 'uncertain', charged_microusd: 600000 })
+    expect(await spent()).toBe(620)
+  })
+  it('reclassifies old phantom rejections once and leaves ambiguous calls alone', async () => {
+    const reservationId = await reserveBudget('phantom', 'order')
+    const insert = (key: string, code: string, usage: number | null) =>
+      query(
+        `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,
+          is_demo,provider,error_code,reserved_microusd,charged_microusd,actual_microusd)
+         VALUES($1,$2,$3,'Архитектор','uncertain',700,700,false,'openai',$4,600000,600000,$5)`,
+        [randomUUID(), key, reservationId, code, usage],
+      )
+    await query(
+      'UPDATE budget_reservations SET limit_kopecks=3000,spent_kopecks=2800 WHERE id=$1',
+      [reservationId],
+    )
+    await insert('phantom-400', 'OPENROUTER_HTTP_400', null)
+    await insert('phantom-404', 'OPENROUTER_HTTP_404', null)
+    await insert('phantom-429', 'OPENROUTER_HTTP_429', null)
+    await insert('phantom-billed', 'OPENROUTER_HTTP_400', 5000)
+    const sql = readFileSync('scripts/reclassify-rejected-calls.sql', 'utf8')
+    await pool.query(sql)
+    await pool.query(sql)
+    const rows = await query(
+      'SELECT call_key,status,charged_kopecks FROM tool_calls ORDER BY call_key',
+    )
+    expect(rows).toEqual([
+      { call_key: 'phantom-400', status: 'rejected', charged_kopecks: 0 },
+      { call_key: 'phantom-404', status: 'rejected', charged_kopecks: 0 },
+      { call_key: 'phantom-429', status: 'uncertain', charged_kopecks: 700 },
+      { call_key: 'phantom-billed', status: 'uncertain', charged_kopecks: 700 },
+    ])
+    const [reservation] = await query('SELECT spent_kopecks FROM budget_reservations WHERE id=$1', [
+      reservationId,
+    ])
+    expect(reservation!.spent_kopecks).toBe(1400)
+    expect(await query("SELECT id FROM audit_events WHERE kind='tool_rejected'")).toHaveLength(2)
   })
   it('persists measured token usage across repairs without charging local inference', async () => {
     const reservationId = await reserveBudget('usage', 'research')

@@ -4,6 +4,11 @@ import * as settings from '../../core/config'
 import * as db from '../../core/db'
 import * as activity from '../../core/activity'
 import { openaiModel } from '../../core/providers/openai'
+import {
+  ProviderRejectedError,
+  providerErrorDetail,
+  sanitizeErrorDetail,
+} from '../../core/providers/rejection'
 
 const original = settings.config()
 const args = {
@@ -97,6 +102,49 @@ describe('GPT-6 Astra through OpenRouter', () => {
     const data = { ...response(), usage: { ...response().usage, is_byok: true } }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(data))))
     await expect(openaiModel(args)).rejects.toThrow('POLICY_OPENROUTER_BYOK_UNSUPPORTED')
+  })
+  it('marks only pre-generation rejections as not billed', async () => {
+    for (const status of [400, 401, 403, 404, 422]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('bad', { status })))
+      const error = await openaiModel(args).catch((e) => e)
+      expect(error).toBeInstanceOf(ProviderRejectedError)
+      expect(error.message).toBe(`OPENROUTER_HTTP_${status}`)
+    }
+    for (const status of [402, 408, 429, 500, 502, 503]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('busy', { status })))
+      const error = await openaiModel(args).catch((e) => e)
+      expect(error).not.toBeInstanceOf(ProviderRejectedError)
+      expect(error.message).toBe(`OPENROUTER_HTTP_${status}`)
+    }
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
+    expect(await openaiModel(args).catch((e) => e)).not.toBeInstanceOf(ProviderRejectedError)
+    expect(db.query).not.toHaveBeenCalled()
+  })
+  it('keeps the provider explanation of a rejection, bounded and without keys', async () => {
+    const body = JSON.stringify({
+      error: {
+        code: 400,
+        message: 'Provider returned error',
+        metadata: {
+          raw: "Invalid schema for response_format 'farm_result': Missing 'youGet' in required.",
+        },
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 400 })))
+    const error = await openaiModel(args).catch((e) => e)
+    expect(error.detail).toBe(
+      "code 400: Provider returned error: Invalid schema for response_format 'farm_result': Missing 'youGet' in required.",
+    )
+    expect(providerErrorDetail('not json')).toBeNull()
+    expect(
+      providerErrorDetail(JSON.stringify({ error: { message: 'слово '.repeat(200) } })),
+    ).toHaveLength(300)
+    expect(sanitizeErrorDetail('Bearer sk-or-v1-abcdefabcdef123 is invalid')).toBe(
+      'Bearer [скрыто] is invalid',
+    )
+    expect(sanitizeErrorDetail('key sk-or-v1-abcdefabcdef123 is invalid')).toBe(
+      'key [ключ скрыт] is invalid',
+    )
   })
   it('does not retry HTTP errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('quota', { status: 402 })))
