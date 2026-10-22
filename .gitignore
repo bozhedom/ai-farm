@@ -13,3 +13,7 @@ backups/
 test-results/
 .secrets/
 .health/
+
+# Local office files and recordings
+*.docx
+*.ogg
