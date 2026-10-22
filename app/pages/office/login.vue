@@ -24,9 +24,14 @@ async function login() {
 <template>
   <main class="login">
     <form class="login-card" @submit.prevent="login">
-      <span class="login-brand">Ферма</span>
+      <span class="login-brand"
+        ><span class="brand-mark"><OfficeIcon name="leaf" /></span>AI Farm</span
+      >
       <h1>Вход в кабинет</h1>
-      <p class="muted">Ваши биржи и результаты торговли.</p>
+      <p class="muted">
+        Всё о ферме в одном месте: заказы и клиенты, торговля на биржах, поиск работы, деньги и
+        расходы.
+      </p>
       <div class="field" :class="{ 'is-error': error }">
         <label for="password">Пароль</label>
         <div class="pass">
@@ -55,38 +60,34 @@ async function login() {
       <button class="btn btn-primary btn-lg btn-block" :disabled="busy || !password">
         {{ busy ? 'Входим' : 'Войти' }}
       </button>
-      <a class="small back" href="/storefront">Архив студии</a>
+      <a class="small back" href="/storefront">Открыть сайт</a>
     </form>
   </main>
 </template>
 <style scoped>
 .login {
-  --brand: #4255a3;
-  --brand-hover: #334586;
-  --ink: #252b38;
-  --muted: #626a7a;
-  --line: #e1e4eb;
-  --surface: #fff;
-  --ring: 0 0 0 3px #4255a326;
-  color-scheme: light;
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: var(--s-6) var(--gutter);
-  background: #f7f8fa;
+  background: var(--canvas);
 }
 .login-card {
-  width: min(400px, 100%);
+  width: min(420px, 100%);
   padding: var(--s-8);
   display: grid;
   gap: var(--s-4);
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
 }
 .login-brand {
-  font: 700 18px var(--font-display);
-  color: var(--brand);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 800 18px var(--font-display);
+  color: var(--ink);
   margin-bottom: 12px;
 }
 .login-card h1 {

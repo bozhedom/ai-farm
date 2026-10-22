@@ -105,18 +105,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
 </script>
 <template>
   <div class="trading-workspace manager-workspace">
-    <a class="t-skip" href="#manager-main">К содержимому</a>
-    <header class="trading-header">
-      <NuxtLink class="trading-brand" to="/office/trading"
-        >Ферма<span>кабинет владельца</span></NuxtLink
-      >
-      <nav class="header-actions" aria-label="Основные разделы">
-        <NuxtLink class="t-link" to="/office">Обзор</NuxtLink>
-        <NuxtLink class="t-link" to="/office/trading">Мои биржи</NuxtLink>
-        <NuxtLink class="t-link" to="/office/earnings">Направления</NuxtLink>
-      </nav>
-    </header>
-    <main id="manager-main" class="trading-main">
+    <div class="trading-main">
       <div class="page-heading">
         <div>
           <h1>Менеджер торговли</h1>
@@ -332,7 +321,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
           </dl>
         </details>
       </template>
-    </main>
+    </div>
   </div>
 </template>
 <style src="../../assets/trading.css"></style>

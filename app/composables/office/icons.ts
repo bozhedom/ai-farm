@@ -1,6 +1,9 @@
 /** Line icons for the office, 24x24, stroke from the design system. */
 export const iconPaths = {
   home: 'M3 11 12 4l9 7v9H3z',
+  chart: 'M4 20h16M6 16l4-5 3 3 5-7',
+  screen: 'M3 4h18v12H3zM8 20h8M12 16v4',
+  compass: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM15.5 8.5l-2 5-5 2 2-5z',
   idea: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.6.5 1 1.2 1 2V16h6v-.5c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z',
   agents: 'M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21a8 8 0 0 1 16 0',
   box: 'M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10',

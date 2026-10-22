@@ -3,7 +3,6 @@ import type { TradingView, TradingOverview } from '../../../core/contracts/tradi
 import { exchanges, type TradingMode, type TradingExchange } from '../../../core/trading/types'
 import { exchangeCatalog } from '../../../core/trading/catalog'
 import { officeFetch, useOfficeResource } from '~/composables/office/resource'
-import { officeApi } from '~/composables/office/actions'
 import { pct, shortTime, connectionState, tradingModes, tradingReason, usdt } from '~/utils/trading'
 
 useHead({ title: 'Мои биржи' })
@@ -203,10 +202,6 @@ function ask(action: 'start' | 'flatten' | 'resolve') {
   confirmation.value = ''
   dialog.value?.showModal()
 }
-async function logout() {
-  await officeApi.logout()
-  await navigateTo('/office/login')
-}
 function openExchange(value: TradingExchange, tab = 'overview') {
   if (busy.value) return
   exchange.value = value
@@ -219,36 +214,7 @@ async function allocationSaved() {
 </script>
 <template>
   <div class="trading-workspace">
-    <a class="t-skip" href="#trading-main">К содержимому</a>
-    <header class="trading-header">
-      <button class="trading-brand" :disabled="!!busy" @click="exchange = null">
-        Ферма<span>торговый кабинет</span>
-      </button>
-      <div class="header-actions">
-        <NuxtLink class="t-link" to="/office">Обзор</NuxtLink>
-        <NuxtLink class="t-link" to="/office/manager">Менеджер</NuxtLink>
-        <NuxtLink class="t-link" to="/office/earnings">Направления</NuxtLink>
-        <button class="t-link help-link" @click="help?.showModal()">Как это работает</button>
-        <button
-          class="t-button t-stop"
-          :disabled="stopping"
-          title="Остановить новые заявки на всех биржах и во всех режимах. Купленные монеты останутся на счетах."
-          @click="stopAll"
-        >
-          <OfficeIcon name="stop" />{{ stopping ? 'Останавливаем…' : 'Остановить всё' }}
-        </button>
-        <button
-          class="t-icon-button"
-          aria-label="Выйти из кабинета"
-          :disabled="!!busy"
-          @click="logout"
-        >
-          <OfficeIcon name="logout" />
-        </button>
-      </div>
-    </header>
-
-    <main id="trading-main" class="trading-main">
+    <div class="trading-main">
       <div class="context-row">
         <button
           v-if="exchange"
@@ -272,16 +238,27 @@ async function allocationSaved() {
           <h1>{{ exchange ? venue.name : 'Мои биржи' }}</h1>
           <p class="t-muted">{{ currentMode.detail }}</p>
         </div>
-        <button
-          v-if="!exchange && mode === 'paper' && !allRunning && overview"
-          class="t-button t-primary"
-          :disabled="!!busy || offline"
-          @click="startAllPaper"
-        >
-          <OfficeIcon name="play" />{{
-            busy === 'paper_all' ? 'Запускаем…' : 'Запустить тренировку'
-          }}
-        </button>
+        <div class="heading-actions">
+          <button class="t-link" @click="help?.showModal()">Как это работает</button>
+          <button
+            v-if="!exchange && mode === 'paper' && !allRunning && overview"
+            class="t-button t-primary"
+            :disabled="!!busy || offline"
+            @click="startAllPaper"
+          >
+            <OfficeIcon name="play" />{{
+              busy === 'paper_all' ? 'Запускаем…' : 'Запустить тренировку'
+            }}
+          </button>
+          <button
+            class="t-button t-stop"
+            :disabled="stopping"
+            title="Остановить новые заявки на всех биржах и во всех режимах. Купленные монеты останутся на счетах."
+            @click="stopAll"
+          >
+            <OfficeIcon name="stop" />{{ stopping ? 'Останавливаем…' : 'Остановить всё' }}
+          </button>
+        </div>
       </div>
 
       <p v-if="offline" class="t-notice t-warning" role="alert">
@@ -636,10 +613,9 @@ async function allocationSaved() {
           mode === 'live'
             ? 'Прибыль не гарантирована. Комиссии учтены, сервер и налоги отдельно.'
             : 'Это тестовые деньги. Результаты тренировки не означают реальный доход.'
-        }}</span
-        ><NuxtLink to="/office">Архив студии</NuxtLink>
+        }}</span>
       </footer>
-    </main>
+    </div>
 
     <dialog
       ref="confirmDialog"

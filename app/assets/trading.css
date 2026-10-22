@@ -1,18 +1,16 @@
 .trading-workspace {
-  --t-canvas: #f7f8fa;
-  --t-surface: #fff;
-  --t-ink: #252b38;
-  --t-muted: #626a7a;
-  --t-line: #e1e4eb;
-  --t-blue: #4255a3;
-  --t-teal: #247058;
-  --t-red: #a74338;
-  --t-soft: #eef1f9;
-  --t-warning: #815022;
-  min-height: 100vh;
+  /* Trading pages live inside the office shell and reuse its palette (light and dark). */
+  --t-canvas: var(--canvas);
+  --t-surface: var(--surface);
+  --t-ink: var(--ink);
+  --t-muted: var(--muted);
+  --t-line: var(--line);
+  --t-blue: var(--brand);
+  --t-teal: var(--st-ok);
+  --t-red: var(--st-err);
+  --t-soft: var(--brand-soft);
+  --t-warning: var(--st-wait-ink);
   color: var(--t-ink);
-  background: var(--t-canvas);
-  color-scheme: light;
   font: 400 15px / 1.55 var(--font-body);
 }
 .trading-workspace :is(h1, h2, h3) {
@@ -72,7 +70,7 @@
   text-decoration: none;
 }
 .trading-workspace .t-button {
-  border: 1px solid #cdd2df;
+  border: 1px solid var(--line-strong);
   background: var(--t-surface);
   color: var(--t-ink);
   padding: 9px 15px;
@@ -80,16 +78,16 @@
 }
 .trading-workspace .t-button:hover:not(:disabled) {
   background: var(--t-soft);
-  border-color: #9da8c4;
+  border-color: var(--brand);
 }
 .trading-workspace .t-primary {
   background: var(--t-blue);
-  color: white;
+  color: #fff;
   border-color: var(--t-blue);
 }
 .trading-workspace .t-primary:hover:not(:disabled) {
-  background: #334586;
-  color: white;
+  background: var(--brand-hover);
+  color: #fff;
 }
 .trading-workspace .t-stop {
   color: var(--t-red);
@@ -117,7 +115,7 @@
 }
 .trading-workspace input:not([type='checkbox']),
 .trading-workspace select {
-  border: 1px solid #cdd2df;
+  border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--t-ink);
   background: var(--t-surface);
@@ -134,54 +132,8 @@
   width: 17px;
   height: 17px;
 }
-.trading-workspace .t-skip {
-  position: absolute;
-  left: 16px;
-  top: -100px;
-  z-index: 10;
-  background: white;
-  padding: 12px;
-}
-.trading-workspace .t-skip:focus {
-  top: 16px;
-}
-.trading-workspace .trading-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  min-height: 80px;
-  padding: 14px max(24px, calc((100vw - 1120px) / 2));
-  background: var(--t-surface);
-  border-bottom: 1px solid var(--t-line);
-}
-.trading-workspace .trading-brand {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  border: 0;
-  padding: 0;
-  background: none;
-  color: var(--t-ink);
-  font: 700 25px var(--font-display) !important;
-  letter-spacing: -0.8px;
-}
-.trading-workspace .trading-brand span {
-  font: 400 13px var(--font-body);
-  color: var(--t-muted);
-  letter-spacing: 0;
-}
-.trading-workspace .header-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 24px;
-}
 .trading-workspace .trading-main {
-  width: min(984px, 100%);
-  padding: 34px 32px 20px;
-  margin: 0 auto;
+  width: min(1040px, 100%);
 }
 .trading-workspace .context-row {
   display: flex;
@@ -213,6 +165,14 @@
   margin-top: 12px;
 }
 .trading-workspace .page-heading > .t-button {
+  margin-top: 4px;
+}
+.trading-workspace .heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px 20px;
   margin-top: 4px;
 }
 .trading-workspace .home-totals {
@@ -280,7 +240,7 @@
   border-bottom: 0;
 }
 .trading-workspace .exchange-row:hover:not(:disabled) {
-  background: #f8f9fd;
+  background: var(--surface-2);
 }
 .trading-workspace .exchange-row:focus-visible {
   outline-offset: -4px !important;
@@ -302,22 +262,22 @@
   display: grid;
   place-items: center;
   font: 600 18px var(--font-display);
-  background: #f5f6f8;
+  background: var(--surface-2);
 }
 .trading-workspace .venue-mark.bybit {
-  color: #8b5923;
-  background: #fbf5ed;
-  border-color: #efe2d0;
+  color: var(--st-wait-ink);
+  background: var(--st-wait-soft);
+  border-color: var(--st-wait-soft);
 }
 .trading-workspace .venue-mark.binance {
-  color: #705815;
-  background: #faf7e9;
-  border-color: #eae3c9;
+  color: var(--sun-ink);
+  background: var(--sun-soft);
+  border-color: var(--sun-soft);
 }
 .trading-workspace .venue-mark.bitget {
-  color: #21646c;
-  background: #edf6f7;
-  border-color: #d9e9ec;
+  color: var(--st-test-ink);
+  background: var(--st-test-soft);
+  border-color: var(--st-test-soft);
 }
 .trading-workspace .connection-state {
   display: flex;
@@ -352,7 +312,7 @@
 .trading-workspace .forward-icon {
   transform: rotate(180deg);
   width: 16px;
-  color: #8f96a4;
+  color: var(--muted);
 }
 .trading-workspace .list-caption {
   padding-top: 14px;
@@ -430,8 +390,8 @@
   align-items: center;
   gap: 24px;
   justify-content: space-between;
-  background: #edf4f1;
-  border-left: 3px solid #669785;
+  background: var(--st-ok-soft);
+  border-left: 3px solid var(--st-ok);
   padding: 17px 20px;
   border-radius: 0 7px 7px 0;
 }
@@ -445,8 +405,8 @@
   font-size: 14px;
 }
 .trading-workspace .activity-bar.needs-attention {
-  background: #fbf3e9;
-  border-color: #b68b5a;
+  background: var(--st-wait-soft);
+  border-color: var(--st-wait);
 }
 .trading-workspace .activity-bar .t-button {
   flex-shrink: 0;
@@ -543,17 +503,17 @@
   font-size: 12px;
 }
 .trading-workspace .t-notice {
-  border: 1px solid #cbded5;
-  background: #f0f7f3;
+  border: 1px solid var(--st-ok-soft);
+  background: var(--st-ok-soft);
   border-radius: 8px;
   padding: 16px 20px;
   margin: 0 0 20px;
   font-size: 14px;
 }
 .trading-workspace .t-warning {
-  background: #fff6ec;
-  border-color: #ead5ba;
-  color: #744d27;
+  background: var(--st-wait-soft);
+  border-color: var(--st-wait-soft);
+  color: var(--st-wait-ink);
 }
 .trading-workspace .t-notice h3 {
   margin-bottom: 8px;
@@ -568,7 +528,7 @@
 .trading-workspace .t-empty {
   text-align: center;
   padding: 56px 24px;
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--t-line);
   border-radius: 10px;
 }
@@ -601,7 +561,7 @@
 .trading-workspace .strategy-list {
   border: 1px solid var(--t-line);
   border-radius: 10px;
-  background: white;
+  background: var(--surface);
 }
 .trading-workspace .strategy-row {
   padding: 22px 26px;
@@ -667,7 +627,7 @@
 .trading-workspace .order-list {
   list-style: none;
   padding: 0;
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--t-line);
   border-radius: 10px;
 }
@@ -764,7 +724,7 @@
   flex-shrink: 0;
 }
 .trading-workspace .check-mark.ready {
-  background: #e6f2ec;
+  background: var(--st-ok-soft);
   color: var(--t-teal);
 }
 .trading-workspace .funding {
@@ -872,15 +832,6 @@
   align-self: flex-start;
 }
 @media (max-width: 800px) {
-  .trading-workspace .trading-brand span {
-    display: none;
-  }
-  .trading-workspace .header-actions {
-    gap: 14px;
-  }
-  .trading-workspace .trading-main {
-    padding-inline: 24px;
-  }
   .trading-workspace .exchange-list-head,
   .trading-workspace .exchange-row {
     grid-template-columns: minmax(170px, 1fr) 110px 110px 16px;
@@ -913,30 +864,8 @@
   }
 }
 @media (max-width: 580px) {
-  .trading-workspace .trading-header {
-    padding: 12px 16px;
-    min-height: 68px;
-    gap: 12px;
-  }
-  .trading-workspace .trading-brand {
-    font-size: 21px !important;
-  }
-  .trading-workspace .header-actions {
-    gap: 8px;
-  }
-  .trading-workspace .help-link {
-    display: none !important;
-  }
-  .trading-workspace .trading-header .t-button {
-    font-size: 12px;
-    padding: 7px 10px;
-    gap: 5px;
-  }
-  .trading-workspace .trading-header .t-icon-button {
-    width: 32px;
-  }
-  .trading-workspace .trading-main {
-    padding: 22px 16px 16px;
+  .trading-workspace .heading-actions {
+    justify-content: flex-start;
   }
   .trading-workspace .context-row {
     margin-bottom: 24px;
@@ -1193,7 +1122,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  border-left: 2px solid #aab6ad;
+  border-left: 2px solid var(--line-strong);
   padding-left: 12px;
 }
 .trading-workspace .market-assignments span {

@@ -67,19 +67,7 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
 </script>
 <template>
   <div class="trading-workspace earnings-workspace">
-    <a class="t-skip" href="#earnings-main">К содержимому</a>
-    <header class="trading-header">
-      <NuxtLink class="trading-brand" to="/office/trading"
-        >Ферма<span>кабинет владельца</span></NuxtLink
-      >
-      <nav class="header-actions" aria-label="Основные разделы">
-        <NuxtLink class="t-link" to="/office">Обзор</NuxtLink>
-        <NuxtLink class="t-link" to="/office/trading">Мои биржи</NuxtLink>
-        <NuxtLink class="t-link" to="/office/manager">Менеджер</NuxtLink>
-        <NuxtLink class="t-link" to="/office/products">Услуги</NuxtLink>
-      </nav>
-    </header>
-    <main id="earnings-main" class="trading-main">
+    <div class="trading-main">
       <div class="page-heading">
         <div>
           <h1>Направления</h1>
@@ -271,7 +259,7 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
           <EarningsServices v-if="['services', 'business'].includes(track.id)" />
         </article>
       </div>
-    </main>
+    </div>
   </div>
 </template>
 <style src="../../assets/trading.css"></style>

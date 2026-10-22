@@ -38,9 +38,10 @@ const items = computed<Item[]>(() => {
       alert: launchLeft,
       hint: 'шагов осталось',
     },
-    { to: '/office/trading', label: 'Торговая ферма', icon: 'money', short: 'Торговля' },
+    { to: '/office/trading', label: 'Мои биржи', icon: 'chart', short: 'Торговля' },
+    { to: '/office/manager', label: 'Менеджер торговли', icon: 'compass' },
     { to: '/office/earnings', label: 'Направления', icon: 'spark' },
-    { to: '/office/computer', label: 'Компьютер ИИ', icon: 'box' },
+    { to: '/office/computer', label: 'Компьютер ИИ', icon: 'screen' },
     { to: '/office/farm', label: 'Ферма идей', icon: 'leaf', short: 'Ферма' },
     { to: '/office/ideas', label: 'Идеи', icon: 'idea', count: o?.totals.ideas },
     { to: '/office/agents', label: 'Агенты', icon: 'agents', count: o?.totals.activeAgents },
@@ -62,11 +63,9 @@ const items = computed<Item[]>(() => {
     { to: '/office/money', label: 'Деньги', icon: 'money' },
   ]
 })
-const tabs = computed(() =>
-  items.value.filter((item) =>
-    ['/office', '/office/trading', '/office/farm', '/office/ideas'].includes(item.to),
-  ),
-)
+// Phone tab bar: what the owner opens most, in menu order; the rest is behind «Ещё».
+const tabPaths = ['/office', '/office/launch', '/office/trading', '/office/money']
+const tabs = computed(() => items.value.filter((item) => tabPaths.includes(item.to)))
 const isActive = (to: string) =>
   to === '/office'
     ? route.path === '/office' || route.path === '/office/'
