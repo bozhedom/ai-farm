@@ -162,13 +162,18 @@ async function deferForDailyBudget(job: Job, db: Connection) {
     research ? 'research_daily_budget_wait' : 'farm_daily_budget_wait',
     research
       ? 'Направление ждёт следующего суточного бюджета. Попытки, расходы и обязательства сохранены.'
-      : 'Дневной лимит исчерпан. Задача продолжится завтра.',
+      : budget.daySpent < c.DAILY_BUDGET_KOPECKS
+        ? 'Дневной бюджет распределён: часть потрачена, остальное занято начатыми задачами. Задача продолжится завтра.'
+        : 'Дневной лимит исчерпан. Задача продолжится завтра.',
     {
       jobId: job.id,
       kind: job.kind,
       campaignId: job.payload.campaignId,
       nextAt: postponed!.run_after,
       dailyKopecks: c.DAILY_BUDGET_KOPECKS,
+      // Spent and reserved separately: "exhausted" while only part is spent confused the owner.
+      daySpentKopecks: budget.daySpent,
+      reservedKopecks: budget.outstanding,
     },
     db,
   )

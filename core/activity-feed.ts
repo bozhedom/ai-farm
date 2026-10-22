@@ -287,9 +287,13 @@ export function feedItems(event: FeedEvent, ctx: FeedContext): FeedItem[] {
     case 'farm_daily_budget_wait':
     case 'research_daily_budget_wait':
       return item(
-        d.dailyKopecks
-          ? `Дневной лимит ${formatRub(Number(d.dailyKopecks))} исчерпан. Работа продолжится завтра.`
-          : 'Дневной лимит исчерпан. Работа продолжится завтра.',
+        d.dailyKopecks &&
+          d.daySpentKopecks !== undefined &&
+          Number(d.daySpentKopecks) < Number(d.dailyKopecks)
+          ? `Дневной бюджет ${formatRub(Number(d.dailyKopecks))} распределён: потрачено ${formatRub(Number(d.daySpentKopecks))}, остальное занято начатыми задачами. Новая работа продолжится завтра.`
+          : d.dailyKopecks
+            ? `Дневной лимит ${formatRub(Number(d.dailyKopecks))} исчерпан. Работа продолжится завтра.`
+            : 'Дневной лимит исчерпан. Работа продолжится завтра.',
         '/office/money',
       )
     case 'control':
