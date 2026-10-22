@@ -6,7 +6,11 @@ import { pool, query, transaction } from '../../core/db'
 import { attemptLogin } from '../../core/auth'
 import { FakeVmAgent } from '../../core/computer-use/client'
 import { builtInDirections } from '../../core/computer-use/goals'
-import { listDirections } from '../../core/computer-use/directions'
+import {
+  createDirection,
+  DIRECTION_LIMITS,
+  listDirections,
+} from '../../core/computer-use/directions'
 import {
   computerUseTick,
   controlComputerUse,
@@ -243,8 +247,37 @@ describe('search directions: seed, owner routes, rotation', () => {
     expect((await query('SELECT count(*)::int AS n FROM computer_use_opportunities'))[0]!.n).toBe(1)
   })
 
+  it('keeps the direction limit under concurrent creates', async () => {
+    await computerUseView()
+    const [{ n }] = (await query('SELECT count(*)::int AS n FROM computer_use_directions')) as [
+      { n: number },
+    ]
+    const free = 3
+    for (let index = n; index < DIRECTION_LIMITS.maxDirections - free; index++)
+      await query('INSERT INTO computer_use_directions(id,title,goal,weight) VALUES($1,$2,$3,3)', [
+        randomUUID(),
+        `Направление ${index}`,
+        'Найди задания по редактуре текстов на площадках.',
+      ])
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, (_, index) =>
+        createDirection({
+          title: `Параллельное ${index}`,
+          goal: 'Найди задания по переводу инструкций на открытых площадках.',
+        }),
+      ),
+    )
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(free)
+    for (const r of results.filter((r) => r.status === 'rejected'))
+      expect((r as PromiseRejectedResult).reason.message).toBe('COMPUTER_USE_DIRECTIONS_LIMIT')
+    const [total] = await query('SELECT count(*)::int AS n FROM computer_use_directions')
+    expect(total!.n).toBe(DIRECTION_LIMITS.maxDirections)
+  })
+
   it('starts nothing when no direction is enabled and no platform is logged in', async () => {
     await computerUseView()
+    // A stale login row for a domain that is no longer a configured platform yields no goals.
+    await query("INSERT INTO computer_use_platforms(domain,logged_in) VALUES('gone.example',true)")
     await query('UPDATE computer_use_directions SET enabled=false')
     await controlComputerUse('enable')
     expect(await computerUseTick({ agent: new FakeVmAgent() })).toBe(false)

@@ -187,6 +187,9 @@ export async function createDirection(input: { title: string; goal: string; weig
   const goal = validateGoal(input.goal)
   const weight = validateWeight(input.weight ?? DIRECTION_LIMITS.defaultWeight)
   return transaction(async (db) => {
+    // Concurrent creates serialise here, so the count below cannot be raced past the limit.
+    // SHARE ROW EXCLUSIVE conflicts with itself and with inserts, not with plain reads.
+    await query('LOCK TABLE computer_use_directions IN SHARE ROW EXCLUSIVE MODE', [], db)
     await ensureDirections(db)
     const [count] = await query('SELECT count(*)::int AS n FROM computer_use_directions', [], db)
     if (count!.n >= DIRECTION_LIMITS.maxDirections) throw new Error('COMPUTER_USE_DIRECTIONS_LIMIT')

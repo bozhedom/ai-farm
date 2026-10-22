@@ -12,7 +12,7 @@ import type {
   ComputerUseView,
 } from '../contracts/computer-use'
 import { listDirections } from './directions'
-import { platformDomains } from './platforms'
+import { isFreelancePlatform, platformDomains } from './platforms'
 import { COMPUTER_USE_POLICY as P } from './policy'
 import { effectiveProposalsPerDay, readProfile } from './profile'
 import {
@@ -123,7 +123,12 @@ export async function computerUseView(): Promise<ComputerUseView> {
   if (manualActive) blocked.push('COMPUTER_USE_MANUAL_CONTROL')
   const loggedIn = new Map(platformRows.map((row) => [row.domain as string, !!row.logged_in]))
   const enabledDirections = directionRows.filter((row) => row.enabled).length
-  const rotationGoals = enabledDirections + 2 * [...loggedIn.values()].filter(Boolean).length
+  // Only platforms the rotation actually uses (`loggedInPlatforms`): a stale row for a domain
+  // that is no longer a configured platform yields no goals.
+  const platformGoalCount = [...loggedIn].filter(
+    ([domain, on]) => on && isFreelancePlatform(domain),
+  ).length
+  const rotationGoals = enabledDirections + 2 * platformGoalCount
   if (!rotationGoals && !queued[0]!.n) blocked.push('COMPUTER_USE_NO_DIRECTIONS')
   let currentView: ComputerTaskView | null = null
   if (current[0]) {
