@@ -4,7 +4,7 @@
 const route = useRoute()
 const bare = computed(() => route.path.startsWith('/office/login'))
 useHead({
-  htmlAttrs: { class: 'ds' },
+  htmlAttrs: { class: 'ds', 'data-theme': 'light' },
   titleTemplate: (title) => (title && title !== 'AI Farm' ? `${title}. AI Farm` : 'AI Farm'),
 })
 </script>
