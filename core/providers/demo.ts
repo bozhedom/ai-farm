@@ -198,7 +198,6 @@ export function demoProductOffer(
     page: {
       headline: idea?.title ?? service.label,
       forWhom: [idea?.audience ?? service.audience],
-      youGet: [service.delivery, 'Готовый текст за несколько минут.', 'Файл .txt для скачивания.'],
       limits: ['Пишем только по вашим фактам, без выдумок.'],
     },
   }

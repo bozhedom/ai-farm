@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { config, paidModelId } from '../config'
 import { query } from '../db'
 import { reportProgress } from '../activity'
+import { modelJsonSchema } from './json-schema'
 import { openaiCost, usdToKopecks } from './openai-cost'
 import { openrouterCost } from './openrouter'
 import { providerHttpError, readErrorBody } from './rejection'
@@ -141,8 +142,7 @@ export async function openrouterPaidModel<T>(args: {
   schema: z.ZodType<T>
   maxTokens: number
 }) {
-  const schema = z.toJSONSchema(args.schema)
-  delete schema.$schema
+  const schema = modelJsonSchema(args.schema)
   // One upstream route at the published tariff: no fallbacks, tools, plugins or retries.
   const { choice, microusd, cost } = await openrouterPaidRequest({
     key: args.key,

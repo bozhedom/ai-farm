@@ -700,12 +700,24 @@ export const productPageSchema = z
   .object({
     headline: plain(4, 160),
     forWhom: plainList(1, 5),
-    /** Ignored: what the buyer gets comes from the server catalog (`buyerCopy`). */
-    youGet: plainList(1, 5).optional(),
+    // No `youGet`: what the buyer gets comes from the server catalog (`buyerCopy`). Strict
+    // structured output rejects optional properties (HTTP 400), so the model never sees it.
     limits: plainList(0, 5),
   })
   .strict()
 export type ProductPageSpec = z.infer<typeof productPageSchema>
+
+/**
+ * Answers recorded before `youGet` left the model schema may still carry it (an idempotent
+ * replay of a finished call). It was always ignored; drop it instead of failing the replay.
+ */
+function withoutLegacyYouGet(value: unknown) {
+  if (!value || typeof value !== 'object') return value
+  const page = (value as { page?: unknown }).page
+  if (!page || typeof page !== 'object' || !Object.hasOwn(page, 'youGet')) return value
+  const { youGet: _ignored, ...rest } = page as Record<string, unknown>
+  return { ...value, page: rest }
+}
 
 /** Architect answer for a public product: price only from the server list, page as plain text. */
 export const productOfferSchema = productSchema.extend({
@@ -718,7 +730,9 @@ export const productOfferRequiredSchema = productSchema.extend({
   page: productPageSchema,
 })
 export function validateProductOffer(value: unknown, expected: Template, required = false) {
-  const offer = (required ? productOfferRequiredSchema : productOfferSchema).parse(value)
+  const offer = (required ? productOfferRequiredSchema : productOfferSchema).parse(
+    withoutLegacyYouGet(value),
+  )
   const { priceId, page, ...base } = offer
   const spec = validateProduct(base, expected)
   if (!page) return { spec, priceKopecks: priceId ? priceKopecksFor(priceId) : null, page: null }
