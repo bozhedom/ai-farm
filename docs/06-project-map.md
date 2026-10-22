@@ -1,73 +1,61 @@
 # Карта проекта
 
-Начинайте с [STATUS.md](STATUS.md): там текущий результат и незавершённая приёмка. Для запуска и восстановления — [03-setup.md](03-setup.md), для границ системы — [01-project-plan.md](01-project-plan.md).
+Начинайте с [STATUS.md](STATUS.md): там текущее состояние и незавершённая приёмка. Запуск и восстановление — [03-setup.md](03-setup.md), продакшен — [34-launch-timeweb.md](34-launch-timeweb.md), границы системы — [01-project-plan.md](01-project-plan.md), правила — [AGENTS.md](../AGENTS.md).
+
+## Процессы
+
+- **web** — Nuxt 4 (страницы `app/`, API `server/`), порт 3210.
+- **worker** — `worker/index.ts`: независимые циклы с пульсом (`core/worker-loops.ts`), очередь заданий (`core/worker-runtime.ts`, `core/queue.ts`), автопилот (`core/autopilot.ts`).
+- **PostgreSQL** — единственное хранилище; миграции `db/NNN-*.sql` применяет `npm run db:migrate`.
+- **observer**, **backup** — минутная проверка готовности (`scripts/observe.ts`) и ежесуточный `pg_dump` (`scripts/backup-loop.sh`).
+- **SearXNG** (`deploy/searxng.yml`), **Caddy** (`compose.edge.yaml`, HTTPS на сервере).
+- **vm-agent** — отдельный сервис браузера для Компьютера ИИ (см. ниже).
 
 ## Интерфейс
 
-- Публичный сайт без пароля ([17-public-site.md](17-public-site.md)): `app/pages/index.vue` (витрина), `services/[slug].vue` (услуга и форма), `order/[token].vue` (заказ по секретной ссылке, оплата, результат), `terms.vue`; блоки в `app/components/public/`, помощники браузера в `app/utils/public-site.ts`.
-- `core/public-orders.ts` — секретные ссылки, сумма счёта, вид заказа для покупателя; `core/rate-limit.ts` — лимиты публичного API; `server/utils/client.ts` — адрес покупателя для лимитов. Оплата криптой и сканер блоков — [18-crypto-payments.md](18-crypto-payments.md).
-- `app/pages/office.vue` — общая оболочка кабинета (`OfficeShell`): меню, шторка и нижние вкладки на телефоне, живой статус, состояние «нет связи».
-- `app/pages/office/` — разделы кабинета: `index` (Обзор «Как ферма зарабатывает», данные `/api/office/income` из `core/income/`), `farm` (прежняя главная: ферма идей), `ideas/` (рейтинг, карточка идеи, отчёты руководителя), `agents`, `products`, `orders/`, `leads` (Клиенты), `money`, `settings` (режим, расписание, отбор, состояние сервера, техжурнал), `login`.
-- `app/components/office/` — общие блоки кабинета: лента, бейджи, балл, пустые состояния, режим работы, факты идеи, история версий продукта.
-- `app/composables/office/` — загрузка по типам `core/contracts/office.ts` (`data.ts`), общий опрос раз в 5 секунд с паузой в скрытой вкладке (`resource.ts`), действия владельца (`actions.ts`), подписи и форматирование.
-- `app/middleware/legacy.global.ts` и `routeRules` в `nuxt.config.ts` — 301 со старых `/login`, `/catalog`, `/orders/*`, `/?view=`, `/office?view=` в разделы кабинета.
-- `app/assets/` — `tokens.css` (токены) и `components.css` (компоненты под классом `ds` на `<html>`).
-- `tests/e2e/office.spec.ts` — `npm run test:e2e:office`: все разделы на 1440 и 390 px с подменой `/api/office/**` типизированными данными из `tests/e2e/fixtures/office.ts`; снимки в `output/playwright/stream-c/`.
+- Публичный сайт ([17-public-site.md](17-public-site.md)): `app/pages/storefront.vue` (витрина, также `/`), `services/[slug].vue`, `order/[token].vue`, `terms.vue`; блоки `app/components/public/`, помощники `app/utils/public-site.ts`.
+- Кабинет: `app/pages/office.vue` — общая оболочка (меню, нижние вкладки на телефоне, статус связи). Разделы `app/pages/office/`: `index` (обзор «Как ферма зарабатывает», данные `core/income/`), `launch` (чек-лист «Запуск», `core/launch/`), `trading` (биржи), `manager`, `earnings` (направления и `core/execution`), `computer` (Компьютер ИИ), `money` (расходы, оплата USDT), `farm` и `ideas/` (ферма идей), `agents`, `products`, `orders/`, `leads`, `settings`, `login`.
+- `app/components/{office,trading,manager,earnings,public}/` — блоки разделов; `app/composables/office/` — загрузка по типам `core/contracts/*`, опрос раз в 5 секунд, действия владельца.
+- `app/middleware/legacy.global.ts` и `routeRules` в `nuxt.config.ts` — редиректы со старых адресов.
+- `app/assets/tokens.css`, `components.css` — токены и компоненты; светлая/тёмная тема по системной настройке, публичный сайт всегда светлый.
 
-## Сервер и фоновые задания
+## Ядро (`core/`)
 
-- `server/api/` — HTTP-маршруты; `server/middleware/` и `server/utils/` — защита запросов и обработка ввода / ошибок.
-- `worker/index.ts` — расписание и независимые циклы исследований, заказов и сверки платежей.
-- `core/jobs/run.ts` — выбор обработчика и привязка вызовов к заданию.
-- `core/jobs/research.ts` — исследование, критик, сборка, контрольный пример и сохранение версии продукта.
-- `core/jobs/fulfill.ts` — исполнение оплаченного заказа и отдельная проверка результата.
-- `core/source-posts.ts` и `core/jobs/generate-text.ts` — полный исходник в каждом из трёх локальных оформлений; рецепт определяется сохранённым обещанием услуги.
-- `core/providers/openrouter.ts` — облачные бесплатные модели, строгая схема и проверка нулевой стоимости; [подключение](13-openrouter.md).
-- `core/structured-text.ts` — схемы полей восьми услуг и серверная сборка заголовков, списков, шагов; прежние сохранённые ответы `{text}` читаются без новой генерации.
-- `core/customer-discovery.ts` — отбор поисковых фрагментов по теме и признакам публичной задачи; актуальность проверяет владелец.
-- `core/jobs/text-context.ts` — контекст генерации и проверки: факты заказчика отделены от описания сервиса в каталоге.
-- `core/providers/index.ts` — общий вызов моделей / поиска, схемы ответов и учёт расходов.
-- `core/providers/local.ts` — Ollama и SearXNG; `core/providers/demo.ts` — явно обозначенные демонстрационные данные.
-- `core/queue.ts` — постоянная очередь, ручной запуск, аренда, повторы и восстановление.
-- `core/research-campaign.ts` — полный последовательный обход направлений, идемпотентный запуск, отмена оставшихся шагов и прогресс. Очередь переносит ещё не начатые платные направления на следующий день только при доказанном исчерпании дневного бюджета.
-- `core/opportunities.ts` — поисковые кандидаты, дедупликация, защита от устаревшего повторного результата, ручные статусы и постраничный список. Статус договорённости не влияет на деньги.
-- `core/autonomy.ts` — суточные / недельные слоты, переключатель расписания и причины ожидания; `core/products.ts` — постраничная история версий.
-- `core/policy.ts` — разрешённые шаблоны, схемы данных и ограничения; `core/budget.ts` — атомарные денежные резервы.
-- `core/service-catalog.ts` — единый каталог 12 услуг: аудитории, форматы, контрольные материалы, запросы исследований и потенциальных клиентов. `core/templates.ts` создаёт из него серверные рецепты. Один рецепт используется при исследовании, контрольной сборке и исполнении заказа.
-- `core/orders.ts`, `core/payments.ts`, `core/evolution.ts` — заказы, тестовые платежи и оценка стратегий.
-- `core/order-resolution.ts` — явное закрытие проблемного тестового заказа без выдачи или возврата; причина, платежи и расходы сохраняются.
-- `core/order-progress.ts` — причины ожидания и остановки заказа; `core/payments.ts` сохраняет историю хешей и доказательство проверки, блокирует параллельные / устаревшие ответы.
-- `core/operations.ts`, `core/observation.ts` — готовность служб и расчёт непрерывных 48 часов по сохранённым измерениям; `scripts/observe.ts` — независимый минутный наблюдатель без ключей и модели.
-- `core/config.ts`, `core/db.ts`, `core/auth.ts`, `core/activity.ts` — конфигурация, БД, сессии и наблюдение за вызовами.
-- `prompts/master.md` — общие инструкции всех модельных ролей. Разрешения и действия контролирует сервер.
-- Ферма ([19-farm-cycle.md](19-farm-cycle.md), [20-evolution.md](20-evolution.md)): `core/taxonomy.ts` (отрасли, темы, поисковые фразы), `core/ideas.ts` (отпечаток, повторы, балл, статусы), `core/agents.ts` (параметры, имена «Разведчик А2», метрики), `core/evolution.ts` (балл и раунд отбора), `core/jobs/{scout,report,lead,evolve}.ts`, расписание в `core/autonomy.ts`, лента в `core/activity-feed.ts`, данные кабинета в `core/office.ts` и `server/api/office/**`, подготовка показа `scripts/demo-prepare.ts`.
+- **Общее:** `config.ts` (env), `db.ts`, `auth.ts`, `policy.ts` (жёсткие пределы и схемы), `budget.ts` (атомарные денежные резервы), `pacing.ts` (распределение платного дневного бюджета по часам UTC), `queue.ts`, `activity.ts`, `operations.ts`, `observation.ts`, `rate-limit.ts`, `stand.ts` (демо-стенд).
+- **Автономность** ([33-autonomy.md](33-autonomy.md)): `autopilot.ts` (запуск Paper/Demo-циклов, менеджера и Paper-направлений; не снимает стопы и не трогает Live), `worker-loops.ts` (пульс каждого цикла), `autonomy.ts` (расписание), `research-window.ts` (28-дневное окно исследований).
+- **Модели** ([13-openrouter.md](13-openrouter.md)): `providers/index.ts` (общий вызов, учёт `tool_calls`), `openai.ts` + `openrouter-paid.ts` (GPT-6 Astra через OpenRouter), `openrouter-tools.ts` (единственный путь с инструментами, для Компьютера ИИ), `openrouter.ts` (бесплатные модели), `local.ts` (Ollama, SearXNG), `demo.ts`, `rejection.ts`, `json-schema.ts`. Общие инструкции ролей — `prompts/master.md`.
+- **Ферма идей** ([19-farm-cycle.md](19-farm-cycle.md), [20-evolution.md](20-evolution.md)): `taxonomy.ts`, `ideas.ts`, `agents.ts`, `evolution.ts`, `jobs/{scout,report,lead,evolve,research,fulfill,generate-text}.ts`, `research-campaign.ts`, `opportunities.ts`, `customer-discovery.ts`, `activity-feed.ts`, `office.ts`.
+- **Услуги и заказы** ([17-public-site.md](17-public-site.md), [18-crypto-payments.md](18-crypto-payments.md), [24-agent-services.md](24-agent-services.md)): `service-catalog.ts`, `templates.ts`, `structured-text.ts`, `storefront.ts`, `public-catalog.ts`, `public-orders.ts`, `orders.ts`, `order-progress.ts`, `order-resolution.ts`, `payments.ts` (только sandbox/Sepolia), `products.ts`, `services/` (API услуг).
+- **Спотовая торговля** ([21-trading.md](21-trading.md)): `trading/` — адаптеры `okx|bybit|binance|bitget.ts`, `engine.ts`, `scout.ts`/`universe.ts`/`rotation.ts` (разведчик пар), `strategy.ts`/`classic.ts` (стратегии, grid/DCA), `accounting.ts`/`decimal.ts` (точный учёт), `store.ts`.
+- **LLM-менеджер** ([26-trading-manager.md](26-trading-manager.md)): `manager/` — снимок, план, задачи, лимиты `MANAGER_POLICY`.
+- **Направления** ([25-earning-workspace.md](25-earning-workspace.md), [23-opportunity-research.md](23-opportunity-research.md)): `earnings/` (мониторинг без исполнения), `opportunities/`.
+- **Исполнение** ([29-execution.md](29-execution.md), [29-execution-aave.md](29-execution-aave.md)): `execution/` — `drivers/{arbitrage,funding,defi,prediction}.ts`, `adapters/{spot,bybit-funding,aave,kalshi,paper}.ts`, отдельные счета и журналы.
+- **Компьютер ИИ** ([32-computer-use.md](32-computer-use.md)): `computer-use/` — `schema.ts`/`tools.ts` (действия, zod), `policy.ts` (проверка до обращения к ВМ), `runtime.ts` (цикл задания), `client.ts` (HTTP к vm-agent), `platforms.ts`, `profile.ts`, `directions.ts`, `goals.ts`, `manual.ts` (управление вручную), `words.ts`, `view.ts`.
+- **Кошелёк** ([34-launch-timeweb.md](34-launch-timeweb.md#кошелёк-bybit-только-чтение), [36-payments-choice.md](36-payments-choice.md)): `wallet/` — ключ Bybit только на чтение, синхронизация депозитов USDT, отметки «доход / не доход».
+- **Доход и запуск:** `income/` (обзор: реальные деньги отдельно от тестовых, статус бирж), `launch/` (шаги чек-листа по таблицам и env).
+- `contracts/` — общие типы API web ↔ кабинет.
 
-- Компьютер ИИ ([32-computer-use.md](32-computer-use.md)): `core/computer-use/` (схемы действий, политика, цикл заданий, данные кабинета), `core/providers/openrouter-tools.ts` (единственный путь вызова с инструментами), `vm-agent/` (отдельный сервис браузера на ВМ), `server/api/computer-use/**`, страница `app/pages/office/computer.vue`, миграция `037`.
-- `core/storefront.ts` — серверный список цен (`priceList`, `priceIds`), цены типов услуг по умолчанию, `publicSlug`, `publicServiceProjection`, рубли и wei без плавающей точки.
-- `core/contracts/` — общие типы API: `common.ts`, `public.ts` (покупатель), `office.ts` (кабинет).
+## Сервер
 
-## Данные, инфраструктура и проверки
+- `server/api/` — маршруты: `public/`, `orders/`, `office/`, `trading/`, `execution/`, `earnings/`, `computer-use/`, `services/`, `opportunities/`, `auth/`, `health`, `readiness`.
+- `server/middleware/` и `server/utils/` — сессия, Origin, лимиты, обработка ошибок.
 
-- `db/` — последовательные SQL-миграции. История, снимки заказов и версии продуктов сохраняются.
-- `scripts/` — настройка, миграции, копии, проверка восстановления и тестовый кошелёк.
-- `scripts/check-quality.ts` и `scripts/fixtures/quality.ts` — 12 независимых синтетических контрольных материалов для Ollama или бесплатного OpenRouter, только в отдельной БД `_test`. Переменные `QUALITY_PROVIDER` и `QUALITY_TEMPLATE` позволяют выбрать бесплатного провайдера и один тип; отчёт сохраняется в `output/quality/`.
-- `compose.yaml`, `compose.local.yaml`, `compose.edge.yaml` — основной стек, локальные провайдеры и HTTPS на VPS.
-- `deploy/` — настройки внешних служб; `.github/workflows/` — CI.
-- `tests/unit/` — чистые правила и адаптеры; `tests/integration/` — транзакции и сквозные сценарии на отдельной БД с суффиксом `_test`.
-- `docs/reports/` — протоколы фактических прогонов, включая отказы.
+## Браузерный агент (`vm-agent/`)
 
-Локальные `.env`, `.secrets/`, `.health/`, `backups/` и `output/` исключены из Git. Рабочую БД нельзя использовать для интеграционных тестов.
+Отдельный Node-сервис с Playwright/Chromium (`src/server.ts`, `browser.ts`, `actions.ts`, `guard.ts`, `proxy.ts` — прокси с закреплением проверенного публичного адреса). Запускается `compose.vm.yaml` на отдельной машине или в отдельном контейнере и сети; ферма обращается к нему по `VM_AGENT_URL` с токеном. Ключей, кошельков и доступа к БД у него нет.
 
-Для изменения приложения обязательны `npm run typecheck`, `npm test`, `npm run test:integration`, `npm run build`, `npm run format:check`. Изменённый интерфейс проверяется в Playwright. Подробности — в [AGENTS.md](../AGENTS.md).
+## Инфраструктура и скрипты
 
-## Срезы A и B, поток C и владение файлами
+- `compose.yaml` — основной стек; `compose.local.yaml` (Ollama, SearXNG локально), `compose.edge.yaml` (Caddy с корневым `Caddyfile`), `compose.prebuilt.yaml` (готовый образ `FARM_IMAGE` без сборки), `compose.cloud.yaml` (облачная модель + SearXNG, без контейнера инференса), `compose.anvil.yaml` (локальный блокчейн для тестов), `compose.demo.yaml` + `deploy/demo/` (демо-стенд).
+- `deploy/timeweb/` — продакшен: `netcheck.sh`, `bootstrap.sh`, `deploy.sh`, `update.sh`, `restore-from-dump.sh`, `db-snapshot.sh`, `status.sh`, `dc.sh`, `lib.sh` ([34-launch-timeweb.md](34-launch-timeweb.md)). Продакшен запускается набором `compose.yaml` + `compose.prebuilt.yaml` + `compose.cloud.yaml` + `compose.edge.yaml` (см. `deploy/timeweb/lib.sh`). `deploy/cloud/Caddyfile` относится к прежнему серверу и не используется.
+- `scripts/` — `setup.mjs`, `migrate.ts`, `backup.sh`, `restore-check.sh`, проверки `trading-check.ts`, `cloud-check.ts`, `wallet-check.ts`, `server-autopilot-check.ts`, локальные запуски `autopilot-local.ts`, `execution-local.ts`, `execution-aave-local.ts`, `check-quality.ts`, разовые SQL (`reclassify-rejected-calls.sql`).
+- `.github/workflows/` — CI.
 
-Общий фундамент (миграция `014`, `core/config.ts`, `core/storefront.ts`, `core/contracts/*`, помощники `tests/integration/helpers/db.ts`) лежит в main. После него эти файлы не меняют; новые поля контрактов добавляются только по согласованию. Оплата только тестовая: sandbox или Sepolia.
+## Тесты
 
-| Поток                | Worktree и БД              | Владеет                                                                                                                                                                                                                                                                                                                                                                                                  | Не трогает                                                                                                                                 |
-| -------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| A, публичный путь    | `wt-public`, `farm_a_test` | `db/015-*`, `core/orders.ts`, `core/public-orders.ts`, `core/public-catalog.ts`, `core/order-progress.ts`, `core/payments.ts`, `core/rate-limit.ts`, `server/middleware/security.ts`, `server/api/public/**`, `server/api/orders/**`, страницы `app/pages/{index,services,order,pay,terms}`                                                                                                              | `core/queue.ts`, `core/budget.ts`, `core/policy.ts`, `core/jobs/**`, `worker/`, `prompts/master.md`, `server/api/office/**`                |
-| B, ферма             | `wt-farm`, `farm_b_test`   | `db/017-020`, `core/taxonomy.ts`, `core/ideas.ts`, `core/agents.ts`, `core/evolution.ts`, `core/jobs/**`, `core/policy.ts`, `core/queue.ts`, `core/autonomy.ts`, `core/budget.ts`, `core/opportunities.ts`, `core/activity-feed.ts`, `core/providers/**`, `worker/`, `prompts/master.md`, `server/api/{dashboard,control}*`, `server/api/office/**`, `server/api/opportunities/**`, `scripts/migrate.ts` | `core/orders.ts`, `core/payments*.ts`, `core/public-*.ts`, `server/middleware/security.ts`, `server/api/public/**`, `server/api/orders/**` |
-| C, фронтенд кабинета | своя ветка                 | `app/pages/office/**`, `app/components/**`, `app/composables/**`, `app/middleware/legacy.global.ts` (цели редиректов на `/office/agents`, `/office/ideas`, `/office/leads`)                                                                                                                                                                                                                              | серверный код, миграции, контракты                                                                                                         |
+- `tests/unit/` — чистые правила и адаптеры (`npm test`).
+- `tests/integration/` — транзакции и сквозные сценарии на отдельной БД с суффиксом `_test` (`npm run test:integration`).
+- `tests/e2e/` — Playwright кабинета с подменой API (`npm run test:e2e:office`).
+- `npm run test:crypto` — проверки на Anvil (платежи Sepolia, Aave).
 
-Срезы добавляют только новые файлы тестов (`tests/unit/*`, `tests/integration/*`); `tests/integration/system.test.ts` меняет только B и только там, где этого требует очередь. Порядок слияния любой.
+Локальные `.env`, `.secrets/`, `.health/`, `backups/` и `output/` исключены из Git. Рабочую БД нельзя использовать для интеграционных тестов. Перед коммитом: `npm run typecheck`, `npm test`, `npm run test:integration`, `npm run build`, `npm run format:check`; изменённый интерфейс — в Playwright.
