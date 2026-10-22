@@ -40,7 +40,47 @@ export function managerProvider() {
               ? c.YANDEX_MODEL
               : 'demo',
     demo: c.MODEL_PROVIDER === 'demo',
+    /** The providers whose calls are charged; the same set the cost review treats as paid. */
+    paid: c.MODEL_PROVIDER === 'openai' || c.MODEL_PROVIDER === 'yandex',
   }
+}
+
+/**
+ * Why a paid review would be wasted. A review can only replace an eligible agent of a running
+ * Paper portfolio without an active experiment; otherwise the model is not called at all.
+ */
+export function reviewSkipReason(snapshot: ManagerSnapshot) {
+  const running = snapshot.portfolios.filter((p) => p.status === 'running')
+  if (!running.length) return 'MANAGER_SKIP_PAPER_PAUSED'
+  const free = running.filter((p) => !p.activeTask)
+  if (!free.length) return 'MANAGER_SKIP_NO_SLOTS'
+  if (!free.some((p) => p.agents.some((a) => a.canExperiment))) return 'MANAGER_SKIP_NO_CANDIDATES'
+  return ''
+}
+
+/**
+ * Tasks of a demonstration review never block a real model: once a real provider is configured
+ * they expire. Applied demo agents keep trading; only the experiment slot is released.
+ */
+export async function releaseDemoTasks() {
+  if (managerProvider().demo) return 0
+  return transaction(async (db) => {
+    const released = await query(
+      `UPDATE trading_manager_tasks t SET status='expired',reason='MANAGER_DEMO_RELEASED'
+      FROM trading_manager_runs r WHERE r.id=t.run_id AND r.is_demo AND t.status IN ('queued','observing')
+      RETURNING t.id,t.exchange`,
+      [],
+      db,
+    )
+    if (released.length)
+      await audit(
+        'trading_manager_demo_released',
+        'Задачи демонстрационного разбора сняты: их слоты освобождены для настоящей модели.',
+        { tasks: released.map((t) => t.id) },
+        db,
+      )
+    return released.length
+  })
 }
 export async function ensureManager() {
   await ensurePortfolios()
@@ -130,7 +170,7 @@ function safeError(error: unknown) {
   return 'MANAGER_PLAN_FAILED'
 }
 
-async function claimRun(providerReady: boolean) {
+async function claimRun(providerReady: boolean, skip = '') {
   return transaction(async (db) => {
     // The same first lock as meteredCall; no exchange lock is held across the model request.
     const [system] = await query('SELECT mode FROM system_state WHERE id=true FOR UPDATE', [], db)
@@ -203,6 +243,22 @@ async function claimRun(providerReady: boolean) {
         [reason],
         db,
       )
+      return null
+    }
+    if (skip) {
+      // Not an attempt: the review runs as soon as a slot frees, without waiting another interval.
+      const changed = await query(
+        'UPDATE trading_manager SET last_error=$1 WHERE id=true AND last_error<>$1 RETURNING id',
+        [skip],
+        db,
+      )
+      if (changed.length)
+        await audit(
+          'trading_manager_skipped',
+          'Платный разбор пропущен: новых экспериментов поставить нельзя, модель не вызывалась.',
+          { reason: skip },
+          db,
+        )
       return null
     }
     const id = randomUUID(),
@@ -361,9 +417,13 @@ export async function managerTick(
 ) {
   await ensureManager()
   if (isStopping()) return false
+  await releaseDemoTasks()
   await advanceManagerTasks()
   if (isStopping()) return false
-  const run = await claimRun(providerReady)
+  const [state] = await query<ManagerRow>('SELECT enabled FROM trading_manager WHERE id=true')
+  const skip =
+    state?.enabled && managerProvider().paid ? reviewSkipReason(await managerSnapshot()) : ''
+  const run = await claimRun(providerReady, skip)
   if (!run) return false
   try {
     const snapshot = await managerSnapshot()

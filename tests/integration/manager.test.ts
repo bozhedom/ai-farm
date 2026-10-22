@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { pool, query } from '../../core/db'
+import { config } from '../../core/config'
 import { MANAGER_POLICY as P, SCOUT_POLICY } from '../../core/policy'
 import {
   controlManager,
@@ -713,6 +714,73 @@ describe('durable paper manager', () => {
     expect(await managerTick(planner)).toBe(false)
     expect(planner).toHaveBeenCalledTimes(P.maxDailyRuns)
     expect((await managerBudget()).runs).toBe(P.maxDailyRuns)
+  })
+
+  async function withPaidProvider(fn: () => Promise<void>) {
+    const c = config()
+    const saved = c.MODEL_PROVIDER
+    c.MODEL_PROVIDER = 'openai'
+    try {
+      await fn()
+    } finally {
+      c.MODEL_PROVIDER = saved
+    }
+  }
+
+  it('releases demo-review slots for a paid model and then plans normally', async () => {
+    await controlManager('enable')
+    expect(await managerTick()).toBe(true)
+    const [demoTask] = await query('SELECT id,status FROM trading_manager_tasks')
+    expect(demoTask!.status).toBe('queued')
+    await withPaidProvider(async () => {
+      await query("UPDATE trading_manager SET attempted_at=now()-interval '7 hours'")
+      const planner = vi.fn(async (snapshot: ManagerSnapshot) => plan(snapshot))
+      expect(await managerTick(planner)).toBe(true)
+      expect(planner).toHaveBeenCalledTimes(1)
+    })
+    expect(await taskById(demoTask!.id)).toMatchObject({
+      status: 'expired',
+      reason: 'MANAGER_DEMO_RELEASED',
+    })
+    const active = await query(
+      `SELECT r.is_demo FROM trading_manager_tasks t JOIN trading_manager_runs r ON r.id=t.run_id
+      WHERE t.status IN ('queued','observing')`,
+    )
+    expect(active).toEqual([{ is_demo: false }])
+  })
+
+  it('skips a paid review without a model call when no slot is free or paper is paused', async () => {
+    await controlManager('enable')
+    await withPaidProvider(async () => {
+      const planner = vi.fn(async (snapshot: ManagerSnapshot) => plan(snapshot))
+      expect(await managerTick(planner)).toBe(true)
+      expect(planner).toHaveBeenCalledTimes(1)
+      // The okx slot now holds a real experiment; no other paper portfolio is running.
+      await query("UPDATE trading_manager SET attempted_at=now()-interval '7 hours'")
+      expect(await managerTick(planner)).toBe(false)
+      expect((await query('SELECT last_error FROM trading_manager'))[0]!.last_error).toBe(
+        'MANAGER_SKIP_NO_SLOTS',
+      )
+      await query("UPDATE trading_manager_tasks SET status='expired',reason='MANAGER_TASK_EXPIRED'")
+      await query(
+        "UPDATE trading_portfolios SET status='paused',reason='DAILY_LOSS_LIMIT' WHERE mode='paper'",
+      )
+      expect(await managerTick(planner)).toBe(false)
+      expect(await managerTick(planner)).toBe(false)
+      expect((await query('SELECT last_error FROM trading_manager'))[0]!.last_error).toBe(
+        'MANAGER_SKIP_PAPER_PAUSED',
+      )
+      expect(planner).toHaveBeenCalledTimes(1)
+    })
+    expect(await query('SELECT id FROM trading_manager_runs')).toHaveLength(1)
+    expect(
+      await query("SELECT id FROM budget_reservations WHERE category='trading_manager'"),
+    ).toHaveLength(1)
+    expect(
+      await query(
+        "SELECT data->>'reason' AS reason FROM audit_events WHERE kind='trading_manager_skipped' ORDER BY created_at",
+      ),
+    ).toEqual([{ reason: 'MANAGER_SKIP_NO_SLOTS' }, { reason: 'MANAGER_SKIP_PAPER_PAUSED' }])
   })
 
   it('runs the normal demo provider through the metered model path and labels its output honestly', async () => {
