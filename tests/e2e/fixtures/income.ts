@@ -132,6 +132,13 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
     wins30d: 0,
     lastAt: null,
     ...patch,
+    statusText:
+      patch.statusText ??
+      (patch.status === 'running'
+        ? 'Работает'
+        : mode !== 'paper' && !patch.keys
+          ? 'Не подключена'
+          : 'Не запущена'),
   })
   const trading: IncomeTradingRow[] = [
     row('okx', 'paper', {
@@ -180,7 +187,17 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
     }),
     row('binance', 'demo'),
     row('binance', 'live'),
-    row('bitget', 'paper'),
+    row('bitget', 'paper', {
+      status: 'paused',
+      statusText: 'На паузе: дневной лимит убытка, продолжит после 00:00 UTC',
+      equity: '97.9',
+      pnl: '-2.1',
+      realized: '-2.1',
+      activeAgents: 3,
+      trades30d: 6,
+      wins30d: 2,
+      lastAt: at(40),
+    }),
     row('bitget', 'demo'),
     row('bitget', 'live'),
   ]
@@ -214,7 +231,7 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         status: 'autonomous',
         mode: 'paper',
         result: { unit: 'USDT', value: '3.418', label: 'результат, не выручка', test: true },
-        detail: 'Тренировка: агентов 3, сделок за 30 дней 21, в плюс 13.',
+        detail: 'Тренировка: агентов 3, сделок за 30 дней 21, прибыльных 13.',
         lastAt: at(6),
         link: '/office/trading',
       },
@@ -225,7 +242,7 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         status: 'autonomous',
         mode: 'demo',
         result: { unit: 'USDT', value: '0.6', label: 'результат, не выручка', test: true },
-        detail: 'Тест биржи: агентов 2, сделок за 30 дней 4, в плюс 3.',
+        detail: 'Тест биржи: агентов 2, сделок за 30 дней 4, прибыльных 3.',
         lastAt: at(2),
         link: '/office/trading',
       },
@@ -236,7 +253,7 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         status: 'autonomous',
         mode: 'paper',
         result: { unit: 'USDT', value: '1.05', label: 'результат, не выручка', test: true },
-        detail: 'Тренировка: агентов 3, сделок за 30 дней 9, в плюс 5.',
+        detail: 'Тренировка: агентов 3, сделок за 30 дней 9, прибыльных 5.',
         lastAt: at(14),
         link: '/office/trading',
       },
@@ -244,11 +261,12 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         id: 'trading:bitget',
         group: 'trading',
         title: 'Спот Bitget',
-        status: 'disabled',
+        status: 'paper_only',
         mode: 'paper',
-        result: { unit: 'USDT', value: '0', label: 'результат, не выручка', test: true },
-        detail: 'Тренировка: не запущено.',
-        lastAt: null,
+        result: { unit: 'USDT', value: '-2.1', label: 'результат, не выручка', test: true },
+        detail:
+          'Тренировка: агентов 3, сделок за 30 дней 6, прибыльных 2. На паузе: дневной лимит убытка, продолжит после 00:00 UTC.',
+        lastAt: at(40),
         link: '/office/trading',
       },
       {
@@ -523,7 +541,7 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         id: 'keys:bybit',
         title: 'Bybit: нет ключей',
         detail:
-          'Создайте API-ключ без вывода средств, только спот. Впишите BYBIT_LIVE_API_KEY и BYBIT_LIVE_SECRET (и BYBIT_DEMO_* для теста) в .env на сервере и перезапустите.',
+          'Создайте на Bybit API-ключ только для спота, без вывода средств. Ключ вносит администратор на сервере, тестовый ключ для проверки тоже.',
         link: '/office/trading',
         severity: 'block',
       },
@@ -531,7 +549,7 @@ export function incomeFixture(now: Date, feed: OfficeOverview['feed']): OfficeIn
         id: 'live-disabled',
         title: 'Реальная торговля выключена',
         detail:
-          'Включается владельцем: TRADING_LIVE_ENABLED=true в .env, затем бюджет и проверки в разделе биржи.',
+          'Включает администратор на сервере по вашему решению. Затем вы задаёте бюджет и проходите проверки в разделе биржи.',
         link: '/office/trading',
         severity: 'warn',
       },

@@ -301,6 +301,12 @@
 .trading-workspace .connection-state.state-warning {
   color: var(--t-warning);
 }
+.trading-workspace .state-next {
+  display: block;
+  margin-left: 14px;
+  color: var(--t-muted);
+  font-size: 12px;
+}
 .trading-workspace .exchange-money {
   font-size: 17px;
   text-align: right;

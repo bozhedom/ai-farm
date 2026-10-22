@@ -72,6 +72,8 @@ export type IncomeTradingRow = {
   exchange: IncomeExchange
   mode: IncomeMode
   status: 'idle' | 'running' | 'paused' | 'stopped'
+  /** One owner-facing status with its reason and what happens next; no codes. */
+  statusText: string
   keys: boolean
   workerAlive: boolean
   capital: string

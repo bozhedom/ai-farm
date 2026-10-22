@@ -127,6 +127,11 @@ const equitySeries = computed(() =>
       }
     }),
 )
+const equityChange = computed(
+  () =>
+    Math.round(equitySeries.value.reduce((sum, s) => sum + (s.points.at(-1)?.y ?? 0), 0) * 100) /
+    100,
+)
 const tradingRows = computed(() =>
   (v.value?.trading ?? []).filter(
     (r) =>
@@ -141,12 +146,6 @@ const tradeTotals = computed(() => {
 })
 const winRate = (wins: number, trades: number) =>
   trades ? `${Math.round((wins / trades) * 100)}%` : '—'
-const tradingStatus: Record<string, string> = {
-  idle: 'Не запущена',
-  running: 'Работает',
-  paused: 'Пауза',
-  stopped: 'Остановлена',
-}
 
 // ---- money and spend -----------------------------------------------------------------------
 const categoryName: Record<string, string> = {
@@ -419,9 +418,15 @@ const priceText = (kopecks: number) => rub(kopecks)
           <div>
             <h2 id="trading-title">Торговля по биржам</h2>
             <p class="small muted">
-              Изменение капитала за 30 дней, USDT.
+              Изменение капитала за 30 дней, USDT<template v-if="equitySeries.length"
+                >: итого
+                <b class="mono" :class="{ 'is-neg': equityChange < 0 }">{{
+                  decimalText(String(equityChange), 2, true)
+                }}</b></template
+              >.
               <template v-if="tradeTotals.trades"
-                >Сделок {{ count(tradeTotals.trades) }}, в плюс {{ tradeTotals.rate }}%.</template
+                >Закрытых сделок за 30 дней {{ count(tradeTotals.trades) }}, доля прибыльных
+                {{ tradeTotals.rate }}%.</template
               >
             </p>
           </div>
@@ -455,7 +460,7 @@ const priceText = (kopecks: number) => rub(kopecks)
             <span role="columnheader">Биржа</span><span role="columnheader">Статус</span
             ><span role="columnheader">Капитал</span><span role="columnheader">Результат</span
             ><span role="columnheader">Зафиксировано</span
-            ><span role="columnheader">Сделок, в плюс</span>
+            ><span role="columnheader">Сделок · прибыльных</span>
           </div>
           <div
             v-for="r in tradingRows"
@@ -469,7 +474,7 @@ const priceText = (kopecks: number) => rub(kopecks)
               }}
               <OfficeBadge :badge="incomeMode[r.mode]" :dot="false"
             /></span>
-            <span role="cell" data-label="Статус">{{ tradingStatus[r.status] }}</span>
+            <span role="cell" data-label="Статус">{{ r.statusText }}</span>
             <span role="cell" data-label="Капитал" class="mono">{{ decimalText(r.equity) }}</span>
             <span
               role="cell"
@@ -485,7 +490,7 @@ const priceText = (kopecks: number) => rub(kopecks)
               :class="{ 'is-neg': isNegative(r.realized) }"
               >{{ decimalText(r.realized, 2, true) }}</span
             >
-            <span role="cell" data-label="Сделок, в плюс" class="mono"
+            <span role="cell" data-label="Сделок · прибыльных" class="mono"
               >{{ r.trades30d }} · {{ winRate(r.wins30d, r.trades30d) }}</span
             >
           </div>
@@ -914,7 +919,7 @@ const priceText = (kopecks: number) => rub(kopecks)
 }
 .trade-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) 1fr 1fr 1fr 1fr 1fr;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr) 1fr 1fr 1fr 1fr;
   gap: var(--s-3);
   align-items: center;
   padding: 10px 4px;
@@ -1099,7 +1104,8 @@ const priceText = (kopecks: number) => rub(kopecks)
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px var(--s-3);
   }
-  .trade-name {
+  .trade-name,
+  .trade-row [data-label='Статус'] {
     grid-column: 1 / -1;
   }
   .trade-row [data-label]::before {
