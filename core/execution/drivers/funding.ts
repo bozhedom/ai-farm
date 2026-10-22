@@ -49,6 +49,37 @@ type Dependencies = { venue?: FundingClient; now?: () => number }
 const venueName = 'bybit-funding' as const
 const week = 7 * 24 * 60 * 60_000
 
+/**
+ * Entry and exit timing of the funding hedge. A pair costs four commissions and two spreads;
+ * only settled payments repay them. So the hedge opens shortly before a settlement of a rate
+ * that has stayed positive, and a falling predicted rate never closes it before that payment.
+ * Loss, liquidation-distance, owner and maximum-age exits are unaffected.
+ */
+export const FUNDING_STRATEGY = Object.freeze({
+  /** The next settlement must be at most this far away when a new pair is planned. */
+  entryWindowMs: 60 * 60_000,
+  /** ...and at least this far, so both legs are open before the settlement snapshot. */
+  minLeadMs: 5 * 60_000,
+  /** The latest settled rates that must all be positive. */
+  positivePeriods: 3,
+  /** A rate exit waits this long after the first settlement, so the payment is recorded. */
+  settlementGraceMs: 2 * 60_000,
+})
+
+/** The first settlement strictly after `openedAt` on the plan's payment schedule. */
+export function firstSettlementAfter(
+  openedAt: number,
+  plan: { nextPaymentAt: number; intervalMs: number },
+) {
+  if (!Number.isSafeInteger(plan.nextPaymentAt) || plan.nextPaymentAt <= 0) return null
+  if (openedAt < plan.nextPaymentAt) return plan.nextPaymentAt
+  if (!Number.isSafeInteger(plan.intervalMs) || plan.intervalMs <= 0) return null
+  return (
+    plan.nextPaymentAt +
+    (Math.floor((openedAt - plan.nextPaymentAt) / plan.intervalMs) + 1) * plan.intervalMs
+  )
+}
+
 function limits(market: Market) {
   const slippage = BigInt(P.slippageBps)
   return {
@@ -176,6 +207,24 @@ export function createFundingDriver(
     )
   }
 
+  /** The latest settled rates were all positive; a missing or failed history never admits. */
+  async function persistentlyPositive(symbol: TradingSymbol, market: FundingMarket) {
+    const interval = market.fundingIntervalMinutes * 60_000
+    const periods = FUNDING_STRATEGY.positivePeriods
+    if (!Number.isSafeInteger(interval) || interval <= 0) return false
+    const end = now()
+    const start = market.nextFundingAt - periods * interval - Math.floor(interval / 2)
+    if (start < 0 || end - start > week) return false
+    try {
+      const rates = (await venue.fundingRates(symbol, start, end)).filter(
+        (row) => row.at >= start && row.at <= end,
+      )
+      return rates.length >= periods && rates.slice(-periods).every((row) => row.rate > 0n)
+    } catch {
+      return false
+    }
+  }
+
   function leg(
     op: ExecutionOperation,
     market: FundingMarket,
@@ -245,6 +294,9 @@ export function createFundingDriver(
           market.fundingRate * BPS < BigInt(p.settings.minFundingBps) * SCALE
         )
           continue
+        const lead = market.nextFundingAt - now()
+        if (lead > FUNDING_STRATEGY.entryWindowMs || lead < FUNDING_STRATEGY.minLeadMs) continue
+        if (!(await persistentlyPositive(symbol, market))) continue
         const fees =
           mode === 'paper'
             ? { spot: P.maxFeeBps, perp: P.maxFeeBps }
@@ -341,12 +393,26 @@ export function createFundingDriver(
         position.cash + proceeds(position.spot, spotPrice) - cost(position.short, coverPrice)
       const loss = mark < 0n && -mark * BPS >= units(op.reserve) * BigInt(P.positionLossBps)
       const age = now() - op.created_at.getTime()
+      // A falling rate closes the hedge only after it has earned the first settlement.
+      const shortOpened = legs.find(
+        (item) =>
+          item.prepared.intent.action === 'short' &&
+          item.receipt &&
+          units(item.receipt.filledQuantity) > 0n,
+      )
+      const settlement = shortOpened
+        ? firstSettlementAfter(shortOpened.created_at.getTime(), op.plan)
+        : null
+      const rateExit =
+        market.fundingRate <= 0n &&
+        settlement !== null &&
+        now() >= settlement + FUNDING_STRATEGY.settlementGraceMs
       const closing =
         op.status === 'closing' ||
         p.close_requested ||
         liquidationClose ||
         loss ||
-        market.fundingRate <= 0n ||
+        rateExit ||
         age >= p.settings.maxHoldHours * 60 * 60_000 ||
         legs.some((item) => item.role.startsWith('close-'))
       if (!legs.length) {
