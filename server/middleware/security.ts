@@ -47,6 +47,7 @@ export function ambiguousPath(raw: string, normalized: string) {
 /** Pages a search engine may index once PUBLIC_INDEXING is on; everything else is noindex. */
 export function indexablePage(path: string) {
   return (
+    path === '/' ||
     path === '/storefront' ||
     path === '/terms' ||
     /^\/services\/[a-z0-9][a-z0-9-]{1,60}$/.test(path)

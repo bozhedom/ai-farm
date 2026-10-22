@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { config } from '../config'
 import { query } from '../db'
 import { reportProgress } from '../activity'
+import { modelJsonSchema } from './json-schema'
 import { openaiCost, usdToKopecks } from './openai-cost'
 import { openrouterPaidModel } from './openrouter-paid'
 
@@ -25,8 +26,7 @@ export async function openaiModel<T>(args: {
   if (!c.OPENAI_API_KEY) throw new Error('OPENAI_CREDENTIALS_REQUIRED')
   if (!Number.isSafeInteger(args.maxTokens) || args.maxTokens < 16 || args.maxTokens > 2800)
     throw new Error('OPENAI_OUTPUT_LIMIT_INVALID')
-  const schema = z.toJSONSchema(args.schema)
-  delete schema.$schema
+  const schema = modelJsonSchema(args.schema)
   // No SDK retries, remote tools, redirects, stored conversations or premium service tier.
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',

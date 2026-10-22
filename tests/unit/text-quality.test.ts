@@ -103,6 +103,10 @@ describe('product pages follow their service type', () => {
   })
 
   it('refuses a bad page on the server and keeps "what you get" server-owned', () => {
+    // The model schema has no youGet (strict output); a recorded legacy answer still replays.
+    expect(productOfferSchemaFor('description').safeParse(offer({ youGet: ['x'] })).success).toBe(
+      false,
+    )
     expect(() =>
       validateProductOffer(offer({ limits: ['Не подходит для сервиса..'] }), 'description', true),
     ).toThrow(TextQualityError)

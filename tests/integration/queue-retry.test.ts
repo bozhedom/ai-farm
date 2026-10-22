@@ -1,7 +1,15 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { pool, query } from '../../core/db'
 import { meteredCall, reserveBudget } from '../../core/budget'
-import { claimJob, expireResearchSlots, finishJob } from '../../core/queue'
+import {
+  claimJob,
+  expectedCosts,
+  expireResearchSlots,
+  finishJob,
+  pacingNumbers,
+} from '../../core/queue'
+import * as settings from '../../core/config'
+import { randomUUID } from 'node:crypto'
 import { runJob } from '../../core/jobs/run'
 import { requestScout } from '../../core/autonomy'
 import { applyMigrations, resetDatabase } from './helpers/db'
@@ -65,3 +73,47 @@ describe('queue after a restart', () => {
     )
   })
 })
+
+describe('pacing by realistic cost', () => {
+  it('uses the p90 of finished tasks and counts open envelopes at that cost', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      MODEL_PROVIDER: 'openai',
+      LEAD_RESERVE_KOPECKS: 15000,
+      SCOUT_RESERVE_KOPECKS: 20000,
+    })
+    const task = async (category: string, charged: number, status = 'closed', demo = false) => {
+      const id = randomUUID()
+      await query(
+        `INSERT INTO budget_reservations(id,dedupe_key,category,limit_kopecks,spent_kopecks,status)
+         VALUES($1,$2,$3,15000,$4,$5)`,
+        [id, `pace:${id}`, category, charged, status],
+      )
+      if (charged)
+        await query(
+          `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo)
+           VALUES($1,$2,$3,'test','done',$4,$4,$5)`,
+          [randomUUID(), `pace:${id}`, id, charged, demo],
+        )
+      return id
+    }
+    for (const charged of [2000, 2200, 2400, 2500, 2600, 2500]) await task('lead', charged)
+    // Demo calls and too little scout history do not count.
+    for (let i = 0; i < 10; i++) await task('scout', 100, 'closed', true)
+    const expected = await expectedCosts()
+    expect(expected.lead).toBe(2550)
+    expect(expected.scout).toBe(20000)
+    // One open lead envelope of 150 ₽ counts as its expected 25.5 ₽ this hour.
+    await task('lead', 0, 'open')
+    const numbers = await pacingNumbers()
+    expect(numbers.usedThisHour - (await thisHourCharged())).toBe(2550)
+  })
+})
+
+async function thisHourCharged() {
+  const [row] = await query(
+    `SELECT COALESCE(sum(charged_kopecks),0)::int AS n FROM tool_calls
+     WHERE created_at >= date_trunc('hour',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+  )
+  return row!.n as number
+}

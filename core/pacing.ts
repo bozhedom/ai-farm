@@ -8,6 +8,10 @@ import type { BudgetCategory } from './budget'
  * envelope; scouts may use the whole hourly allowance; research, leads and reports get a smaller
  * share. An empty hour always admits one task that fits the rest of the day, so a reserve larger
  * than the hourly allowance still runs (the next hours then get correspondingly less).
+ *
+ * The hourly share is measured in expected cost (recent p90 of actual charges per task), not in
+ * reservations: a 200 ₽ envelope for a task that costs 25 ₽ would otherwise let one task run per
+ * hour. Reservations stay the safe upper bound and still enforce the day and month caps.
  */
 export const pacingShares: Partial<Record<BudgetCategory, number>> = {
   scout: 1,
@@ -18,12 +22,17 @@ export const pacingShares: Partial<Record<BudgetCategory, number>> = {
 
 export type PacingInput = {
   category: BudgetCategory
-  /** Envelope of the task about to start. */
+  /** Envelope of the task about to start: the safe upper bound that reserveBudget holds. */
   limit: number
+  /**
+   * What the task realistically costs (`expectedTaskCost`), at most `limit`. The hourly share
+   * is paced by it; the envelope still has to fit the rest of the day. Defaults to `limit`.
+   */
+  expectedKopecks?: number
   dailyKopecks: number
   /** Charged today before the current UTC hour. */
   spentBeforeHour: number
-  /** Charged during the current hour plus every open reservation. */
+  /** Charged during the current hour plus open reservations at their expected cost. */
   usedThisHour: number
   /** Held for the trading manager's remaining reviews today. */
   managerFloor: number
@@ -58,9 +67,10 @@ export function pacingDecision(input: PacingInput): PacingDecision {
   if (input.category === 'trading_manager' || input.category === 'order' || input.limit === 0)
     return { allowed: true, allowanceKopecks, hoursRemaining, retryAt }
   const restOfDay = available - input.usedThisHour
+  const expected = Math.min(input.limit, Math.max(0, input.expectedKopecks ?? input.limit))
   const allowed =
     input.limit <= restOfDay &&
-    (input.usedThisHour + input.limit <= allowanceKopecks || input.usedThisHour === 0)
+    (input.usedThisHour + expected <= allowanceKopecks || input.usedThisHour === 0)
   return { allowed, allowanceKopecks, hoursRemaining, retryAt }
 }
 
@@ -78,4 +88,19 @@ export function managerFloor(args: {
   const runs = Math.max(0, args.maxDailyRuns - args.runsToday)
   const cap = Math.max(0, args.dailyKopecks - args.spentToday - args.reservedOpen)
   return Math.min(cap, runs * args.reserveKopecks)
+}
+
+/** Fewer finished tasks than this and pacing keeps the full reservation as the estimate. */
+export const expectedCostMinSamples = 5
+export const expectedCostWindowDays = 14
+
+/**
+ * The realistic cost of one task: the 90th percentile of what recent finished tasks of the
+ * category were actually charged, never above the reservation. Too little history falls back to
+ * the reservation. Only pacing uses it; reservations and day/month caps stay pessimistic.
+ */
+export function expectedTaskCost(reserveKopecks: number, sample: { count: number; p90: number }) {
+  if (reserveKopecks <= 0) return 0
+  if (sample.count < expectedCostMinSamples || !Number.isFinite(sample.p90)) return reserveKopecks
+  return Math.min(reserveKopecks, Math.max(1, Math.ceil(sample.p90)))
 }

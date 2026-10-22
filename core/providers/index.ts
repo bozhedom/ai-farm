@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { assertStrictModelSchema, modelJsonSchema } from './json-schema'
 import { XMLParser } from 'fast-xml-parser'
 import { z } from 'zod'
 import { config, paidModelId } from '../config'
@@ -204,6 +205,9 @@ export type ModelArgs<T> = {
 /** The exact request envelope, shared by admission checks and the actual call. */
 export function prepareModelRequest<T>(args: ModelArgs<T>) {
   const c = config()
+  // Strict structured output answers HTTP 400 to optional or open objects: refuse before any
+  // reservation or request instead.
+  assertStrictModelSchema(args.schema)
   const system =
     master() +
     `\nТекущая роль: ${args.role}. Верни только JSON по схеме:\n` +

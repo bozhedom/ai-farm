@@ -1241,6 +1241,33 @@ export function isTaxonomyTopic(id: unknown): id is string {
 export function isTaxonomyCategory(id: unknown): id is string {
   return typeof id === 'string' && Object.hasOwn(categoryById, id)
 }
+/**
+ * Topics kept for history and labels but never scouted: the answers on them always touch an
+ * area the idea policy excludes, so every paid scout call was refused afterwards.
+ * - creators-posts: newsletter authors; every idea mentions «рассылка» (bulk mailing rule).
+ * - marketplaces-reviews: answers about reviews keep warning about fake reviews («накрутка»).
+ * - crypto-quests: reward programmes draw multi-account and investment warnings.
+ */
+export const notScoutedTopics: ReadonlySet<string> = new Set([
+  'creators-posts',
+  'marketplaces-reviews',
+  'crypto-quests',
+])
+/** A topic the scheduler may assign and a scout may spend money on. */
+export function isScoutTopic(id: unknown): id is string {
+  return isTaxonomyTopic(id) && !notScoutedTopics.has(id)
+}
+/** The topic's own words, checked by the server policy before any paid call. */
+export function topicTexts(topic: TaxonomyTopic) {
+  return [
+    topic.label,
+    topic.audience,
+    ...topic.queries,
+    ...topic.hints,
+    ...topic.angles.flatMap((a) => [a.title, a.problem]),
+  ]
+}
+
 /** Every phrase the server may send to a search provider for scouting and leads. */
 export const allowedSearchPhrases: ReadonlySet<string> = new Set(
   taxonomyTopics.flatMap((t) => t.queries),

@@ -11,7 +11,13 @@ import {
 } from './budget'
 import { WorkerDraining } from './activity'
 import { lockResearchWindow } from './research-window'
-import { managerFloor, pacingDecision } from './pacing'
+import {
+  expectedCostWindowDays,
+  expectedTaskCost,
+  managerFloor,
+  pacingDecision,
+  pacingShares,
+} from './pacing'
 import { managerLimits } from './manager/limits'
 
 export type JobKind = 'research' | 'fulfill' | 'evaluate' | 'scout' | 'lead' | 'report' | 'evolve'
@@ -115,10 +121,12 @@ async function deferForDailyBudget(job: Job, db: Connection) {
     return false
   if (budget.daySpent + outstanding <= c.DAILY_BUDGET_KOPECKS) {
     if (c.PACING_ENABLED) {
+      const numbers = await pacingNumbers(db)
       const pace = pacingDecision({
-        ...(await pacingNumbers(db)),
+        ...numbers,
         category,
         limit: reserve,
+        expectedKopecks: numbers.expectedByCategory[category] ?? reserve,
         dailyKopecks: c.DAILY_BUDGET_KOPECKS,
         now: new Date(),
       })
@@ -139,6 +147,7 @@ async function deferForDailyBudget(job: Job, db: Connection) {
               nextAt: pace.retryAt,
               allowanceKopecks: pace.allowanceKopecks,
               reserveKopecks: reserve,
+              expectedKopecks: numbers.expectedByCategory[category] ?? reserve,
             },
             db,
           )
@@ -175,6 +184,40 @@ async function deferForDailyBudget(job: Job, db: Connection) {
   return true
 }
 
+/**
+ * Expected cost per paced category: the p90 of what each recently closed task (reservation)
+ * was charged in total, real calls only, capped by the current reservation.
+ */
+export async function expectedCosts(db: Connection = pool) {
+  const paced = Object.keys(pacingShares) as BudgetCategory[]
+  const rows = await query(
+    `SELECT r.category, count(*)::int AS n,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY s.total) AS p90
+     FROM budget_reservations r
+     JOIN LATERAL (SELECT sum(t.charged_kopecks) AS total FROM tool_calls t
+       WHERE t.reservation_id=r.id AND NOT t.is_demo AND t.status<>'pending') s ON s.total IS NOT NULL
+     WHERE r.status='closed' AND r.category=ANY($1)
+       AND r.created_at >= now() - make_interval(days => $2)
+       AND NOT EXISTS (SELECT 1 FROM tool_calls p WHERE p.reservation_id=r.id AND p.status='pending')
+     GROUP BY r.category`,
+    [paced, expectedCostWindowDays],
+    db,
+  )
+  const stats = new Map(rows.map((r) => [r.category as string, r]))
+  return Object.fromEntries(
+    paced.map((category) => {
+      const stat = stats.get(category)
+      return [
+        category,
+        expectedTaskCost(reserveFor(category), {
+          count: stat ? Number(stat.n) : 0,
+          p90: stat ? Number(stat.p90) : Number.NaN,
+        }),
+      ]
+    }),
+  ) as Partial<Record<BudgetCategory, number>>
+}
+
 /** Today's spending split at the current UTC hour, and the trading manager's remaining need. */
 export async function pacingNumbers(db: Connection = pool) {
   const [row] = await query(
@@ -183,7 +226,6 @@ export async function pacingNumbers(db: Connection = pool) {
     SELECT
       COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at>=(SELECT at FROM day) AND created_at<(SELECT at FROM hour)),0)::int AS before_hour,
       COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at>=(SELECT at FROM hour)),0)::int AS this_hour,
-      COALESCE((SELECT sum(limit_kopecks-spent_kopecks) FROM budget_reservations WHERE status='open'),0)::int AS outstanding,
       COALESCE((SELECT enabled FROM trading_manager WHERE id=true),false) AND
         COALESCE((SELECT mode='running' FROM system_state WHERE id=true),false) AS manager_enabled,
       (SELECT count(*)::int FROM trading_manager_runs WHERE created_at>=(SELECT at FROM day)) AS manager_runs,
@@ -193,10 +235,25 @@ export async function pacingNumbers(db: Connection = pool) {
     [],
     db,
   )
+  const expectedKopecks = await expectedCosts(db)
+  // Open envelopes of paced farm tasks count at their expected cost; others at their remainder.
+  const open = await query(
+    `SELECT category,(limit_kopecks-spent_kopecks)::int AS remaining FROM budget_reservations
+     WHERE status='open' AND limit_kopecks>spent_kopecks`,
+    [],
+    db,
+  )
+  const outstanding = open.reduce(
+    (sum, r) =>
+      sum +
+      Math.min(r.remaining as number, expectedKopecks[r.category as BudgetCategory] ?? Infinity),
+    0,
+  )
   const limits = managerLimits()
   return {
+    expectedByCategory: expectedKopecks,
     spentBeforeHour: row!.before_hour as number,
-    usedThisHour: (row!.this_hour as number) + (row!.outstanding as number),
+    usedThisHour: (row!.this_hour as number) + outstanding,
     managerFloor: managerFloor({
       enabled: !!row!.manager_enabled && reserveFor('trading_manager') > 0,
       reserveKopecks: limits.reserveKopecks,

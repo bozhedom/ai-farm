@@ -3,6 +3,7 @@ import { config, isFreeOpenrouterModel } from '../config'
 import { query } from '../db'
 import { reportProgress, reportValidation } from '../activity'
 import { schemaRepair } from './local'
+import { ProviderHttpError, providerErrorDetail, readErrorBody } from './rejection'
 
 const tokens = z.number().int().nonnegative().max(100000)
 const usageSchema = z.object({
@@ -90,8 +91,13 @@ export async function openrouterModel<T>(
     signal: AbortSignal.timeout(120000),
   })
   if (!response.ok) {
-    await response.body?.cancel()
-    throw new Error(`OPENROUTER_HTTP_${response.status}`)
+    // Free calls keep their retry rules; only the provider's explanation is kept for the ledger.
+    const body = await readErrorBody(response)
+    throw new ProviderHttpError(
+      `OPENROUTER_HTTP_${response.status}`,
+      response.status,
+      providerErrorDetail(body),
+    )
   }
   const reader = response.body?.getReader()
   if (!reader) throw new Error('OPENROUTER_RESPONSE_EMPTY')
