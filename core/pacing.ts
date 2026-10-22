@@ -74,10 +74,15 @@ export function pacingDecision(input: PacingInput): PacingDecision {
   return { allowed, allowanceKopecks, hoursRemaining, retryAt }
 }
 
-/** Kopecks the manager may still need today: its remaining runs, within its remaining cap. */
+/**
+ * Kopecks the manager may still need today: its remaining runs at their realistic cost, but
+ * never less than one full reservation so the next run can always be admitted; within its cap.
+ */
 export function managerFloor(args: {
   enabled: boolean
   reserveKopecks: number
+  /** Realistic cost of one run (`expectedTaskCost`); the reservation when unknown. */
+  expectedKopecks?: number
   dailyKopecks: number
   maxDailyRuns: number
   runsToday: number
@@ -87,7 +92,9 @@ export function managerFloor(args: {
   if (!args.enabled || args.reserveKopecks <= 0) return 0
   const runs = Math.max(0, args.maxDailyRuns - args.runsToday)
   const cap = Math.max(0, args.dailyKopecks - args.spentToday - args.reservedOpen)
-  return Math.min(cap, runs * args.reserveKopecks)
+  if (!runs) return 0
+  const perRun = Math.min(args.reserveKopecks, args.expectedKopecks ?? args.reserveKopecks)
+  return Math.min(cap, Math.max(runs * perRun, args.reserveKopecks))
 }
 
 /** Fewer finished tasks than this and pacing keeps the full reservation as the estimate. */

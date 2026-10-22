@@ -194,7 +194,8 @@ async function deferForDailyBudget(job: Job, db: Connection) {
  * was charged in total, real calls only, capped by the current reservation.
  */
 export async function expectedCosts(db: Connection = pool) {
-  const paced = Object.keys(pacingShares) as BudgetCategory[]
+  // The manager is never paced, but its daily floor is sized by what its runs really cost.
+  const paced = [...Object.keys(pacingShares), 'trading_manager'] as BudgetCategory[]
   const rows = await query(
     `SELECT r.category, count(*)::int AS n,
        percentile_cont(0.9) WITHIN GROUP (ORDER BY s.total) AS p90
@@ -262,6 +263,7 @@ export async function pacingNumbers(db: Connection = pool) {
     managerFloor: managerFloor({
       enabled: !!row!.manager_enabled && reserveFor('trading_manager') > 0,
       reserveKopecks: limits.reserveKopecks,
+      expectedKopecks: expectedKopecks.trading_manager,
       dailyKopecks: limits.dailyKopecks,
       maxDailyRuns: limits.maxDailyRuns,
       runsToday: row!.manager_runs as number,

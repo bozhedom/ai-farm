@@ -95,4 +95,21 @@ describe('budget pacing', () => {
     expect(managerFloor({ ...args, enabled: false })).toBe(0)
     expect(managerFloor({ ...args, reserveKopecks: 0 })).toBe(0)
   })
+  it('sizes the manager floor by its real run cost but keeps one full reservation', () => {
+    const args = {
+      enabled: true,
+      reserveKopecks: 12000,
+      dailyKopecks: 48000,
+      maxDailyRuns: 4,
+      runsToday: 1,
+      spentToday: 1500,
+      reservedOpen: 0,
+    }
+    // Three runs left at 13 ₽ each would be 39 ₽; the next run still needs its 120 ₽ envelope.
+    expect(managerFloor({ ...args, expectedKopecks: 1300 })).toBe(12000)
+    expect(managerFloor({ ...args, expectedKopecks: 5000 })).toBe(15000)
+    // The estimate never exceeds the reservation.
+    expect(managerFloor({ ...args, expectedKopecks: 50000 })).toBe(36000)
+    expect(managerFloor({ ...args, expectedKopecks: 1300, runsToday: 4 })).toBe(0)
+  })
 })
