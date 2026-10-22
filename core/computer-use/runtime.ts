@@ -1049,18 +1049,12 @@ async function draftProposal(task: TaskRow, stepNo: number, call: DraftCall, bas
     if (!opportunity) return 'COMPUTER_USE_OPPORTUNITY_REQUIRED'
     if (opportunity.ai_forbidden) return 'COMPUTER_USE_AI_FORBIDDEN'
     if (opportunity.decision !== 'take') return 'COMPUTER_USE_DECISION_NOT_TAKE'
-    // The owner's minimum price per currency (performer profile); the job budget counts as the
-    // bid when the proposal names no price.
+    // The owner's minimum price per currency (performer profile): an explicit price is required
+    // when minimums are set, and amounts written in the text may not undercut it.
     const price = priceReason(
       profile,
       { amount: call.price_amount, currency: call.price_currency },
-      {
-        amount:
-          opportunity.estimated_value_minor === null
-            ? null
-            : Number(opportunity.estimated_value_minor),
-        currency: opportunity.estimated_currency,
-      },
+      call.text,
     )
     if (price) return price
     const [count] = await query(

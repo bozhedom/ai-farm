@@ -80,7 +80,8 @@ export const computerReasons: Record<string, string> = {
   COMPUTER_USE_SEND_PERMIT: 'Отправлено по разрешению на одну отправку.',
   COMPUTER_USE_STORED_NOT_FOUND: 'Такого текста в этом задании нет.',
   COMPUTER_USE_PRICE_BELOW_MINIMUM: 'Цена ниже вашей минимальной из профиля исполнителя.',
-  COMPUTER_USE_PRICE_CURRENCY_REQUIRED: 'У цены в отклике не указана валюта.',
+  COMPUTER_USE_PRICE_CURRENCY_REQUIRED:
+    'В отклике нет цены в валюте, для которой в профиле задан минимум.',
   COMPUTER_USE_NO_DIRECTIONS:
     'Нет ни одного включённого направления поиска и ни одной площадки с входом: ротации нечего делать.',
   COMPUTER_USE_DIRECTION_NOT_FOUND: 'Такого направления нет.',

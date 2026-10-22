@@ -141,12 +141,17 @@ const note = (url: string, amount: number | null) => ({
 })
 const proposalText =
   'Здравствуйте! Прочитала задание: нужно 20 описаний диванов и кресел для каталога. У меня 3 года опыта в копирайтинге, сделаю в едином стиле: характеристики, материалы, для какого интерьера подходит. Первые два описания пришлю на согласование завтра.'
-const draft = (url: string, price: number | null, currency: string | null = 'RUB') => ({
+const draft = (
+  url: string,
+  price: number | null,
+  currency: string | null = 'RUB',
+  text = proposalText,
+) => ({
   name: 'draft_proposal',
   arguments: {
     opportunity_url: url,
     platform_domain: 'fl.ru',
-    text: proposalText,
+    text,
     price_amount: price,
     price_currency: price === null ? null : currency,
   },
@@ -180,8 +185,10 @@ describe('performer profile in draft_proposal', () => {
       () => note(cheap, 300000),
       () => draft(job, 399999),
       () => draft(job, 500, null),
-      // No explicit price: the recorded job budget below the minimum is the bid.
+      // With minimums set the proposal must name its price; the job budget is not a bid.
       () => draft(cheap, null),
+      // An amount written in the text may not undercut the minimum either.
+      () => draft(job, 400000, 'RUB', proposalText + ' Стоимость одного описания 300 ₽.'),
       // The bio fact "3 года опыта в копирайтинге" is repeated word for word: allowed.
       () => draft(job, 400000),
     ])
@@ -196,6 +203,7 @@ describe('performer profile in draft_proposal', () => {
       ['note_opportunity', 'allowed', ''],
       ['note_opportunity', 'allowed', ''],
       ['draft_proposal', 'blocked', 'COMPUTER_USE_PRICE_BELOW_MINIMUM'],
+      ['draft_proposal', 'blocked', 'COMPUTER_USE_PRICE_CURRENCY_REQUIRED'],
       ['draft_proposal', 'blocked', 'COMPUTER_USE_PRICE_CURRENCY_REQUIRED'],
       ['draft_proposal', 'blocked', 'COMPUTER_USE_PRICE_BELOW_MINIMUM'],
       ['draft_proposal', 'allowed', 'COMPUTER_USE_PERMIT_GRANTED'],

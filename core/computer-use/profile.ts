@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { config } from '../config'
 import { audit, query, type Connection } from '../db'
-import { forbiddenClaimReason } from './platforms'
+import { platformTextReason } from './platforms'
 import {
   forbiddenTextReason,
   hostOf,
@@ -145,9 +145,8 @@ export function profileContentReason(profile: PerformerProfile, envProposalsPerD
   for (const text of texts) {
     const scheme = forbiddenTextReason(text)
     if (scheme) return 'COMPUTER_USE_PROFILE_TOPIC_BLOCKED'
-    // `forbiddenClaimReason` with the text itself as verified facts: everything except the
-    // invented-claims rule still applies.
-    const claim = forbiddenClaimReason(text, text)
+    // Everything except the invented-claims rule: the owner's own facts are not inventions.
+    const claim = platformTextReason(text)
     if (claim) return claim.replace('COMPUTER_USE_', 'COMPUTER_USE_PROFILE_')
   }
   for (const sample of profile.samples) {
@@ -268,26 +267,74 @@ export const effectiveProposalsPerDay = (profile: PerformerProfile, envLimit: nu
   profile.proposalsPerDay === null ? envLimit : Math.min(envLimit, profile.proposalsPerDay)
 
 /**
- * The price check of draft_proposal. With minimums set, a price needs a currency, and a price in
- * a currency with a minimum may not be below it. Without an explicit price the job budget the
- * model recorded counts as the bid when its currency has a minimum.
+ * The price check of draft_proposal. With minimums set, the proposal must name a price in a
+ * currency that has a minimum, not below it; every explicit amount in the text ("300 ₽",
+ * "5 USD", "$5", "3–5 тыс. руб") is checked against the minimum of its currency too.
  */
 export function priceReason(
   profile: PerformerProfile,
   price: { amount: number | null; currency: string | null },
-  budget: { amount: number | null; currency: string | null } = { amount: null, currency: null },
+  text = '',
 ) {
   if (!profile.minimumPrices.length) return ''
-  if (price.amount !== null && !price.currency) return 'COMPUTER_USE_PRICE_CURRENCY_REQUIRED'
-  const bid = price.amount !== null ? price : budget
-  if (bid.amount === null || !bid.currency) return ''
-  const minimum = profile.minimumPrices.find((m) => m.currency === bid.currency)
-  return minimum && bid.amount < minimum.amount ? 'COMPUTER_USE_PRICE_BELOW_MINIMUM' : ''
+  const minimumOf = (currency: string | null) =>
+    profile.minimumPrices.find((m) => m.currency === currency)
+  const minimum = minimumOf(price.currency)
+  if (price.amount === null || !minimum) return 'COMPUTER_USE_PRICE_CURRENCY_REQUIRED'
+  if (price.amount < minimum.amount) return 'COMPUTER_USE_PRICE_BELOW_MINIMUM'
+  for (const found of textAmounts(text)) {
+    const floor = minimumOf(found.currency)
+    if (floor && found.amount < floor.amount) return 'COMPUTER_USE_PRICE_BELOW_MINIMUM'
+  }
+  return ''
+}
+
+const currencyWords: [string, string][] = [
+  ['RUB', '₽|руб(?:\\.|л\\p{L}*)?|р\\.?|rub|rur'],
+  ['USD', '\\$|usd|долл(?:\\.|ар\\p{L}*)?|dollars?'],
+  ['EUR', '€|eur|евро|euros?'],
+]
+const amount = '\\d{1,3}(?:[ \\u00a0\\u202f]\\d{3})+(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?'
+const thousands = '(?:тыс(?:\\.|яч\\p{L}*)?|к|k)'
+const NB = '(?<![\\p{L}\\p{N}])'
+const NE = '(?![\\p{L}\\p{N}])'
+const amountPatterns = currencyWords.flatMap(([code, word]) => [
+  // "300 ₽", "1 500,50 руб.", "3–5 тыс. рублей", "от 300 до 500 ₽"
+  {
+    code,
+    prefix: false,
+    rx: new RegExp(
+      `${NB}(${amount})(?:\\s*(?:-|–|—|до)\\s*(${amount}))?\\s*(${thousands}\\s*)?(?:${word})${NE}`,
+      'giu',
+    ),
+  },
+  // "$5", "€ 20", "USD 15"
+  {
+    code,
+    prefix: true,
+    rx: new RegExp(`${NB}(?:${word})\\s*(${amount})(\\s*${thousands})?${NE}`, 'giu'),
+  },
+])
+/** Whole units with up to two decimals as integer minor units (×100), never a float. */
+function minorUnits(value: string, multiplier: number) {
+  const [whole = '0', fraction = ''] = value.replace(/[   ]/g, '').split(/[.,]/)
+  return (Number(whole) * 100 + Number(fraction.padEnd(2, '0').slice(0, 2))) * multiplier
+}
+/** Explicit amounts with a known currency in a text, in minor units. */
+export function textAmounts(text: string) {
+  const found: { currency: string; amount: number }[] = []
+  for (const { code, prefix, rx } of amountPatterns)
+    for (const match of text.matchAll(rx)) {
+      const multiplier = (prefix ? match[2] : match[3]) ? 1000 : 1
+      for (const value of prefix ? [match[1]] : [match[1], match[2]])
+        if (value) found.push({ currency: code, amount: minorUnits(value, multiplier) })
+    }
+  return found
 }
 
 /**
  * Owner-provided facts a proposal may repeat: claims about experience, degrees or portfolio are
- * allowed in a proposal only when the same words stand in the profile.
+ * allowed in a proposal only when a positive clause of the profile states the same claim.
  */
 export function verifiedFacts(profile: PerformerProfile) {
   return [
@@ -295,7 +342,7 @@ export function verifiedFacts(profile: PerformerProfile) {
     ...profile.skills,
     ...profile.samples.flatMap((s) => [s.title, s.text]),
     // Real samples exist: the proposal may say it has a portfolio.
-    profile.samples.length ? 'портфолио portfolio' : '',
+    profile.samples.length ? 'портфолио\nportfolio' : '',
   ]
     .filter(Boolean)
     .join('\n')
