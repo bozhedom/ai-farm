@@ -94,6 +94,18 @@ export const computerReasons: Record<string, string> = {
   COMPUTER_USE_DIRECTION_TITLE: 'Название направления: от 3 до 80 символов без угловых скобок.',
   COMPUTER_USE_DIRECTION_WEIGHT: 'Приоритет направления: целое число от 1 до 5.',
   COMPUTER_USE_DOCUMENT_LIMIT: 'В этом задании уже подготовлено достаточно документов.',
+  COMPUTER_USE_LOGIN_NOT_FOUND: 'Для этой площадки не сохранён вход.',
+  COMPUTER_USE_LOGIN_UNREADABLE:
+    'Сохранённый вход не расшифровывается (сменился ключ сервера). Введите логин и пароль заново.',
+  COMPUTER_USE_LOGIN_URL_INVALID:
+    'Адрес страницы входа: полная ссылка https:// на сайт площадки или её страницу входа.',
+  COMPUTER_USE_LOGIN_HOST_MISMATCH:
+    'Логин и пароль вводятся только на https-странице самой площадки, а открыт другой сайт.',
+  COMPUTER_USE_LOGIN_LIMIT:
+    'Попыток входа на эту площадку сегодня уже достаточно: проверьте логин и пароль, чтобы аккаунт не заблокировали.',
+  LOGIN_HOST_MISMATCH:
+    'Логин и пароль вводятся только на https-странице самой площадки, а открыт другой сайт.',
+  LOGIN_FORM_NOT_FOUND: 'На странице не найдена форма входа с полями логина и пароля.',
 }
 export function computerReason(code: string | null | undefined) {
   const value = String(code ?? '').trim()

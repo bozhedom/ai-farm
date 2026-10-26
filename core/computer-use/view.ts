@@ -75,6 +75,7 @@ export async function computerUseView(): Promise<ComputerUseView> {
     proposals,
     documents,
     platformRows,
+    loginRows,
     daily,
     directionRows,
   ] = await Promise.all([
@@ -100,6 +101,9 @@ export async function computerUseView(): Promise<ComputerUseView> {
     ),
     query('SELECT * FROM computer_use_documents ORDER BY created_at DESC LIMIT 20'),
     query('SELECT domain,logged_in FROM computer_use_platforms'),
+    query(
+      'SELECT domain,login_url,last_login_at,last_login_error,updated_at FROM computer_use_credentials',
+    ),
     query(
       `SELECT platform_domain,count(*)::int AS n,count(*) FILTER (WHERE status='sent')::int AS sent
        FROM computer_use_proposals WHERE ${utcDay} GROUP BY platform_domain`,
@@ -137,8 +141,9 @@ export async function computerUseView(): Promise<ComputerUseView> {
   const enabledDirections = directionRows.filter((row) => row.enabled).length
   // Only platforms the rotation actually uses (`loggedInPlatforms`): a stale row for a domain
   // that is no longer a configured platform yields no goals.
-  const platformGoalCount = [...loggedIn].filter(
-    ([domain, on]) => on && isFreelancePlatform(domain),
+  const logins = new Map(loginRows.map((row) => [row.domain as string, row]))
+  const platformGoalCount = platformDomains().filter(
+    (domain) => (loggedIn.get(domain) || logins.has(domain)) && isFreelancePlatform(domain),
   ).length
   const rotationGoals = enabledDirections + 2 * platformGoalCount
   if (!rotationGoals && !queued[0]!.n) blocked.push('COMPUTER_USE_NO_DIRECTIONS')
@@ -169,6 +174,11 @@ export async function computerUseView(): Promise<ComputerUseView> {
     loggedIn: loggedIn.get(domain) ?? false,
     proposalsToday: counts.get(domain)?.n ?? 0,
     sentToday: counts.get(domain)?.sent ?? 0,
+    loginSaved: logins.has(domain),
+    loginUrl: (logins.get(domain)?.login_url as string | undefined) ?? '',
+    lastLoginAt:
+      (logins.get(domain)?.last_login_at as Date | null | undefined)?.toISOString() ?? null,
+    lastLoginError: (logins.get(domain)?.last_login_error as string | undefined) ?? '',
   }))
   return {
     state: {
@@ -189,6 +199,7 @@ export async function computerUseView(): Promise<ComputerUseView> {
       autoProposals: state.auto_proposals,
       autoProposalsAllowed: c.COMPUTER_USE_AUTO_PROPOSALS,
       // The performer profile may lower the env limit, never raise it.
+      loginAttemptsPerDay: P.maxLoginAttemptsPerDomainPerDay,
       proposalsPerDay: effectiveProposalsPerDay(
         (await readProfile()).profile,
         c.COMPUTER_USE_PROPOSALS_PER_DAY,

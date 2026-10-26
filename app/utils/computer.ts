@@ -109,6 +109,8 @@ export function actionText(action: { name: string } & Record<string, unknown>): 
       return `Подготовить отклик на ${String(a.platform_domain)}: «${String(a.text).slice(0, 100)}…»`
     case 'type_stored':
       return `Вставить сохранённый текст${a.chars ? ` (${a.chars} зн.)` : ''}`
+    case 'log_in':
+      return `Войти на ${String(a.platform_domain)} сохранённым входом`
     case 'write_document':
       return `Написать документ: ${String(a.title)}`
     case 'prepare_send':

@@ -64,7 +64,12 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
         (SELECT count(*)::int FROM computer_use_approvals WHERE status='pending') AS approvals
        FROM computer_use WHERE id=true`,
     ),
-    query('SELECT domain,logged_in FROM computer_use_platforms'),
+    // A stored login counts as logged in: the model signs in itself through `log_in`.
+    query(
+      `SELECT domain,bool_or(logged_in) AS logged_in FROM (
+         SELECT domain,logged_in FROM computer_use_platforms
+         UNION ALL SELECT domain,true FROM computer_use_credentials) p GROUP BY domain`,
+    ),
     query(
       `SELECT count(*)::int AS found,
         count(*) FILTER (WHERE requires_human OR decision='human')::int AS human

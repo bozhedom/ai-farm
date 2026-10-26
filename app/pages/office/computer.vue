@@ -202,6 +202,55 @@ function markPlatform(domain: string, loggedIn: boolean) {
   ).then(() => refresh())
 }
 
+// ---- stored platform logins: the model signs in itself, the values never come back ----
+const savedLogins = computed(() => data.value?.platforms.filter((p) => p.loginSaved) ?? [])
+const login = reactive({ domain: '', username: '', password: '', loginUrl: '' })
+const loginError = ref('')
+async function saveLogin() {
+  loginError.value = ''
+  if (!login.domain || !login.username || !login.password) {
+    loginError.value = 'Выберите площадку и введите логин и пароль.'
+    return
+  }
+  const result = await run(
+    'login-save',
+    () =>
+      post('/api/computer-use/logins', {
+        action: 'save',
+        domain: login.domain,
+        username: login.username,
+        password: login.password,
+        loginUrl: login.loginUrl.trim(),
+        signIn: true,
+      }),
+    'Вход сохранён. Модель войдёт на площадку в ближайшем задании.',
+  )
+  // The password leaves the page as soon as the server has it.
+  login.password = ''
+  if (result) Object.assign(login, { domain: '', username: '', loginUrl: '' })
+  await refresh()
+}
+function signIn(domain: string) {
+  void run(
+    `login-sign-in-${domain}`,
+    () => post('/api/computer-use/logins', { action: 'sign_in', domain }),
+    'Задание «войти» поставлено в очередь.',
+  ).then(() => refresh())
+}
+function deleteLogin(domain: string) {
+  void run(
+    `login-delete-${domain}`,
+    () => post('/api/computer-use/logins', { action: 'delete', domain }),
+    'Сохранённый вход удалён.',
+  ).then(() => refresh())
+}
+const loginState = (p: { lastLoginAt: string | null; lastLoginError: string }) =>
+  !p.lastLoginAt
+    ? 'модель ещё не входила'
+    : p.lastLoginError
+      ? `последняя попытка ${ago(p.lastLoginAt)}: ${lowerFirst(computerReason(p.lastLoginError))}`
+      : `данные введены ${ago(p.lastLoginAt)}`
+
 // ---- search directions: the owner steers what the rotation looks for ----
 const directions = computed(() => data.value?.directions ?? [])
 const enabledDirections = computed(() => directions.value.filter((d) => d.enabled).length)
@@ -637,6 +686,94 @@ const key = (name: string) => act({ name: 'key', key: name })
           />
         </section>
 
+        <section class="card rise" aria-labelledby="computer-logins">
+          <h2 id="computer-logins">Вход на площадки</h2>
+          <p class="small muted">
+            Дайте логин и пароль от аккаунта площадки, и модель войдёт сама: откроет страницу входа,
+            а логин и пароль в поля введёт сервер. Модель их не видит. На сервере они хранятся
+            зашифрованными и вводятся только на https-странице этой площадки, не больше
+            {{ state.loginAttemptsPerDay }} попыток в сутки. Код из SMS или почты придёт в «Нужен
+            человек»: его вы введёте через управление вручную.
+          </p>
+          <form class="login-form" autocomplete="off" @submit.prevent="saveLogin">
+            <div class="field">
+              <label for="login-domain">Площадка</label>
+              <select id="login-domain" v-model="login.domain" class="select">
+                <option value="" disabled>Выберите</option>
+                <option v-for="p in data.platforms" :key="p.domain" :value="p.domain">
+                  {{ p.domain }}{{ p.loginSaved ? ' (вход сохранён)' : '' }}
+                </option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="login-username">Логин, почта или телефон</label>
+              <input
+                id="login-username"
+                v-model="login.username"
+                class="input"
+                type="text"
+                maxlength="200"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field">
+              <label for="login-password">Пароль</label>
+              <input
+                id="login-password"
+                v-model="login.password"
+                class="input"
+                type="password"
+                maxlength="200"
+                autocomplete="new-password"
+              />
+            </div>
+            <div class="field">
+              <label for="login-url">Страница входа (необязательно)</label>
+              <input
+                id="login-url"
+                v-model="login.loginUrl"
+                class="input"
+                type="url"
+                maxlength="2000"
+                placeholder="https://www.fl.ru/login/"
+              />
+            </div>
+            <p v-if="loginError" class="small hint-err login-wide">{{ loginError }}</p>
+            <div class="login-wide">
+              <button type="submit" class="btn btn-primary" :disabled="!!busy || status.offline">
+                {{ busy === 'login-save' ? 'Сохраняем' : 'Сохранить и войти' }}
+              </button>
+            </div>
+          </form>
+          <ul v-if="savedLogins.length" class="login-list">
+            <li v-for="p in savedLogins" :key="p.domain">
+              <div>
+                <strong>{{ p.domain }}</strong>
+                <p class="small muted">{{ loginState(p) }}</p>
+              </div>
+              <div class="row-wrap actions">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="!!busy || status.offline"
+                  @click="signIn(p.domain)"
+                >
+                  Войти сейчас
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="!!busy || status.offline"
+                  @click="deleteLogin(p.domain)"
+                >
+                  Удалить
+                </button>
+              </div>
+            </li>
+          </ul>
+        </section>
+
         <section class="card rise manual" aria-labelledby="computer-manual">
           <div class="card-head">
             <h2 id="computer-manual">Управление вручную</h2>
@@ -791,7 +928,7 @@ const key = (name: string) => act({ name: 'key', key: name })
             <p class="small muted">
               Отметьте площадки после входа через управление вручную. По ним модель получает задания
               «проверить заказы и откликнуться» и «ответить заказчикам и сдать работу»; отклики
-              возможны только здесь.
+              возможны только здесь. Площадки с сохранённым входом участвуют и без галочки.
             </p>
             <ul class="platform-list">
               <li v-for="platform in data.platforms" :key="platform.domain">
@@ -1367,6 +1504,31 @@ section.card + details.card {
 }
 .hint-err {
   color: var(--st-err-ink);
+}
+.login-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--s-3) var(--s-4);
+  margin-top: var(--s-4);
+}
+.login-wide {
+  grid-column: 1 / -1;
+}
+.login-list {
+  list-style: none;
+  margin: var(--s-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-3);
+}
+.login-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
 }
 .platforms {
   margin-top: var(--s-5);

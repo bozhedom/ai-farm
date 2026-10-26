@@ -105,6 +105,11 @@ export interface ComputerPlatformView {
   loggedIn: boolean
   proposalsToday: number
   sentToday: number
+  /** The owner stored a login: the model signs in itself through `log_in`. Values never leave the server. */
+  loginSaved: boolean
+  loginUrl: string
+  lastLoginAt: string | null
+  lastLoginError: string
 }
 /** A search direction of the rotation; built-ins can be disabled, owner directions deleted. */
 export interface ComputerDirectionView {
@@ -149,6 +154,8 @@ export interface ComputerUseView {
     autoProposals: boolean
     autoProposalsAllowed: boolean
     proposalsPerDay: number
+    /** Stored-login fills per platform per UTC day. */
+    loginAttemptsPerDay: number
     /** The owner's remote-control lease, if active. */
     manualUntil: string | null
   }

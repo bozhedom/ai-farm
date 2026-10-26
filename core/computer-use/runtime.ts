@@ -47,6 +47,13 @@ import {
   platformOf,
 } from './platforms'
 import {
+  credentialDomains,
+  loginHostMatches,
+  loginHosts,
+  readCredentials,
+  recordLoginAttempt,
+} from './credentials'
+import {
   effectiveProposalsPerDay,
   priceReason,
   profileForModel,
@@ -205,9 +212,14 @@ export async function setPlatformLogin(domain: string, loggedIn: boolean) {
     { domain: name, loggedIn },
   )
 }
+/**
+ * Platforms the model works on: marked as logged in by the owner, or with a stored login the
+ * model can use itself through `log_in`.
+ */
 export async function loggedInPlatforms(db?: Connection) {
   const rows = await query<{ domain: string }>(
-    'SELECT domain FROM computer_use_platforms WHERE logged_in ORDER BY domain',
+    `SELECT domain FROM computer_use_platforms WHERE logged_in
+     UNION SELECT domain FROM computer_use_credentials ORDER BY domain`,
     [],
     db,
   )
@@ -223,6 +235,7 @@ export async function pickRotationGoal(index: number, db: Connection) {
   const platforms = platformGoals(
     await loggedInPlatforms(db),
     effectiveProposalsPerDay(profile, config().COMPUTER_USE_PROPOSALS_PER_DAY),
+    await credentialDomains(db),
   )
   const slot = rotationSlot(index, platforms.length)
   if (slot.kind === 'platform') return { goal: platforms[slot.index]!, directionId: null }
@@ -1251,6 +1264,65 @@ async function typeStored(
   })
 }
 
+const loginAttemptsToday = `SELECT count(*)::int AS n FROM computer_use_steps
+  WHERE action->>'name'='log_in' AND action->>'platform_domain'=$1 AND decision IN ('allowed','failed')
+  AND ${utcDay}`
+
+type LogInCall = Extract<ToolCall, { name: 'log_in' }>
+/**
+ * Fills the owner's stored login of a platform. The values go from the database to one VM action
+ * and nowhere else: the step records the domain only. Refused unless the platform has a stored
+ * login, the page is an https page of that platform (or of the owner's login page host) and the
+ * daily attempt limit is not reached, so a page cannot lure the values elsewhere and a wrong
+ * password does not lock the account by repetition.
+ */
+async function logIn(
+  task: TaskRow,
+  agent: VmAgentClient,
+  stepNo: number,
+  call: LogInCall,
+  page: PageContext,
+  base: StepRecord,
+) {
+  const domain = call.platform_domain
+  const block = (reason: string) =>
+    recordStep(task, stepNo, { ...base, decision: 'blocked', reason })
+  if (!isFreelancePlatform(domain)) return block('COMPUTER_USE_PLATFORM_UNKNOWN')
+  let login: Awaited<ReturnType<typeof readCredentials>>
+  try {
+    login = await readCredentials(domain)
+  } catch (error) {
+    return block(safeError(error))
+  }
+  if (!login) return block('COMPUTER_USE_LOGIN_NOT_FOUND')
+  const hosts = loginHosts(domain, login.loginUrl)
+  if (!loginHostMatches(page.url, hosts)) return block('COMPUTER_USE_LOGIN_HOST_MISMATCH')
+  const [attempts] = await query(loginAttemptsToday, [domain])
+  if ((attempts!.n as number) >= P.maxLoginAttemptsPerDomainPerDay)
+    return block('COMPUTER_USE_LOGIN_LIMIT')
+  const result = await perform(task, agent, {
+    name: 'fill_login',
+    hosts,
+    username: login.username,
+    password: login.password,
+  })
+  await recordLoginAttempt(domain, result.ok ? '' : result.error)
+  await recordStep(task, stepNo, {
+    ...base,
+    decision: result.ok ? 'allowed' : 'failed',
+    reason: result.ok ? '' : result.error.slice(0, 200),
+    urlAfter: result.url,
+    title: result.title,
+  })
+  await audit('computer_use_login', 'Модель вошла на площадку сохранённым входом владельца.', {
+    taskId: task.id,
+    stepNo,
+    domain,
+    ok: result.ok,
+    error: result.error,
+  })
+}
+
 type DocumentCall = Extract<ToolCall, { name: 'write_document' }>
 async function writeDocument(
   task: TaskRow,
@@ -1418,6 +1490,7 @@ async function runStep(
     stored: await storedFor(task.id),
     platforms: {
       loggedIn: await loggedInPlatforms(),
+      canLogIn: await credentialDomains(),
       autoProposals: c.COMPUTER_USE_AUTO_PROPOSALS && !!owner?.auto_proposals,
       proposalsPerDay: effectiveProposalsPerDay(profile, c.COMPUTER_USE_PROPOSALS_PER_DAY),
     },
@@ -1558,6 +1631,10 @@ async function runStep(
   }
   if (call.name === 'type_stored') {
     await typeStored(task, agent, stepNo, call, page, base)
+    return { kind: 'continue' }
+  }
+  if (call.name === 'log_in') {
+    await logIn(task, agent, stepNo, call, page, base)
     return { kind: 'continue' }
   }
   if (call.name === 'write_document') {

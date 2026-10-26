@@ -73,6 +73,32 @@ export const actionSchema = z.discriminatedUnion('name', [
         .regex(/^(?:[^\p{Cc}]|\n)+$/u),
     })
     .strict(),
+  // Server-only: the farm fills the owner's stored platform login. The agent checks the page
+  // host against `hosts` itself right before filling and never echoes the values back.
+  z
+    .object({
+      name: z.literal('fill_login'),
+      hosts: z
+        .array(
+          z
+            .string()
+            .max(100)
+            .regex(/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/),
+        )
+        .min(1)
+        .max(3),
+      username: z
+        .string()
+        .min(1)
+        .max(200)
+        .regex(/^[^\p{Cc}]+$/u),
+      password: z
+        .string()
+        .min(1)
+        .max(200)
+        .regex(/^[^\p{Cc}]+$/u),
+    })
+    .strict(),
 ])
 export type Action = z.infer<typeof actionSchema>
 export const inspectSchema = z

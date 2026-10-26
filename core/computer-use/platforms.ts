@@ -234,12 +234,19 @@ function unverifiedMatch(pattern: RegExp, text: string, verified: string) {
  * Goals for platforms the owner logged in: check jobs and send proposals, then check messages
  * and deliver accepted work. Research goals follow them in the rotation.
  */
-export function platformGoals(loggedIn: string[], proposalsPerDay: number): string[] {
+export function platformGoals(
+  loggedIn: string[],
+  proposalsPerDay: number,
+  canLogIn: readonly string[] = [],
+): string[] {
   const goals: string[] = []
   for (const domain of loggedIn) {
+    const login = canLogIn.includes(domain)
+      ? 'если ты не вошёл, открой страницу входа площадки и вызови log_in, сервер введёт сохранённый логин и пароль; код из SMS или капчу передай владельцу через request_approval'
+      : 'вход уже выполнен; если видишь форму входа, заверши задание через finish'
     goals.push(
-      `Открой ${domain} под аккаунтом владельца (вход уже выполнен; если видишь форму входа, заверши задание через finish). Просмотри новые задания, которые закрываются текстовыми услугами: описания, статьи, редактура, перевод, инструкции, ответы клиентам. Каждое подходящее оцени через note_opportunity с решением и оценкой соответствия; задания с запретом ИИ пропускай. Для заданий с решением take напиши отклик через draft_proposal и отправь его кнопкой площадки. Не больше ${proposalsPerDay} откликов в сутки на этой площадке.`,
-      `Открой ${domain} под аккаунтом владельца (вход уже выполнен; если видишь форму входа, заверши задание через finish). Проверь сообщения, уведомления и принятые заказы. Ответь заказчикам по делу через prepare_send с целью reply; для принятых текстовых заданий подготовь результат через write_document, вставь его через type_stored и сдай через prepare_send с целью delivery. Вопросы о деньгах вне площадки, контактах и о том, используется ли ИИ, передавай владельцу через request_approval.`,
+      `Открой ${domain} под аккаунтом владельца (${login}). Просмотри новые задания, которые закрываются текстовыми услугами: описания, статьи, редактура, перевод, инструкции, ответы клиентам. Каждое подходящее оцени через note_opportunity с решением и оценкой соответствия; задания с запретом ИИ пропускай. Для заданий с решением take напиши отклик через draft_proposal и отправь его кнопкой площадки. Не больше ${proposalsPerDay} откликов в сутки на этой площадке.`,
+      `Открой ${domain} под аккаунтом владельца (${login}). Проверь сообщения, уведомления и принятые заказы. Ответь заказчикам по делу через prepare_send с целью reply; для принятых текстовых заданий подготовь результат через write_document, вставь его через type_stored и сдай через prepare_send с целью delivery. Вопросы о деньгах вне площадки, контактах и о том, используется ли ИИ, передавай владельцу через request_approval.`,
     )
   }
   return goals

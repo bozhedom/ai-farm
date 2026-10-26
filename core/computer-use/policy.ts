@@ -46,6 +46,9 @@ export const COMPUTER_USE_POLICY = Object.freeze({
   documentOutputTokens: 2500,
   // The owner's remote control of the browser: the model does not run while it lasts.
   manualLeaseMs: 15 * 60_000,
+  // Stored-login fills per platform per UTC day (a two-step login takes two): repeated wrong
+  // passwords would get the owner's account locked.
+  maxLoginAttemptsPerDomainPerDay: 6,
   // The model is told to wrap up (record what is left, call finish) at or below these.
   wrapUpSteps: 3,
   wrapUpCostPercent: 15,

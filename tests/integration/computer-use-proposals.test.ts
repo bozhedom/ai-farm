@@ -136,6 +136,7 @@ describe('computer use on freelance platforms: assessment, proposals, permits', 
       (input) => {
         expect(input.platforms).toEqual({
           loggedIn: ['fl.ru'],
+          canLogIn: [],
           autoProposals: true,
           proposalsPerDay: original.COMPUTER_USE_PROPOSALS_PER_DAY,
         })

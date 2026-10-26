@@ -161,6 +161,7 @@ describe('computer-use tool calls are validated strictly on the server', () => {
       'note_opportunity',
       'draft_proposal',
       'type_stored',
+      'log_in',
       'write_document',
       'prepare_send',
     ])

@@ -103,9 +103,36 @@ export const insertTextSchema = z
       .regex(/^(?:[^\p{Cc}]|\n)+$/u, 'CONTROL_CHARACTERS'),
   })
   .strict()
+const loginValue = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[^\p{Cc}]+$/u, 'CONTROL_CHARACTERS')
+/**
+ * Server-only VM action: the owner's stored platform login. The model only names the platform
+ * through `log_in`; the server decrypts the values and sends them with the hosts they belong to.
+ * The VM fills them only on https pages of those hosts and never echoes them back.
+ */
+export const fillLoginSchema = z
+  .object({
+    name: z.literal('fill_login'),
+    hosts: z
+      .array(
+        z
+          .string()
+          .max(100)
+          .regex(/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/),
+      )
+      .min(1)
+      .max(3),
+    username: loginValue,
+    password: loginValue,
+  })
+  .strict()
 export const vmActionSchema = z.discriminatedUnion('name', [
   ...browserActionSchema.options,
   insertTextSchema,
+  fillLoginSchema,
 ])
 export type VmAction = z.infer<typeof vmActionSchema>
 export const INSERT_CHUNK = 2000
@@ -181,6 +208,7 @@ export const toolCallSchema = z.discriminatedUnion('name', [
     })
     .strict(),
   z.object({ name: z.literal('type_stored'), id: z.uuid() }).strict(),
+  z.object({ name: z.literal('log_in'), platform_domain: domainField }).strict(),
   z
     .object({
       name: z.literal('write_document'),
