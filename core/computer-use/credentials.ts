@@ -115,7 +115,7 @@ export async function storedLoginUrl(domain: string) {
 /** The owner's "log in now" task: open the login page, let the server fill it, report. */
 export function loginGoal(domain: string, loginUrl: string) {
   const start = loginUrl || `https://${domain}/`
-  return `Войди на ${domain} под аккаунтом владельца. Открой ${start}, найди форму входа и вызови log_in с platform_domain ${domain}: логин и пароль введёт сервер. Если вход в два шага, вызови log_in и на втором. Убедись по экрану, что вход выполнен (видно имя аккаунта или личный кабинет), и заверши задание через finish с коротким отчётом. Если площадка просит код из SMS или почты, капчу или подтверждение, вызови request_approval с действием wait и напиши, что нужно владельцу.`
+  return `Войди на ${domain} под аккаунтом владельца. Открой ${start}, найди форму входа и вызови log_in с platform_domain ${domain}: логин и пароль введёт сервер. Если вход в два шага, вызови log_in и на втором. Убедись по экрану, что вход выполнен (видно имя аккаунта или личный кабинет), и заверши задание через finish с коротким отчётом. Если появилась капча «Я не робот», пройди её сама кликами по снимку и снова нажми кнопку входа (если поля опустели, вызови log_in ещё раз). Если капча не проходится с трёх попыток или площадка просит код из SMS или почты либо подтверждение, вызови request_approval с действием wait и напиши, что нужно владельцу.`
 }
 
 export async function deleteCredentials(domain: string) {
