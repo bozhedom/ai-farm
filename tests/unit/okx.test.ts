@@ -213,6 +213,10 @@ describe('OKX wire contract', () => {
     account.perm = 'read_only,trade'
     account.ip = ''
     await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_IP_REQUIRED')
+    account.ip = '*'
+    await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_IP_REQUIRED')
+    account.ip = '0.0.0.0/0'
+    await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_IP_REQUIRED')
     account.ip = '203.0.113.1'
     account.acctLv = '4'
     await expect(venue.account(['BTC-USDT', 'ETH-USDT'])).rejects.toThrow('TRADING_ACCOUNT_MODE')

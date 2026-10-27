@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { config } from '../config'
 import type { VenueAccess } from './wire'
 import { listing } from './universe'
-import { decimal, units } from './decimal'
+import { decimal, max, units } from './decimal'
 import {
   allowPlace,
   boundIp,
@@ -154,7 +154,11 @@ export class BybitVenue implements TradingVenue {
         baseCoin: str,
         quoteCoin: z.literal('USDT'),
         status: z.literal('Trading'),
-        lotSizeFilter: z.object({ basePrecision: str, minOrderAmt: str }),
+        lotSizeFilter: z.object({
+          basePrecision: str,
+          minOrderQty: str,
+          minOrderAmt: str,
+        }),
         priceFilter: z.object({ tickSize: str }),
       })
       .parse(result.list[0])
@@ -181,11 +185,13 @@ export class BybitVenue implements TradingVenue {
         await this.request('/v5/market/orderbook', { category: 'spot', symbol: code, limit: '50' }),
       )
     if (b.s !== code) throw new Error('TRADING_BOOK_INVALID')
+    const lot = units(ins.lotSizeFilter.basePrecision)
     return {
       instrument: {
         symbol,
-        lot: units(ins.lotSizeFilter.basePrecision),
-        minQty: units(ins.lotSizeFilter.basePrecision),
+        lot,
+        // basePrecision is the step; minOrderQty is the exchange floor (may be larger).
+        minQty: max(lot, units(ins.lotSizeFilter.minOrderQty)),
         minNotional: units(ins.lotSizeFilter.minOrderAmt),
         tick: units(ins.priceFilter.tickSize),
       },

@@ -110,6 +110,7 @@ function defaults(url: URL): unknown {
                 stTag: '0',
                 lotSizeFilter: {
                   basePrecision: '0.00000001',
+                  minOrderQty: '0.00001',
                   minOrderAmt: '5',
                   maxLimitOrderQty: '100',
                 },

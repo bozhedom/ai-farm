@@ -10,10 +10,13 @@ import {
   type WalletTransport,
 } from './bybit'
 import { fromMinor, parseInternal, parseOnchain, type DepositRecord } from './math'
+import { paymentAddress } from './view'
 
 /**
- * The `wallet` worker loop: checks that the Bybit key is read-only, then stores the last 30 days
- * of deposits idempotently. Deposits start "unclassified"; only the owner decides what is income.
+ * The `wallet` worker loop: checks that the Bybit key is read-only, then stores deposits
+ * idempotently. Coverage walks forward from `synced_through` in Bybit's 30-day windows so a
+ * long outage does not permanently drop successful deposits. Deposits start "unclassified";
+ * only the owner decides what is income.
  */
 export type WalletDeps = {
   transport?: WalletTransport
@@ -66,6 +69,14 @@ export async function checkWalletKey(deps: WalletDeps = {}) {
 }
 
 async function store(record: DepositRecord, db: Connection) {
+  const expected = paymentAddress()
+  const toAddress = record.raw.toAddress || ''
+  const addressMismatch =
+    !!expected &&
+    record.source === 'onchain' &&
+    !!toAddress &&
+    toAddress.toLowerCase() !== expected.address.toLowerCase()
+
   const [row] = await query(
     `WITH prev AS (SELECT status FROM wallet_deposits WHERE source=$1 AND external_id=$2)
      INSERT INTO wallet_deposits(source,external_id,tx_id,coin,chain,amount,amount_minor,decimals,
@@ -100,15 +111,44 @@ async function store(record: DepositRecord, db: Connection) {
     db,
   )
   // Newly successful: one feed line, so the owner sees the payment and can classify it.
-  if (row && record.status === 'success' && row.previous !== 'success')
+  if (row && record.status === 'success' && row.previous !== 'success') {
+    const mismatchNote = addressMismatch
+      ? ` Адрес (${toAddress}) не совпадает с опубликованным ${expected!.network} ${expected!.address}.`
+      : ''
     await audit(
-      'wallet_deposit',
+      addressMismatch ? 'wallet_deposit_address_mismatch' : 'wallet_deposit',
       `Поступление на кошелёк Bybit: ${fromMinor(record.minor, record.decimals)} ${record.coin}` +
-        `${record.chain ? ` (${record.chain})` : ''}. Отметьте: доход или перевод себе.`,
-      { deposit: row.id, coin: record.coin, amount: record.amount, source: record.source },
+        `${record.chain ? ` (${record.chain})` : ''}.${mismatchNote} Отметьте: доход или перевод себе.`,
+      {
+        deposit: row.id,
+        coin: record.coin,
+        amount: record.amount,
+        source: record.source,
+        ...(addressMismatch ? { toAddress, expected: expected!.address } : {}),
+      },
       db,
     )
+  }
   return !!row
+}
+
+/** Windows of [start, end] ms to fetch, walking forward from the coverage cursor. */
+export function syncWindows(end: number, syncedThroughMs: number | null) {
+  const { windowMs, overlapMs, maxWindowsPerTick } = WALLET_POLICY
+  // Already covered through `end` (same tick or clock skew): nothing to fetch.
+  if (syncedThroughMs != null && syncedThroughMs >= end)
+    return [] as { start: number; end: number }[]
+  // First run covers the latest Bybit-sized window. Later runs resume from the cursor with overlap.
+  let from =
+    syncedThroughMs == null ? end - windowMs + overlapMs : Math.max(0, syncedThroughMs - overlapMs)
+  const windows: { start: number; end: number }[] = []
+  for (let i = 0; i < maxWindowsPerTick && from < end; i++) {
+    const to = Math.min(from + windowMs - overlapMs, end)
+    if (to <= from) break
+    windows.push({ start: from, end: to })
+    from = to
+  }
+  return windows
 }
 
 /** One pass of the `wallet` loop. Returns counts; throws a code when anything went wrong. */
@@ -116,47 +156,60 @@ export async function walletTick(deps: WalletDeps = {}) {
   const { status, client } = await checkWalletKey(deps)
   if (!client) return { status, seen: 0, changed: 0 }
   const end = (deps.now ?? new Date()).getTime()
-  // Bybit allows at most 30 days per request; keep a minute of margin.
-  const start = end - WALLET_POLICY.windowMs + 60_000
+  const [state] = await query<{ synced_through: Date | null }>(
+    'SELECT synced_through FROM wallet_sync WHERE id=true',
+  )
+  const windows = syncWindows(end, state?.synced_through?.getTime() ?? null)
   let errorCode = ''
   let seen = 0
   let changed = 0
+  let coveredThrough = state?.synced_through?.getTime() ?? null
   try {
-    const onchain = await client.pages('/v5/asset/deposit/query-record', start, end)
-    const internal = await client.pages('/v5/asset/deposit/query-internal-record', start, end)
-    const records: DepositRecord[] = []
-    for (const [rows, parse] of [
-      [onchain, parseOnchain],
-      [internal, parseInternal],
-    ] as const)
-      for (const raw of rows) {
-        try {
-          const record = parse(raw)
-          if (record) records.push(record)
-        } catch (error) {
-          // One unreadable row must not hide the others; the loop still reports the code.
-          errorCode ||= code(error)
+    for (const window of windows) {
+      const onchain = await client.pages('/v5/asset/deposit/query-record', window.start, window.end)
+      const internal = await client.pages(
+        '/v5/asset/deposit/query-internal-record',
+        window.start,
+        window.end,
+      )
+      const records: DepositRecord[] = []
+      for (const [rows, parse] of [
+        [onchain, parseOnchain],
+        [internal, parseInternal],
+      ] as const)
+        for (const raw of rows) {
+          try {
+            const record = parse(raw)
+            if (record) records.push(record)
+          } catch (error) {
+            // One unreadable row must not hide the others; the loop still reports the code.
+            errorCode ||= code(error)
+          }
         }
-      }
-    seen = records.length
-    await transaction(async (db) => {
-      for (const record of records) if (await store(record, db)) changed++
-    })
+      seen += records.length
+      await transaction(async (db) => {
+        for (const record of records) if (await store(record, db)) changed++
+      })
+      coveredThrough = window.end
+      if (errorCode) break
+    }
   } catch (error) {
     errorCode = code(error)
   }
   if (errorCode) {
     await query(
-      `INSERT INTO wallet_sync(id,sync_error,sync_error_at) VALUES(true,$1,now())
-       ON CONFLICT(id) DO UPDATE SET sync_error=$1,sync_error_at=now()`,
-      [errorCode],
+      `INSERT INTO wallet_sync(id,sync_error,sync_error_at,synced_through) VALUES(true,$1,now(),$2)
+       ON CONFLICT(id) DO UPDATE SET sync_error=$1,sync_error_at=now(),
+         synced_through=COALESCE($2,wallet_sync.synced_through)`,
+      [errorCode, coveredThrough != null ? new Date(coveredThrough) : null],
     )
     throw new Error(errorCode)
   }
   await query(
-    `INSERT INTO wallet_sync(id,synced_at,sync_error,rows_seen) VALUES(true,now(),'',$1)
-     ON CONFLICT(id) DO UPDATE SET synced_at=now(),sync_error='',rows_seen=$1`,
-    [seen],
+    `INSERT INTO wallet_sync(id,synced_at,sync_error,rows_seen,synced_through)
+     VALUES(true,now(),'',$1,$2)
+     ON CONFLICT(id) DO UPDATE SET synced_at=now(),sync_error='',rows_seen=$1,synced_through=$2`,
+    [seen, coveredThrough != null ? new Date(coveredThrough) : new Date(end)],
   )
   return { status, seen, changed }
 }

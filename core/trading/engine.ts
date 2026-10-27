@@ -368,7 +368,19 @@ async function submit(
     await halt(p, 'TRADING_ORDER_UNKNOWN', db)
     return
   }
-  // Settlement happens on the next tick, after the exchange has made its fills visible.
+  // Best-effort same-tick settle for IOC. If the fill is not published yet, leave submitted
+  // for recover on the next tick — never escalate a successful place to unknown here.
+  try {
+    const result = await venue.order(request)
+    if (!result) return
+    if (result.state === 'live' || result.state === 'partially_filled') {
+      await venue.cancel(request)
+      return
+    }
+    await settle(row, result, market.instrument.minQty, db)
+  } catch {
+    /* recover on the next tick */
+  }
 }
 
 async function mark(p: PortfolioRow, markets: Record<TradingSymbol, Market>, db: Connection) {

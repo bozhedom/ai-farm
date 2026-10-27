@@ -16,6 +16,9 @@ import { outputSchemaForTemplate } from '../../core/policy'
 import { structuredTemplates, structuredTextSchema } from '../../core/structured-text'
 import { sourcePostsSchema } from '../../core/source-posts'
 import { managerPlanSchema } from '../../core/manager/plan'
+import { documentSchema } from '../../core/computer-use/model'
+import { toolCallSchema } from '../../core/computer-use/schema'
+import { computerUseTools, strictCompatible } from '../../core/computer-use/tools'
 import { modelJsonSchema, strictSchemaIssues } from '../../core/providers/json-schema'
 import { prepareModelRequest } from '../../core/providers'
 
@@ -43,11 +46,27 @@ const modelSchemas: [string, z.ZodType][] = [
     `structured ${t}`,
     withResultLanguage(structuredTextSchema(t), t, 'Исходный текст'),
   ]),
+  ['computer-use document', documentSchema],
 ]
 
 describe('strict structured output schemas', () => {
   it.each(modelSchemas)('%s: every object lists all properties as required', (_, schema) => {
     expect(strictSchemaIssues(modelJsonSchema(schema))).toEqual([])
+  })
+
+  it.each(toolCallSchema.options.map((option) => [option.shape.name.value, option] as const))(
+    'computer-use tool %s: zod schema is strict',
+    (_, schema) => {
+      expect(strictSchemaIssues(modelJsonSchema(schema))).toEqual([])
+    },
+  )
+
+  it('computer-use OpenRouter tool parameters stay strict after anyOf rewrite', () => {
+    expect(computerUseTools.length).toBe(toolCallSchema.options.length)
+    for (const tool of computerUseTools) {
+      const parameters = strictCompatible(tool.parameters)
+      expect(strictSchemaIssues(parameters)).toEqual([])
+    }
   })
 
   it('covers the architect offers for job posts, landings and proofreading', () => {

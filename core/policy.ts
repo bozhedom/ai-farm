@@ -166,12 +166,17 @@ export const MANAGER_POLICY = Object.freeze({
   priceMaxAgeMs: 90_000,
 })
 /**
- * Bybit deposit watcher: a read-only key, the last 30 days (Bybit's own maximum window), bounded
- * pages. Only owner-classified "income" deposits count as real income.
+ * Bybit deposit watcher: a read-only key, Bybit's 30-day request window, overlapping catch-up
+ * windows after a long outage, bounded pages. Only owner-classified "income" deposits count as
+ * real income.
  */
 export const WALLET_POLICY = Object.freeze({
   syncMs: 5 * 60_000,
   windowMs: 30 * 24 * 60 * 60_000,
+  /** Overlap between consecutive catch-up windows so a boundary deposit is not missed. */
+  overlapMs: 60_000,
+  /** Max 30-day windows fetched in one tick (≈90 days of catch-up). */
+  maxWindowsPerTick: 3,
   pageLimit: 50,
   maxPages: 40,
   recentRows: 20,

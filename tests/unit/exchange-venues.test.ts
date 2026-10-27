@@ -467,6 +467,51 @@ describe('account admission', () => {
   }
 })
 
+describe('Bybit market rules', () => {
+  it('uses minOrderQty as the floor and basePrecision as the lot step', async () => {
+    const now = Date.now()
+    const minute = Math.floor(now / 60_000) * 60_000
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname
+      if (path.endsWith('/instruments-info'))
+        return wrap('bybit', {
+          list: [
+            {
+              symbol: 'BTCUSDT',
+              baseCoin: 'BTC',
+              quoteCoin: 'USDT',
+              status: 'Trading',
+              lotSizeFilter: {
+                basePrecision: '0.00000001',
+                minOrderQty: '0.00001',
+                minOrderAmt: '5',
+              },
+              priceFilter: { tickSize: '0.01' },
+            },
+          ],
+        })
+      if (path.endsWith('/kline'))
+        return wrap('bybit', {
+          list: [1, 2, 3].map((i) => [
+            String(minute - i * 60_000),
+            '1',
+            '1',
+            '1',
+            '80000',
+            '1',
+            '1',
+          ]),
+        })
+      return wrap('bybit', { s: 'BTCUSDT', b: [['79999', '1']], a: [['80001', '1']], ts: now })
+    })
+    const market = await new BybitVenue('paper', transport).market('BTC-USDT')
+    expect(market.instrument.lot).toBe(units('0.00000001'))
+    expect(market.instrument.minQty).toBe(units('0.00001'))
+    expect(market.instrument.minNotional).toBe(units('5'))
+    expect(market.candles).toHaveLength(3)
+  })
+})
+
 describe('Bitget market rules', () => {
   it('treats a zero quantity minimum as one lot and keeps the amount minimum', async () => {
     const now = Date.now()

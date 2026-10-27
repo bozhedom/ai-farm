@@ -210,7 +210,7 @@ export type DocumentInput = {
   kind: DocumentKind
 }
 export type DocumentWriter = (input: DocumentInput) => Promise<{ text: string }>
-const documentSchema = z.object({ text: z.string().min(1).max(12000) })
+export const documentSchema = z.object({ text: z.string().min(1).max(12000) }).strict()
 const documentRole = 'Исполнитель заданий площадки'
 export const documentCallKey = (taskId: string, stepNo: number) =>
   `computer-use:${taskId}:${stepNo}:document`

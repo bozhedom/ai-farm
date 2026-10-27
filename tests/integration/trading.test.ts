@@ -202,10 +202,7 @@ describe('durable trading lifecycle', () => {
     await Promise.all([tradingTick(factory), tradingTick(factory)])
     expect(exchange.placed).toHaveLength(1)
     expect(await agents(scope('okx', 'demo'))).toHaveLength(1)
-    expect(await pendingOrder(scope('okx', 'demo'))).toMatchObject({ status: 'submitted' })
-    await tick()
-    await tick()
-    expect(exchange.placed).toHaveLength(1)
+    // IOC fill is settled on the same tick when the exchange already published it.
     expect(await pendingOrder(scope('okx', 'demo'))).toBeUndefined()
     expect((await agents(scope('okx', 'demo')))[0]!.cash).toBe(
       exchange.balances.USDT.total.toString(),
@@ -730,14 +727,11 @@ describe('multiple independent exchanges', () => {
     exchange.loseRequest = true
     await tradingTick(own)
     expect(await pendingOrder(scope('okx', 'demo'))).toMatchObject({ status: 'unknown' })
-    expect(await pendingOrder(scope('bybit', 'demo'))).toMatchObject({ status: 'submitted' })
-    await query('UPDATE trading_portfolios SET last_tick=NULL')
-    await tradingTick(own)
+    expect(await pendingOrder(scope('bybit', 'demo'))).toBeUndefined()
     expect(await portfolio(scope('bybit', 'demo'))).toMatchObject({
       status: 'running',
       check_error: '',
     })
-    expect(await pendingOrder(scope('bybit', 'demo'))).toBeUndefined()
     expect(exchange.placed).toHaveLength(1)
     expect(other.placed).toHaveLength(1)
     const all = await query('SELECT client_id FROM trading_orders')
@@ -791,10 +785,8 @@ describe('multiple independent exchanges', () => {
     try {
       await tradingTick(own, () => false, ['bybit'])
       expect(done).toBe(false)
-      expect(await pendingOrder(scope('bybit', 'demo'))).toMatchObject({ status: 'submitted' })
-      await query("UPDATE trading_portfolios SET last_tick=NULL WHERE exchange='bybit'")
-      await tradingTick(own, () => false, ['bybit'])
       expect(await pendingOrder(scope('bybit', 'demo'))).toBeUndefined()
+      expect(other.placed).toHaveLength(1)
       expect(done).toBe(false)
     } finally {
       release()

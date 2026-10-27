@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto'
 import { assertSymbol, listing } from './universe'
-import { setBalance, allowPlace, type VenueAccess } from './wire'
+import { setBalance, allowPlace, boundIp, type VenueAccess } from './wire'
 import { z } from 'zod'
 import { config } from '../config'
 import { TRADING_POLICY as P } from '../policy'
@@ -246,7 +246,13 @@ export class OkxVenue implements TradingVenue {
       throw new Error('TRADING_KEY_PERMISSIONS')
     // Cash spot is available in spot and futures account modes. Margin/portfolio modes are refused.
     if (!['1', '2'].includes(c.acctLv)) throw new Error('TRADING_ACCOUNT_MODE')
-    if (this.mode === 'live' && !c.ip?.trim()) throw new Error('TRADING_IP_REQUIRED')
+    if (this.mode === 'live')
+      boundIp(
+        (c.ip || '')
+          .split(/[,;\s]+/)
+          .map((ip) => ip.trim())
+          .filter(Boolean),
+      )
     const positions = z
       .array(z.object({ pos: text }))
       .parse(await this.request('/api/v5/account/positions', { private: true }))

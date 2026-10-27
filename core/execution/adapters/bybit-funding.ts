@@ -469,6 +469,7 @@ export class BybitFundingAdapter implements ExecutionAdapter {
             symbolType: str.optional(),
             lotSizeFilter: z.object({
               basePrecision: positive,
+              minOrderQty: positive,
               minOrderAmt: positive,
               maxLimitOrderQty: positive,
             }),
@@ -476,7 +477,8 @@ export class BybitFundingAdapter implements ExecutionAdapter {
           .parse(result.list[0])
         if (ins.stTag === '1' || ['xstocks', 'adventure'].includes(ins.symbolType || ''))
           throw new Error('EXECUTION_INSTRUMENT_INVALID')
-        lot = minQty = ins.lotSizeFilter.basePrecision
+        lot = ins.lotSizeFilter.basePrecision
+        minQty = ins.lotSizeFilter.minOrderQty > lot ? ins.lotSizeFilter.minOrderQty : lot
         minNotional = ins.lotSizeFilter.minOrderAmt
         limits.spot = ins.lotSizeFilter.maxLimitOrderQty
       } else {
