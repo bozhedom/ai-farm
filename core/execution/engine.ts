@@ -31,84 +31,6 @@ async function defaultFactory(p: ExecutionPortfolio) {
   return (await import('./factory')).createExecutionDriver(p)
 }
 
-/** Demo acceptance requires proved round trips, rather than attempts or rejected orders. */
-async function requireDemoAcceptance(p: ExecutionPortfolio) {
-  const demo = await portfolio(p.track, 'demo')
-  if (!demo.started_at || demo.status === 'attention' || executionRiskStopped(demo))
-    throw new Error('EXECUTION_DEMO_ACCEPTANCE_REQUIRED')
-  const unresolved = await query(
-    `SELECT 1 FROM execution_operations o LEFT JOIN execution_legs l ON l.operation_id=o.id
-     WHERE o.track=$1 AND o.mode='demo' AND (o.closed_at IS NULL OR o.status='attention' OR l.state<>'terminal') LIMIT 1`,
-    [p.track],
-  )
-  if (unresolved.length) throw new Error('EXECUTION_DEMO_ACCEPTANCE_REQUIRED')
-  const candidates = await query<ExecutionOperation>(
-    "SELECT * FROM execution_operations WHERE track=$1 AND mode='demo' AND status='closed' AND closed_at IS NOT NULL AND plan->>'configuration'=$2 ORDER BY closed_at DESC LIMIT 500",
-    [p.track, executionConfiguration(p.settings)],
-  )
-  const accepted: ExecutionOperation[] = []
-  for (const op of candidates) {
-    const legs = await query<ExecutionLeg>(
-      'SELECT * FROM execution_legs WHERE operation_id=$1 ORDER BY sequence',
-      [op.id],
-    )
-    if (
-      !legs.length ||
-      legs.some(
-        (leg) =>
-          leg.state !== 'terminal' ||
-          !leg.receipt ||
-          !['filled', 'cancelled', 'rejected'].includes(leg.receipt.status),
-      )
-    )
-      continue
-    const fills = legs.filter(
-      (leg) =>
-        leg.receipt &&
-        ['filled', 'cancelled'].includes(leg.receipt.status) &&
-        leg.receipt.externalId &&
-        !leg.receipt.externalId.startsWith('paper:') &&
-        units(leg.receipt.filledQuantity) > 0n,
-    )
-    const total = (action: ExecutionIntent['action']) =>
-      fills
-        .filter((leg) => leg.prepared.intent.action === action)
-        .reduce((sum, leg) => sum + units(leg.receipt!.filledQuantity), 0n)
-    const buy = total('buy'),
-      sell = total('sell'),
-      short = total('short'),
-      cover = total('cover')
-    const [flow] = await query<{ n: string }>(
-      'SELECT count(*) n FROM execution_cashflows WHERE operation_id=$1 AND kind=$2',
-      [op.id, p.track === 'prediction' ? 'settlement' : 'funding'],
-    )
-    const complete =
-      p.track === 'defi'
-        ? total('supply') > 0n && total('withdraw') >= total('supply')
-        : p.track === 'funding'
-          ? buy > 0n && sell > 0n && short > 0n && cover >= short && Number(flow?.n) > 0
-          : p.track === 'prediction'
-            ? buy > 0n && (sell >= buy || Number(flow?.n) > 0)
-            : buy > 0n && sell > 0n
-    if (complete) accepted.push(op)
-  }
-  if (accepted.length < P.minDemoOperations) throw new Error('EXECUTION_DEMO_ACCEPTANCE_REQUIRED')
-  const first = Math.min(...accepted.map((op) => op.created_at.getTime()))
-  const last = Math.max(...accepted.map((op) => op.closed_at!.getTime()))
-  if (
-    first < demo.started_at.getTime() ||
-    last > Date.now() ||
-    last - first < P.minDemoHours * 3600000
-  )
-    throw new Error('EXECUTION_DEMO_ACCEPTANCE_REQUIRED')
-  const incident = await query(
-    `SELECT 1 FROM execution_events WHERE track=$1 AND mode='demo' AND created_at BETWEEN $2 AND $3
-     AND code ~ '(UNKNOWN|MISMATCH|RECONCILIATION|BUDGET_EXCEEDED|PREPARE_REJECTED)' LIMIT 1`,
-    [p.track, new Date(first), new Date(last)],
-  )
-  if (incident.length) throw new Error('EXECUTION_DEMO_ACCEPTANCE_REQUIRED')
-}
-
 const opening = (intent: ExecutionIntent) =>
   ['buy', 'short', 'approve', 'supply'].includes(intent.action)
 const openingForbidden = (p: ExecutionPortfolio) =>
@@ -202,7 +124,8 @@ export async function controlExecution(
     )
     if (p.status === 'attention' || (p.close_requested && open.length))
       throw new Error('EXECUTION_RECONCILIATION_REQUIRED')
-    if (mode === 'live') await requireDemoAcceptance(p)
+    // Owner waived Demo profitability acceptance on 28.10.2026; Live still needs
+    // EXECUTION_LIVE_ENABLED, accepted tracks, capital and credentials.
     const driver = factory ? factory(p) : await defaultFactory(p)
     const identities = await driver.accounts(p)
     if (

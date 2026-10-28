@@ -152,7 +152,7 @@ const tradingWords: Record<string, string> = {
   TRADING_EXTERNAL_ORDERS: 'на аккаунте есть чужие открытые ордера',
   TRADING_BALANCE_DRIFT: 'баланс биржи расходится с журналом, нужна сверка',
   TRADING_ORDER_UNKNOWN: 'есть ордер с неясным исходом, нужна проверка на бирже',
-  TRADING_DEMO_REQUIRED: 'сначала нужна удачная проверка Demo',
+  TRADING_DEMO_REQUIRED: 'раньше требовалась проверка Demo (с 28.10 не нужна)',
 }
 /** Errors raised after the exchange accepted the key and its permissions. */
 const accountStateCodes = new Set([
@@ -542,8 +542,6 @@ export function launchSteps(input: LaunchInput): LaunchView {
   const gates = {
     enabled: trading.liveEnabled,
     key: liveKeyOk,
-    demo: demoVerified,
-    paper: b.paper.qualified,
     capital: b.live.capitalOk,
   }
   const gatesOk = Object.values(gates).every(Boolean)
@@ -551,8 +549,6 @@ export function launchSteps(input: LaunchInput): LaunchView {
   const missing = [
     !gates.enabled && 'TRADING_LIVE_ENABLED=true в .env',
     !gates.key && 'принятый торговый ключ',
-    !gates.demo && 'проверка Demo',
-    !gates.paper && 'зрелый агент тренировки (не меньше 7 дней и 20 сделок)',
     !gates.capital && `бюджет от ${trading.minLiveUsdt} USDT`,
   ].filter((x): x is string => !!x)
   add({
@@ -561,7 +557,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
     status: liveRunning ? 'done' : gatesOk ? 'needed' : 'blocked',
     required: false,
     title: 'Включить реальную торговлю на Bybit',
-    why: 'Единственный торговый режим с настоящими деньгами. Прибыль не гарантируется; убыток ограничен вашим бюджетом и лимитами риска (2% в день, 10% просадки).',
+    why: 'Единственный торговый режим с настоящими деньгами. Прибыль не гарантируется; убыток ограничен вашим бюджетом и лимитами риска (2% в день, 10% просадки). Demo и прибыльная тренировка больше не требуются для запуска.',
     actions: [
       'Админ ставит TRADING_LIVE_ENABLED=true в .env.',
       'В «Торговой ферме» задайте бюджет для Bybit и нажмите «Запустить» в режиме «Реальные деньги», введя фразу подтверждения.',
@@ -574,7 +570,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
       : b.live.status === 'paused' || b.live.status === 'stopped'
         ? `Остановлена: ${tradingWord(b.live.reason) || b.live.reason || 'вами'}. Снова запускаете вы.`
         : gatesOk
-          ? 'Все проверки пройдены. Запуск только вашей рукой с фразой подтверждения.'
+          ? 'Можно запускать. Запуск только вашей рукой с фразой подтверждения; прибыль не обещается.'
           : `Пока нельзя. Не хватает: ${list(missing)}.`,
   })
 

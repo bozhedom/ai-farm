@@ -774,56 +774,30 @@ async function seedDemoCycles(
   }
 }
 
-describe('execution Live acceptance', () => {
-  it('requires new verified cycles after changing parameters even if Demo and Live settings now match', async () => {
-    const h = harness()
-    vi.stubEnv('EXECUTION_LIVE_ENABLED', 'true')
-    vi.stubEnv('EXECUTION_LIVE_ACCEPTED_TRACKS', 'prediction')
-    await seedDemoCycles(true)
-    const changed = {
-      ...(await portfolio('prediction', 'demo')).settings,
-      predictionTicker: 'KXNEXT-26OCT14',
-      probabilityBps: 7100,
-    }
-    for (const mode of ['demo', 'live'] as const)
-      await configureExecution({ track: 'prediction', mode, capital: '100', settings: changed })
-    await expect(controlExecution('prediction', 'live', 'start', h.factory)).rejects.toThrow(
-      'EXECUTION_DEMO_ACCEPTANCE_REQUIRED',
-    )
-    await seedDemoCycles(true, changed)
-    await controlExecution('prediction', 'live', 'start', h.factory)
-    expect((await portfolio('prediction', 'live')).status).toBe('running')
-    expect(await query('SELECT id FROM execution_operations')).toHaveLength(10)
-    expect(h.broadcast).not.toHaveBeenCalled()
-  })
-
-  it('does not grandfather legacy cycles or permit rewriting their configuration evidence', async () => {
+describe('execution Live enablement', () => {
+  it('starts Live with enablement alone and keeps Demo plan configuration immutable', async () => {
     const h = harness()
     vi.stubEnv('EXECUTION_LIVE_ENABLED', 'true')
     vi.stubEnv('EXECUTION_LIVE_ACCEPTED_TRACKS', 'prediction')
     await configure('prediction', 'live')
     const settings = (await portfolio('prediction', 'live')).settings
     await seedDemoCycles(true, settings, false)
-    await expect(controlExecution('prediction', 'live', 'start', h.factory)).rejects.toThrow(
-      'EXECUTION_DEMO_ACCEPTANCE_REQUIRED',
-    )
     await expect(
       query(
         "UPDATE execution_operations SET plan=plan||jsonb_build_object('configuration',$1::text) WHERE mode='demo'",
         [executionConfiguration(settings)],
       ),
     ).rejects.toThrow('EXECUTION_PLAN_IMMUTABLE')
-    expect(
-      (await query<ExecutionOperation>('SELECT * FROM execution_operations'))[0]!.plan
-        .configuration,
-    ).toBeUndefined()
+    await controlExecution('prediction', 'live', 'start', h.factory)
+    expect((await portfolio('prediction', 'live')).status).toBe('running')
+    expect(h.broadcast).not.toHaveBeenCalled()
   })
 
-  it('uses the immutable settings snapshot independently of object key order and later Demo edits', async () => {
+  it('uses settings independently of object key order', async () => {
     const h = harness()
     vi.stubEnv('EXECUTION_LIVE_ENABLED', 'true')
     vi.stubEnv('EXECUTION_LIVE_ACCEPTED_TRACKS', 'prediction')
-    await seedDemoCycles(true)
+    await configure('prediction', 'demo')
     const original = (await portfolio('prediction', 'demo')).settings
     const reordered = Object.fromEntries(
       Object.entries(original).reverse(),
@@ -835,54 +809,23 @@ describe('execution Live acceptance', () => {
       capital: '100',
       settings: reordered,
     })
-    await configureExecution({
-      track: 'prediction',
-      mode: 'demo',
-      capital: '100',
-      settings: { ...original, probabilityBps: 7100 },
-    })
     await controlExecution('prediction', 'live', 'start', h.factory)
     expect((await portfolio('prediction', 'live')).status).toBe('running')
   })
 
-  it('requires explicit enablement and never accepts five rejected demo attempts', async () => {
+  it('requires explicit Live enablement and accepted tracks', async () => {
     const h = harness()
     await configure('prediction', 'live')
     await expect(controlExecution('prediction', 'live', 'start', h.factory)).rejects.toThrow(
       'EXECUTION_LIVE_DISABLED',
     )
     vi.stubEnv('EXECUTION_LIVE_ENABLED', 'true')
+    vi.stubEnv('EXECUTION_LIVE_ACCEPTED_TRACKS', 'arbitrage')
+    await expect(controlExecution('prediction', 'live', 'start', h.factory)).rejects.toThrow(
+      'EXECUTION_LIVE_DISABLED',
+    )
     vi.stubEnv('EXECUTION_LIVE_ACCEPTED_TRACKS', 'prediction')
-    await seedDemoCycles(false)
-    await expect(controlExecution('prediction', 'live', 'start', h.factory)).rejects.toThrow(
-      'EXECUTION_DEMO_ACCEPTANCE_REQUIRED',
-    )
-  })
-
-  it('accepts verified complete cycles spanning a day and rejects unresolved state or incidents', async () => {
-    const h = harness()
-    await configure('prediction', 'live')
-    vi.stubEnv('EXECUTION_LIVE_ENABLED', 'true')
-    vi.stubEnv('EXECUTION_LIVE_ACCEPTED_TRACKS', 'prediction')
-    await seedDemoCycles(true)
-    await query(
-      "UPDATE execution_portfolios SET status='attention' WHERE track='prediction' AND mode='demo'",
-    )
-    await expect(controlExecution('prediction', 'live', 'start', h.factory)).rejects.toThrow(
-      'EXECUTION_DEMO_ACCEPTANCE_REQUIRED',
-    )
-    await query(
-      "UPDATE execution_portfolios SET status='paused' WHERE track='prediction' AND mode='demo'",
-    )
-    await query(
-      "INSERT INTO execution_events(track,mode,code,created_at) VALUES('prediction','demo','EXECUTION_ORDER_UNKNOWN',now()-interval '20 hours')",
-    )
-    await expect(controlExecution('prediction', 'live', 'start', h.factory)).rejects.toThrow(
-      'EXECUTION_DEMO_ACCEPTANCE_REQUIRED',
-    )
-    await query("DELETE FROM execution_events WHERE code='EXECUTION_ORDER_UNKNOWN'")
     await controlExecution('prediction', 'live', 'start', h.factory)
     expect((await portfolio('prediction', 'live')).status).toBe('running')
-    expect(h.broadcast).not.toHaveBeenCalled()
   })
 })

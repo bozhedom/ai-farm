@@ -17,8 +17,6 @@ const checks = computed(() => {
     ...(v.mode === 'live'
       ? [
           { label: 'Выделен бюджет для торговли', ok: v.readiness.allocated },
-          { label: 'Тестовая покупка и продажа прошли успешно', ok: v.readiness.demoVerified },
-          { label: 'Есть прибыльная тренировочная стратегия', ok: v.readiness.paperQualified },
           { label: 'Реальная торговля разрешена', ok: v.readiness.liveEnabled },
         ]
       : []),
@@ -76,10 +74,6 @@ const checks = computed(() => {
             ><small>{{ check.ok ? 'Готово' : 'Ожидает' }}</small>
           </li>
         </ul>
-        <p v-if="view.mode === 'live' && view.readiness.paperOnlyCandidate" class="t-notice">
-          Сетка и DCA работают только в тренировке. Для реального счёта нужна другая стратегия с
-          подходящими результатами.
-        </p>
         <div class="t-actions">
           <button
             class="t-button"
@@ -107,7 +101,7 @@ const checks = computed(() => {
           {{
             view.mode === 'demo'
               ? 'Проверка покупает и продаёт до 10 тестовых USDT, сверяет баланс и ставит бота на паузу.'
-              : 'Для допуска стратегия должна работать в тренировке от 7 дней, завершить 20 покупок с продажей, остаться в плюсе и иметь просадку не выше 8%.'
+              : 'Прибыль не гарантируется. Нужны ключ, бюджет, TRADING_LIVE_ENABLED и фраза подтверждения. Лимиты риска (день, просадка, стоп позиции) остаются.'
           }}
         </p>
       </section>

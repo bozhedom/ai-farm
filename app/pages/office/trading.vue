@@ -97,10 +97,7 @@ const startReady = computed(
     !v.value.unresolvedClientId &&
     (mode.value === 'paper' || v.value.readiness.keys) &&
     (mode.value !== 'live' ||
-      (v.value.readiness.allocated &&
-        v.value.readiness.liveEnabled &&
-        v.value.readiness.paperQualified &&
-        v.value.readiness.demoVerified)),
+      (v.value.readiness.allocated && v.value.readiness.liveEnabled)),
 )
 const dialog = useTemplateRef<HTMLDialogElement>('confirmDialog')
 const confirmAction = ref<'start' | 'flatten' | 'resolve'>('start'),

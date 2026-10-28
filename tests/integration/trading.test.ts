@@ -513,7 +513,7 @@ describe('durable trading lifecycle', () => {
     }
   })
 
-  it('requires independent live opt-in, a demo round trip and mature profitable paper evidence', async () => {
+  it('requires independent live opt-in and the confirmation phrase, not Demo or Paper maturity', async () => {
     await expect(
       startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 100 USDT НА OKX', false, factory),
     ).rejects.toThrow('TRADING_LIVE_DISABLED')
@@ -523,32 +523,20 @@ describe('durable trading lifecycle', () => {
       await expect(startTrading(scope('okx', 'live'), '', false, factory)).rejects.toThrow(
         'TRADING_CONFIRMATION_REQUIRED',
       )
-      await expect(
-        startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 100 USDT НА OKX', false, factory),
-      ).rejects.toThrow('TRADING_DEMO_REQUIRED')
-      await startTrading(scope('okx', 'demo'), '', true, factory)
-      await tick()
-      await tick()
-      await tick()
-      await tick()
-      await expect(
-        startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 100 USDT НА OKX', false, factory),
-      ).rejects.toThrow('TRADING_PAPER_REQUIRED')
+      const live = new Exchange()
+      live.identity = 'live-without-maturity'
+      await startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 100 USDT НА OKX', false, () => live)
+      expect(await agents(scope('okx', 'live'))).toHaveLength(1)
+      expect((await agents(scope('okx', 'live')))[0]!.parent_id).toBeNull()
     } finally {
       c.TRADING_LIVE_ENABLED = false
     }
-    expect(await agents(scope('okx', 'live'))).toHaveLength(0)
   })
 
   it.each([20, 100, 1000])(
     'starts one live agent with a %i USDT budget and an independent account ledger',
     async (budget) => {
       await allocateLive({ okx: budget, bybit: 0, binance: 0, bitget: 0 })
-      await startTrading(scope('okx', 'demo'), '', true, factory)
-      await tick()
-      await tick()
-      await tick()
-      await tick()
       await startTrading(scope('okx', 'paper'), '', false, factory)
       const proven = (await agents(scope('okx', 'paper'))).find((a) => a.kind === 'reversion')!
       await query(
@@ -587,7 +575,7 @@ describe('durable trading lifecycle', () => {
         await tradingTick(separate)
         expect(live.placed).toHaveLength(1)
         expect(cost(live.placed[0]!.qty, live.placed[0]!.price)).toBeLessThanOrEqual(units('10'))
-        expect(exchange.placed).toHaveLength(2)
+        expect(exchange.placed).toHaveLength(0)
         await query('UPDATE trading_portfolios SET last_tick=NULL')
         await tradingTick(separate)
         expect((await agents(scope('okx', 'live')))[0]!.cash).toBe(
@@ -624,11 +612,6 @@ describe('durable trading lifecycle', () => {
   })
 
   it('promotes a stronger paper leader into the flat live account without resetting losses or limits', async () => {
-    await startTrading(scope('okx', 'demo'), '', true, factory)
-    await tick()
-    await tick()
-    await tick()
-    await tick()
     exchange.reference = '100'
     await startTrading(scope('okx', 'paper'), '', false, factory)
     const [first, better] = (await agents(scope('okx', 'paper'))).filter(
@@ -886,9 +869,7 @@ describe('multiple independent exchanges', () => {
     expect((await tradingOverview('live')).allocated).toBe('18014398509482023')
   })
 
-  it('requires paper evidence and a demo round trip on the same exchange', async () => {
-    const bybitDemo = new Exchange()
-    bybitDemo.identity = 'independent-bybit-demo'
+  it('starts live per exchange with confirmation and locks allocation after start', async () => {
     await allocateLive({ okx: 25, bybit: 25, binance: 25, bitget: 25 })
     await startTrading(scope('okx', 'paper'), '', false, factory)
     const [a] = await agents(scope('okx', 'paper'))
@@ -896,29 +877,26 @@ describe('multiple independent exchanges', () => {
       "UPDATE trading_agents SET created_at=now()-interval '8 days',round_trips=20,realized=$2,cash=$3 WHERE id=$1",
       [a!.id, units('1').toString(), units('26').toString()],
     )
-    await startTrading(scope('okx', 'demo'), '', false, factory)
-    await query("UPDATE trading_agents SET round_trips=1 WHERE exchange='okx' AND mode='demo'")
     expect(await paperCandidates('okx')).toHaveLength(1)
     expect(await paperCandidates('bybit')).toHaveLength(0)
     config().TRADING_LIVE_ENABLED = true
     try {
-      await expect(
-        startTrading(scope('bybit', 'live'), 'ТОРГОВАТЬ 25 USDT НА BYBIT', false, factory),
-      ).rejects.toThrow('TRADING_DEMO_REQUIRED')
-      await startTrading(scope('bybit', 'demo'), '', false, () => bybitDemo)
-      await query("UPDATE trading_agents SET round_trips=1 WHERE exchange='bybit' AND mode='demo'")
-      await expect(
-        startTrading(scope('bybit', 'live'), 'ТОРГОВАТЬ 25 USDT НА BYBIT', false, factory),
-      ).rejects.toThrow('TRADING_PAPER_REQUIRED')
+      const bybitLive = new Exchange()
+      bybitLive.identity = 'allocated-bybit-live'
+      bybitLive.balances.USDT = { total: units('25'), available: units('25') }
+      await startTrading(scope('bybit', 'live'), 'ТОРГОВАТЬ 25 USDT НА BYBIT', false, () => bybitLive)
+      expect((await agents(scope('bybit', 'live')))[0]!.parent_id).toBeNull()
       const live = new Exchange()
       live.identity = 'allocated-okx-live'
+      live.balances.USDT = { total: units('25'), available: units('25') }
       await expect(
         startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 25 USDT НА BYBIT', false, () => live),
       ).rejects.toThrow('TRADING_CONFIRMATION_REQUIRED')
       await startTrading(scope('okx', 'live'), 'ТОРГОВАТЬ 25 USDT НА OKX', false, () => live)
       expect((await agents(scope('okx', 'live')))[0]!.cash).toBe(units('25').toString())
+      expect((await agents(scope('okx', 'live')))[0]!.parent_id).toBe(a!.id)
       expect(await portfolio(scope('okx', 'live'))).toMatchObject({
-        quote_offset: units('75').toString(),
+        quote_offset: '0',
       })
       await expect(allocateLive({ okx: 0, bybit: 50, binance: 25, bitget: 25 })).rejects.toThrow(
         'TRADING_ALLOCATION_LOCKED',

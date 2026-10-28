@@ -942,17 +942,9 @@ export async function startTrading(
     if (mode === 'live') {
       if (!config().TRADING_LIVE_ENABLED) throw new Error('TRADING_LIVE_DISABLED')
       if (confirmation !== liveConfirmation(p)) throw new Error('TRADING_CONFIRMATION_REQUIRED')
-      const demo = await portfolio(scope(exchange, 'demo'), db)
-      const demoTeam = await agents(scope(exchange, 'demo'), db)
-      if (
-        !demoTeam.some((a) => a.round_trips > 0) ||
-        demo.check_error ||
-        !demo.checked_at ||
-        Date.now() - demo.checked_at.getTime() > 600_000
-      )
-        throw new Error('TRADING_DEMO_REQUIRED')
+      // Owner waived Demo/Paper profitability acceptance on 28.10.2026: Live may start with
+      // keys, budget and the confirmation phrase. A mature paper leader is used when present.
       champion = (await paperCandidates(exchange, db))[0]
-      if (!champion) throw new Error('TRADING_PAPER_REQUIRED')
     }
     const venue = factory(s)
     if (p.status === 'running') return

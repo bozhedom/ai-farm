@@ -11,7 +11,8 @@ const messages: Record<string, string> = {
   EXECUTION_CREDENTIALS_REQUIRED: 'Подключение к счёту не настроено.',
   EXECUTION_WALLET_REQUIRED: 'Кошелёк не подключён.',
   EXECUTION_LIVE_DISABLED: 'Реальные операции выключены в настройках подключения.',
-  EXECUTION_DEMO_ACCEPTANCE_REQUIRED: 'Проверка на тестовом счёте ещё не завершена.',
+  EXECUTION_DEMO_ACCEPTANCE_REQUIRED:
+    'Раньше для Live нужны были Demo-циклы; с 28.10.2026 это не требуется.',
   EXECUTION_ALLOCATION_REQUIRED: 'Укажите сумму для этого направления.',
   EXECUTION_ALLOCATION_IMMUTABLE: 'После первого запуска сумма закреплена за счётом.',
   EXECUTION_CONNECTIONS_IMMUTABLE: 'После первого запуска подключённые счета менять нельзя.',
