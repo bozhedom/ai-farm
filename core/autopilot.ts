@@ -7,7 +7,7 @@ import { pacingNumbers } from './queue'
 import { pacingDecision } from './pacing'
 import { controlManager, managerBudget, managerModelBlocker } from './manager/runtime'
 import { startTrading, safeTradingError, type VenueFactory } from './trading/engine'
-import { ensurePortfolios, scope } from './trading/store'
+import { agents, ensurePortfolios, scope } from './trading/store'
 import { hasKeys } from './trading/wire'
 import { exchanges, type TradingExchange } from './trading/types'
 import { configureExecution, controlExecution, type ExecutionFactory } from './execution/engine'
@@ -28,9 +28,11 @@ import type { AutopilotDecision, AutonomyView } from './contracts/autonomy'
  * Server autopilot. It turns on the autonomous loops through the same server functions as the
  * office buttons. Hard rules, enforced here and by those functions:
  * - it acts only while the farm is running: a pause or emergency stop is the owner's;
- * - it only starts what was never started: a paused or stopped portfolio stays as it is. The one
- *   exception is Paper: virtual training paused by its daily loss limit resumes on the next UTC
- *   day, because that limit is about one day; Demo and Live stay paused;
+ * - it only starts what was never started: a paused or stopped portfolio stays as it is, with two
+ *   exceptions: Paper resumes after a daily-loss pause on the next UTC day, and Demo resumes after
+ *   a successful acceptance probe (`DEMO_PROBE_COMPLETE`) so keys → probe → continuous Demo needs
+ *   no further office click;
+ * - first Demo start runs the buy/sell probe automatically; later starts keep Demo running;
  * - it never turns anything off, never touches Live, money limits or owner-defined capital;
  * - a schedule or manager the owner turned off stays off.
  */
@@ -220,6 +222,21 @@ export function autopilotPlan(input: AutopilotInput): PlannedDecision[] {
         exchange: t.exchange,
         mode: t.mode,
       })
+    else if (
+      t.mode === 'demo' &&
+      t.status === 'paused' &&
+      t.reason === 'DEMO_PROBE_COMPLETE' &&
+      t.hasKeys
+    )
+      out.push({
+        key,
+        action: 'start_trading',
+        status: 'started',
+        text: `${name}: пробная сделка прошла, автопилот продолжает Demo-торговлю.`,
+        name,
+        exchange: t.exchange,
+        mode: t.mode,
+      })
     else if (t.status !== 'idle')
       none(
         key,
@@ -239,7 +256,10 @@ export function autopilotPlan(input: AutopilotInput): PlannedDecision[] {
         key,
         action: 'start_trading',
         status: 'started',
-        text: `${name}: запущена автопилотом.`,
+        text:
+          t.mode === 'demo'
+            ? `${name}: автопилот запускает пробную покупку/продажу, затем продолжит Demo.`
+            : `${name}: запущена автопилотом.`,
         name,
         exchange: t.exchange,
         mode: t.mode,
@@ -394,7 +414,10 @@ async function apply(d: PlannedDecision, deps: AutopilotDeps): Promise<Autopilot
     else if (d.action === 'start_trading') {
       if (d.mode !== 'paper' && d.mode !== 'demo') throw new Error('AUTOPILOT_MODE_FORBIDDEN')
       const s = scope(d.exchange!, d.mode)
-      await whenFree('TRADING_BUSY', () => startTrading(s, '', false, deps.trading))
+      // First Demo start proves a real buy/sell on the exchange; later starts keep Demo running.
+      const demoProbe =
+        d.mode === 'demo' && !(await agents(s)).some((agent) => agent.round_trips > 0)
+      await whenFree('TRADING_BUSY', () => startTrading(s, '', demoProbe, deps.trading))
     } else if (d.action === 'configure_execution' || d.action === 'start_execution') {
       if (d.mode !== 'paper' && d.mode !== 'demo') throw new Error('AUTOPILOT_MODE_FORBIDDEN')
       if (d.action === 'configure_execution') {

@@ -69,6 +69,21 @@ describe('autopilot decisions', () => {
     expect(plan.find((d) => d.key === 'live')?.status).toBe('blocked')
   })
 
+  it('resumes Demo after an acceptance probe and never auto-starts Live', () => {
+    const plan = autopilotPlan(
+      input({
+        trading: input().trading.map((t) =>
+          t.exchange === 'bybit' && t.mode === 'demo'
+            ? { ...t, status: 'paused', reason: 'DEMO_PROBE_COMPLETE', hasKeys: true }
+            : t,
+        ),
+      }),
+    )
+    expect(actions(plan)).toContain('start_trading trading:bybit:demo')
+    expect(plan.find((d) => d.key === 'trading:bybit:demo')?.text).toContain('продолжает Demo')
+    expect(plan.find((d) => d.key === 'live')?.status).toBe('blocked')
+  })
+
   it('never acts on Live, whatever the state says', () => {
     const live = input({
       trading: input().trading.map((t) => ({ ...t, hasKeys: true })),

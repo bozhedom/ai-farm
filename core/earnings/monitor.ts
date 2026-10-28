@@ -21,6 +21,18 @@ async function ensureMonitor() {
   await query('INSERT INTO earnings_monitor(id) VALUES(true) ON CONFLICT DO NOTHING')
 }
 
+function arbitrageFetchedAt(row: MonitorRow | null | undefined) {
+  const raw = row?.arbitrage?.fetchedAt
+  const at = raw ? Date.parse(raw) : NaN
+  return Number.isFinite(at) ? at : 0
+}
+
+function nextRefreshAt(row: MonitorRow, now: number) {
+  const fullDue = (row.attempted_at?.getTime() || 0) + P.intervalMs
+  const arbDue = arbitrageFetchedAt(row) + P.arbitrageIntervalMs
+  return new Date(Math.max(now, Math.min(fullDue, arbDue))).toISOString()
+}
+
 export async function earningsView(): Promise<EarningsView> {
   await ensureMonitor()
   const [row] = await query<MonitorRow>('SELECT * FROM earnings_monitor WHERE id=true')
@@ -35,14 +47,10 @@ export async function earningsView(): Promise<EarningsView> {
       workerAlive: !!worker?.worker_heartbeat && now - worker.worker_heartbeat.getTime() < 90_000,
       attemptedAt: row!.attempted_at?.toISOString() || null,
       finishedAt: row!.finished_at?.toISOString() || null,
-      nextAt:
-        row!.enabled && !row!.requested_at
-          ? new Date(
-              Math.max(now, (row!.attempted_at?.getTime() || 0) + P.intervalMs),
-            ).toISOString()
-          : null,
+      nextAt: row!.enabled && !row!.requested_at ? nextRefreshAt(row!, now) : null,
       error: row!.error,
       intervalMinutes: P.intervalMs / 60_000,
+      arbitrageIntervalMinutes: P.arbitrageIntervalMs / 60_000,
     },
     report: row!.report,
     arbitrage: row!.arbitrage,
@@ -95,6 +103,43 @@ export function preserveUnavailable(
   }
 }
 
+async function refreshArbitrageOnly(
+  dependencies: { arbitrage: () => Promise<ArbitrageReport> },
+  row: MonitorRow,
+) {
+  const now = Date.now()
+  if (!row.enabled) return false
+  if (row.lease_until && row.lease_until.getTime() > now) return false
+  if (now - arbitrageFetchedAt(row) < P.arbitrageIntervalMs) return false
+  // Claim a short lease so a concurrent full tick cannot race the arb-only write.
+  const lease = randomUUID()
+  const [claimed] = await query<MonitorRow>(
+    `UPDATE earnings_monitor SET lease_id=$1,lease_until=now()+$2*interval '1 millisecond'
+     WHERE id=true AND enabled AND (lease_until IS NULL OR lease_until<=now())
+       AND (arbitrage IS NULL OR coalesce((arbitrage->>'fetchedAt')::timestamptz, to_timestamp(0))
+            <= now()-$3*interval '1 millisecond')
+     RETURNING *`,
+    [lease, Math.min(P.leaseMs, P.arbitrageIntervalMs), P.arbitrageIntervalMs],
+  )
+  if (!claimed) return false
+  try {
+    const quotes = await dependencies.arbitrage()
+    const updated = await query(
+      `UPDATE earnings_monitor SET arbitrage=$2,lease_id=NULL,lease_until=NULL
+       WHERE id=true AND lease_id=$1 AND lease_until>now() RETURNING id`,
+      [lease, quotes],
+    )
+    return updated.length > 0
+  } catch {
+    await query(
+      `UPDATE earnings_monitor SET lease_id=NULL,lease_until=NULL
+       WHERE id=true AND lease_id=$1`,
+      [lease],
+    )
+    return false
+  }
+}
+
 export async function earningsTick(
   dependencies = {
     research: fetchOpportunityResearch,
@@ -110,7 +155,10 @@ export async function earningsTick(
      RETURNING *`,
     [lease, P.leaseMs, P.intervalMs],
   )
-  if (!claimed) return false
+  if (!claimed) {
+    const [row] = await query<MonitorRow>('SELECT * FROM earnings_monitor WHERE id=true')
+    return row ? refreshArbitrageOnly(dependencies, row) : false
+  }
   const [research, arbitrage] = await Promise.allSettled([
     dependencies.research(),
     dependencies.arbitrage(),

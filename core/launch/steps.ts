@@ -494,9 +494,9 @@ export function launchSteps(input: LaunchInput): LaunchView {
     title: 'Проверка на тестовом счёте Bybit (Demo)',
     why: 'Реальная торговля никогда не откроется без удачной пробной покупки и продажи на Demo. Деньги Demo ненастоящие.',
     actions: [
-      'В Bybit включите Demo Trading и создайте там API-ключ.',
-      'Админ вписывает BYBIT_DEMO_API_KEY и BYBIT_DEMO_SECRET в .env.',
-      'В «Торговой ферме» выберите Bybit, режим «Тест биржи», и нажмите «Проверить покупку и продажу».',
+      'В Bybit включите Demo Trading и создайте там API-ключ (только чтение + Spot Trade, без вывода).',
+      'Админ вписывает BYBIT_DEMO_API_KEY и BYBIT_DEMO_SECRET в .env и перезапускает web/worker.',
+      'При включённом автопилоте сервер сам запускает пробную покупку/продажу и затем продолжает Demo. Кнопка «Проверить покупку и продажу» в «Торговой ферме» нужна только если автопилот выключен.',
     ],
     link: '/office/trading',
     linkLabel: 'Торговая ферма',
@@ -505,7 +505,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
       : b.demo.checkError
         ? `Ключ есть, проверка не прошла: ${tradingWord(b.demo.checkError)}.`
         : !b.demo.roundTrips
-          ? `Ключ есть, подключение ${b.demo.checkedAt ? 'проверено' : 'ещё не проверялось'}, пробной сделки ещё не было.`
+          ? `Ключ есть, подключение ${b.demo.checkedAt ? 'проверено' : 'ещё не проверялось'}; автопилот ещё не завершил пробную сделку.`
           : `Пройдена: пробная сделка на Demo есть, подключение проверено ${since(b.demo.checkedAt, now)}.`,
     codes: b.demo.checkError ? [b.demo.checkError] : [],
   })

@@ -149,7 +149,9 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                 <div>
                   <h3>Обновление данных</h3>
                   <p class="t-muted">
-                    Раз в {{ data?.monitor.intervalMinutes || 15 }} минут для всех источников.
+                    Сравнение цен — раз в
+                    {{ data?.monitor.arbitrageIntervalMinutes || 3 }} мин; фандинг, DeFi и прогнозы
+                    — раз в {{ data?.monitor.intervalMinutes || 15 }} мин.
                   </p>
                 </div>
               </div>
@@ -210,10 +212,14 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                           <th>Купить / продать</th>
                           <th>Разница</th>
                           <th>С учётом затрат</th>
+                          <th>Стакан</th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr v-for="item in data.arbitrage.items" :key="item.symbol">
+                        <tr
+                          v-for="item in data.arbitrage.items"
+                          :key="`${item.symbol}:${item.buyExchange}:${item.sellExchange}`"
+                        >
                           <th>{{ item.symbol }}</th>
                           <td>
                             {{ exchangeCatalog[item.buyExchange].name }} /
@@ -222,6 +228,15 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                           <td>{{ pct(item.grossBps) }}</td>
                           <td :class="item.estimatedNetBps > 0 ? 't-positive' : 't-muted'">
                             {{ pct(item.estimatedNetBps) }}
+                          </td>
+                          <td class="t-muted">
+                            {{
+                              item.depthChecked
+                                ? item.fillableNotional
+                                  ? `до ${item.fillableNotional} USDT`
+                                  : 'проверен'
+                                : 'тикер'
+                            }}
                           </td>
                         </tr>
                       </tbody>
@@ -232,15 +247,16 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                     <summary>Как рассчитана разница</summary>
                     <div class="t-details-body">
                       <p>
-                        На покупку и продажу заложены комиссия
+                        Сначала сравниваются публичные тикеры (комиссия
                         {{ pct(data.arbitrage.feeBpsPerLeg) }} и проскальзывание
-                        {{ pct(data.arbitrage.slippageBpsPerLeg) }}. Переводы между биржами и
-                        восстановление балансов не учтены.
+                        {{ pct(data.arbitrage.slippageBpsPerLeg) }} на ногу). Лучшие пары
+                        дополнительно оцениваются по стакану на образец
+                        {{ data.arbitrage.sampleNotional || '50' }} USDT. Переводы между биржами не
+                        учитываются и не выполняются.
                       </p>
                       <p>
-                        Расчёт ориентировочный: фактические тарифы, объём заявок и совпадение
-                        токенов на разных биржах не проверены. Положительная разница не означает
-                        доступную сделку.
+                        Расчёт ориентировочный: фактические тарифы аккаунта и совпадение токенов не
+                        проверены. Положительная разница не означает доступную сделку.
                       </p>
                     </div>
                   </details>

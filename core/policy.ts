@@ -24,11 +24,22 @@ export const RESEARCH_POLICY = Object.freeze({
 })
 
 export const EARNINGS_POLICY = Object.freeze({
+  /** Full public research (funding / DeFi / prediction) cadence. */
   intervalMs: 15 * 60_000,
+  /**
+   * Cross-exchange quote comparison alone. Cheaper than a full research pass; still public
+   * tickers only — never places orders or transfers.
+   */
+  arbitrageIntervalMs: 3 * 60_000,
   retryMs: 60_000,
   leaseMs: 180_000,
   quoteSkewMs: 15_000,
   maxComparisons: 20,
+  /** Top ticker spreads that get an order-book depth probe before the final ranking. */
+  depthCandidates: 12,
+  depthLevels: 5,
+  /** USDT notional walked through both books when estimating fillable net bps. */
+  sampleNotional: '50',
   feeBpsPerLeg: 25,
   slippageBpsPerLeg: 10,
 })

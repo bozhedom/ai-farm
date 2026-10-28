@@ -12,6 +12,8 @@ export interface EarningsView {
     nextAt: string | null
     error: string
     intervalMinutes: number
+    /** Cross-exchange quote refresh alone (still observation-only). */
+    arbitrageIntervalMinutes: number
   }
   report: OpportunityResearch | null
   arbitrage: ArbitrageReport | null
