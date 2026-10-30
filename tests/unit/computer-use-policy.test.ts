@@ -61,6 +61,29 @@ const element = (partial: Partial<ElementInfo>): ElementInfo => ({
 })
 
 describe('computer-use policy: browsing runs, outward actions wait, fraud is refused', () => {
+  it('opens the observed Kwork translation category without approving money transfers', () => {
+    const category = element({ tag: 'span', text: 'Тексты и переводы' })
+    const click = { name: 'click' as const, x: 199, y: 498 }
+    expect(
+      classifyAction(click, page('https://kwork.ru/projects?c=all', { target: category })),
+    ).toEqual({ verdict: 'allow', reason: '' })
+    for (const url of [
+      'https://other.example/projects?c=all',
+      'https://kwork.ru/balance',
+      'https://kwork.ru/projects?transfer=100',
+    ])
+      expect(classifyAction(click, page(url, { target: category })).verdict).toBe('approval')
+    for (const target of [
+      element({ tag: 'span', text: 'Перевод денег' }),
+      { ...category, type: 'submit' },
+      { ...category, name: 'transfer' },
+      { ...category, href: 'https://kwork.ru/transfer?amount=100' },
+    ])
+      expect(
+        classifyAction(click, page('https://kwork.ru/projects?c=all', { target })).verdict,
+      ).toBe('approval')
+  })
+
   it('allows reading, searching and scrolling on public pages', () => {
     expect(
       classifyAction({ name: 'navigate', url: 'https://habr.com/ru/' }, page('about:blank')),

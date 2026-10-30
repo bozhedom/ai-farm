@@ -332,6 +332,26 @@ const sensitiveElement = (element: ElementInfo | null | undefined) =>
     sensitiveField.test(`${element.name} ${element.autocomplete}`))
 const pathOf = (url: string) => (URL.canParse(url) ? new URL(url).pathname : '')
 
+/** Kwork's observed category span means language translation, not a money transfer. */
+function isKworkTextCategory(url: string, element: ElementInfo | null | undefined) {
+  if (
+    !URL.canParse(url) ||
+    element?.tag !== 'span' ||
+    element.type ||
+    element.name ||
+    element.href ||
+    element.text.trim() !== 'Тексты и переводы'
+  )
+    return false
+  const page = new URL(url)
+  return (
+    page.origin === 'https://kwork.ru' &&
+    page.pathname === '/projects' &&
+    [...page.searchParams.keys()].every((key) => key === 'c') &&
+    /^(?:all|\d+)$/.test(page.searchParams.get('c') || 'all')
+  )
+}
+
 const permitCovers = (host: string, permit: PageContext['permit']) =>
   !!permit && !!host && (host === permit.domain || host.endsWith(`.${permit.domain}`))
 /** Reasons a send permit may replace: the outward send itself, nothing about money or access. */
@@ -400,7 +420,7 @@ function classifyWithoutPermit(action: BrowserAction, page: PageContext): Verdic
       if (linkHost && isPaymentHost(linkHost))
         return { verdict: 'approval', reason: 'COMPUTER_USE_PAYMENT_SITE' }
     }
-    if (outwardElement(element))
+    if (outwardElement(element) && !isKworkTextCategory(page.url, element))
       return { verdict: 'approval', reason: 'COMPUTER_USE_OUTWARD_ACTION' }
     if (page.focused?.type === 'password' && action.name === 'key')
       return { verdict: 'approval', reason: 'COMPUTER_USE_CREDENTIALS' }
