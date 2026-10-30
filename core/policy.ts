@@ -100,6 +100,15 @@ export const POLICY = Object.freeze({
   maxLeadDraftsPerDay: 12,
 })
 
+/** Owner-authorized Bybit key compatibility; execution still permits cash spot only. */
+export const BYBIT_SPOT_POLICY = Object.freeze({
+  category: 'spot',
+  orderType: 'Limit',
+  timeInForce: 'IOC',
+  isLeverage: 0,
+  optionalLegacyKeyPermission: 'DerivativesTrade',
+} as const)
+
 /** Fixed trading safeguards; the owner chooses each account's initial allocation separately. */
 export const TRADING_POLICY = Object.freeze({
   version: 'spot-v4',

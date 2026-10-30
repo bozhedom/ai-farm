@@ -328,7 +328,11 @@ function accountTransport(exchange: keyof typeof adapters, problem = '') {
           userID: 123,
           readOnly: 0,
           ips: problem === 'ip' ? [] : ['203.0.113.2'],
-          permissions: { Spot: ['SpotTrade'], Wallet: problem === 'withdraw' ? ['Withdraw'] : [] },
+          permissions: {
+            Spot: ['SpotTrade'],
+            Wallet: problem === 'withdraw' ? ['Withdraw'] : [],
+            Derivatives: problem === 'unified-permission' ? ['DerivativesTrade'] : [],
+          },
         }
       else if (path.endsWith('/info'))
         data = {
@@ -433,6 +437,20 @@ function accountTransport(exchange: keyof typeof adapters, problem = '') {
   })
 }
 describe('account admission', () => {
+  it('accepts the owner-authorized Bybit key without extending isolated execution permissions', async () => {
+    configure()
+    const transport = accountTransport('bybit', 'unified-permission')
+    const account = await new BybitVenue('live', transport).account(['BTC-USDT'])
+    expect(account.balances.USDT.available).toBe(units('100.000000000000000001'))
+    expect(account.feeBps['BTC-USDT']).toBe(10)
+    expect(transport.mock.calls.every(([, options]) => options?.method === 'GET')).toBe(true)
+    const isolated = new BybitVenue('live', accountTransport('bybit', 'unified-permission'), {
+      credentials: { key: 'execution-key', secret: 'execution-secret', passphrase: '' },
+      authorize: () => undefined,
+    })
+    await expect(isolated.account(['BTC-USDT'])).rejects.toThrow('TRADING_KEY_PERMISSIONS')
+  })
+
   for (const exchange of Object.keys(adapters) as (keyof typeof adapters)[]) {
     it(`${exchange}: verifies account scope, fees and exact balances`, async () => {
       configure()

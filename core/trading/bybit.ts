@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { z } from 'zod'
 import { config } from '../config'
+import { assertBybitSpotPermissions, assertBybitSpotRequest } from './bybit-policy'
 import type { VenueAccess } from './wire'
 import { listing } from './universe'
 import { decimal, max, units } from './decimal'
@@ -62,6 +63,10 @@ export class BybitVenue implements TradingVenue {
     body?: Record<string, unknown>,
     privateCall = false,
   ) {
+    assertBybitSpotRequest(path, params, body, privateCall)
+    // Also fence the signing boundary: a future internal caller cannot skip the Live gate.
+    // Isolated execution has its own authorization in place(), never the legacy Live flag.
+    if (path === '/v5/order/create' && !this.access) allowPlace(this.mode)
     const query = new URLSearchParams(params).toString(),
       payload = body ? JSON.stringify(body) : query
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -220,11 +225,7 @@ export class BybitVenue implements TradingVenue {
           permissions: z.record(str, z.array(str)),
         })
         .parse(await this.request('/v5/user/query-api', {}, undefined, true))
-      if (
-        !k.permissions.Spot?.includes('SpotTrade') ||
-        Object.entries(k.permissions).some(([name, values]) => name !== 'Spot' && values.length > 0)
-      )
-        throw new Error('TRADING_KEY_PERMISSIONS')
+      assertBybitSpotPermissions(k.permissions, !this.access)
       boundIp(k.ips)
       uid = k.userID
     }
