@@ -1807,6 +1807,7 @@ describe('owner resolution of test obligations', () => {
       ...settings.config(),
       MODEL_PROVIDER: 'yandex',
       SEARCH_PROVIDER: 'searxng',
+      ORDER_RESERVE_KOPECKS: 10000,
     })
     const created = await createOrder(product!.id, input, randomUUID())
     await sandboxPayment(created.id)

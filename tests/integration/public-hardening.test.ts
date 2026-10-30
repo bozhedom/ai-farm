@@ -11,7 +11,7 @@ vi.hoisted(() => {
 import { pool, query } from '../../core/db'
 import * as settings from '../../core/config'
 import { budgetSummary, reserveBudget } from '../../core/budget'
-import { requestKeyHash } from '../../core/orders'
+import { createOrder, requestKeyHash } from '../../core/orders'
 import { sandboxPayment } from '../../core/payments'
 import { applyMigrations, resetDatabase } from './helpers/db'
 import { fulfillNext, publishProducts, startPublicApp } from './helpers/public'
@@ -55,6 +55,7 @@ async function paidModel(overrides: Partial<ReturnType<typeof settings.config>> 
     ...real,
     MODEL_PROVIDER: 'openai',
     SEARCH_PROVIDER: 'searxng',
+    ORDER_RESERVE_KOPECKS: 15000,
     ...overrides,
   })
 }
@@ -79,6 +80,26 @@ function raw(path: string, method = 'GET') {
 }
 
 describe('public orders do not hold the farm budget', () => {
+  it('refuses an incompatible model reserve before creating an invoice or obligation', async () => {
+    await publishProducts(['description'])
+    await paidModel({ ORDER_RESERVE_KOPECKS: 4000 })
+    const before = await budgetSummary()
+    const calls = await query('SELECT id FROM tool_calls ORDER BY id')
+    const reservations = await query('SELECT id FROM budget_reservations ORDER BY id')
+    const response = await create('198.51.100.1')
+    expect(response.status).toBe(409)
+    expect(response.body.statusMessage).toBe('ORDER_MODEL_BUDGET_TOO_SMALL')
+    const [product] = await query("SELECT id FROM products WHERE slug='description'")
+    await expect(createOrder(product!.id, input, randomUUID())).rejects.toThrow(
+      'ORDER_MODEL_BUDGET_TOO_SMALL',
+    )
+    expect(await query('SELECT id FROM orders')).toHaveLength(0)
+    expect(await query('SELECT id FROM budget_reservations ORDER BY id')).toEqual(reservations)
+    expect(await query('SELECT id FROM tool_calls ORDER BY id')).toEqual(calls)
+    expect(await budgetSummary()).toEqual(before)
+    expect(settings.config().ORDER_RESERVE_KOPECKS).toBe(4000)
+  })
+
   it('reserves nothing before payment, funds the order when it is paid', async () => {
     await publishProducts(['description'])
     await paidModel({ PUBLIC_SANDBOX_PAY: true })
@@ -101,18 +122,18 @@ describe('public orders do not hold the farm budget', () => {
        ON r.id=o.reservation_id WHERE o.id=$1`,
       [orders[0].orderId],
     )
-    expect(funded).toEqual({ limit_kopecks: 4000, status: 'paid' })
+    expect(funded).toEqual({ limit_kopecks: 15000, status: 'paid' })
   })
 
   it('refuses the buyer button when the budget is gone, and holds a confirmed payment for the owner', async () => {
     await publishProducts(['description'])
-    await paidModel({ PUBLIC_SANDBOX_PAY: true, DAILY_BUDGET_KOPECKS: 5000 })
+    await paidModel({ PUBLIC_SANDBOX_PAY: true, DAILY_BUDGET_KOPECKS: 18000 })
     const a = (await create('198.51.100.20')).body
     const b = (await create('198.51.100.21')).body
     expect(
       (await app.call(`/api/public/orders/${a.token}/pay`, { body: { mode: 'sandbox' } })).status,
     ).toBe(200)
-    // 4000 of 5000 are now reserved: the second payment cannot be funded.
+    // 15000 of 18000 are now reserved: the second payment cannot be funded.
     const refused = await app.call(`/api/public/orders/${b.token}/pay`, {
       body: { mode: 'sandbox' },
     })

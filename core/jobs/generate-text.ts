@@ -1,5 +1,5 @@
 import { config, usesSourcePosts } from '../config'
-import { model } from '../providers'
+import { model, type ModelArgs } from '../providers'
 import { demoResult } from '../providers/demo'
 import {
   outputSchemaForTemplate,
@@ -24,7 +24,7 @@ import {
 
 type TextProduct = Pick<ProductSpec, 'template' | 'promise'>
 
-type GenerateArgs = {
+export type GenerateArgs = {
   key: string
   reservationId: string
   product: TextProduct
@@ -42,9 +42,24 @@ export async function generateText(args: GenerateArgs) {
 }
 
 async function generateRaw(args: GenerateArgs): Promise<{ text: string }> {
+  const result = await model(textGenerationRequest(args))
+  if (args.product.template === 'social' && args.product.promise === sourceSocialDelivery)
+    return renderSourcePosts(args.input, sourcePostsSchema.parse(result))
+  const template = args.product.template
+  if (config().MODEL_PROVIDER !== 'demo' && isStructuredTemplate(template)) {
+    // Persisted successful calls from the previous renderer keep their idempotency key.
+    if (Object.hasOwn(result, 'text')) return outputSchemaForTemplate(template).parse(result)
+    return renderStructuredText(template, result)
+  }
+  // model() validates the schema; the caller retains its existing content/format checks.
+  return result as { text: string }
+}
+
+/** Shared with order admission: the estimate uses exactly the request sent to the provider. */
+export function textGenerationRequest(args: GenerateArgs): ModelArgs<Record<string, any>> {
   if (args.product.template === 'social' && args.product.promise === sourceSocialDelivery) {
     validateSourcePostInput(args.input)
-    const result = await model({
+    return {
       role: 'Исполнитель',
       key: args.key,
       reservationId: args.reservationId,
@@ -55,15 +70,14 @@ async function generateRaw(args: GenerateArgs): Promise<{ text: string }> {
         task: 'Выбери порядок трёх оформлений полного исходного текста: paragraph (один абзац), lines (предложения с новой строки), spaced (предложения с пустой строкой). Верни каждое оформление ровно один раз в layouts. Сервер сохранит все исходные фразы и их порядок в каждом варианте. Нельзя сокращать, перефразировать или добавлять факты.',
       },
       demoValue: { layouts: [...sourcePostLayouts] },
-    })
-    return renderSourcePosts(args.input, result)
+    }
   }
   if (usesSourcePosts(config().MODEL_PROVIDER) && args.product.template === 'social')
     throw new Error('PRODUCT_RECIPE_REFRESH_REQUIRED')
   const template = args.product.template
   if (config().MODEL_PROVIDER !== 'demo' && isStructuredTemplate(template)) {
     const context = generationContext(args.product, args.input, args.approach)
-    const result = await model({
+    return {
       role: 'Исполнитель',
       key: args.key,
       reservationId: args.reservationId,
@@ -78,13 +92,9 @@ async function generateRaw(args: GenerateArgs): Promise<{ text: string }> {
       schema: withResultLanguage(structuredTextSchema(template), template, args.input),
       // Demo follows the original branch below; this fallback stays explicitly synthetic.
       demoValue: { text: demoResult(template, args.input) },
-    })
-    // Persisted successful calls from the previous renderer keep their idempotency key.
-    // A live response cannot take this branch: its fields must pass the structured schema.
-    if (Object.hasOwn(result, 'text')) return outputSchemaForTemplate(template).parse(result)
-    return renderStructuredText(template, result)
+    }
   }
-  return model({
+  return {
     role: 'Исполнитель',
     key: args.key,
     reservationId: args.reservationId,
@@ -95,5 +105,5 @@ async function generateRaw(args: GenerateArgs): Promise<{ text: string }> {
       args.input,
     ),
     demoValue: { text: demoResult(args.product.template, args.input) },
-  })
+  }
 }

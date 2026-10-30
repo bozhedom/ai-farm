@@ -70,6 +70,8 @@ const messages: Record<string, string> = {
   PRODUCT_NOT_FOUND: 'Эта услуга сейчас недоступна',
   PRODUCT_RECIPE_REFRESH_REQUIRED: 'Эта услуга сейчас недоступна',
   BUDGET_BLOCKED: 'Сейчас заказы не принимаем. Загляните через час',
+  ORDER_MODEL_BUDGET_TOO_SMALL:
+    'Сейчас заказы не принимаем. Исполнитель проверяет настройки сервиса.',
 }
 
 async function submit() {

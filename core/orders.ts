@@ -9,6 +9,7 @@ import { orderProgress, paymentErrorText } from './order-progress'
 import { sourceSocialDelivery, validateSourcePostInput } from './source-posts'
 import { agentLabels, agentName, type StrategyRow } from './agents'
 import { serviceName } from './service-names'
+import { assertOrderModelBudget } from './order-model-budget'
 
 export type OrderStatus =
   'awaiting_payment' | 'paid' | 'running' | 'delivered' | 'expired' | 'manual_review' | 'closed'
@@ -109,6 +110,11 @@ export async function insertOrder(
     db,
   )
   if (!strategy) throw new Error('NO_ACTIVE_STRATEGY')
+  assertOrderModelBudget({
+    product: productSchema.parse(o.product.spec),
+    input: o.input,
+    approach: strategy.approach,
+  })
   const id = randomUUID()
   const reservationId = o.fundOnPayment
     ? await openUnfundedReservation(`order:${id}`, db)
