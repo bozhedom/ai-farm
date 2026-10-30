@@ -149,9 +149,9 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
                 <div>
                   <h3>Обновление данных</h3>
                   <p class="t-muted">
-                    Сравнение цен — раз в
+                    Сравнение цен обновляется раз в
                     {{ data?.monitor.arbitrageIntervalMinutes || 3 }} мин; фандинг, DeFi и прогнозы
-                    — раз в {{ data?.monitor.intervalMinutes || 15 }} мин.
+                    обновляются раз в {{ data?.monitor.intervalMinutes || 15 }} мин.
                   </p>
                 </div>
               </div>
