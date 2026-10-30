@@ -18,21 +18,21 @@
 
 ## Сводная таблица
 
-| Биржа   | Торговый счёт                         | Права Live-ключа                                                                 | Ещё нужно                         | Переменные `.env`                                      |
-| ------- | ------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------ |
-| OKX     | Spot / cash (не Multi-currency PM)    | Read + Trade, без Withdraw, IP                                                   | **Passphrase** API                | `OKX_LIVE_API_KEY`, `SECRET`, `PASSPHRASE`             |
-| Bybit   | UTA, Cross/Regular, Spot Margin ВЫКЛ  | Только **Spot → Trade**, без Contracts/Withdraw/Transfer, IP                     | USDT в **Unified**, не Funding    | `BYBIT_LIVE_API_KEY`, `SECRET`                         |
-| Binance | Отдельный Spot                        | Reading + Spot (Margin Trading в галке биржи часто вместе со Spot); без Futures/Withdraw/Transfer/Options, IP | **Скидка комиссий в BNB выкл.**   | `BINANCE_LIVE_API_KEY`, `SECRET`                       |
-| Bitget  | UTA **basic**                         | `uta_mgt` + `uta_trade`, без withdraw/copy, IP                                   | **Passphrase**; **комиссии в BGB выкл.** | `BITGET_LIVE_API_KEY`, `SECRET`, `PASSPHRASE`   |
+| Биржа   | Торговый счёт                        | Права Live-ключа                                                                                              | Ещё нужно                                | Переменные `.env`                             |
+| ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------------- |
+| OKX     | Spot / cash (не Multi-currency PM)   | Read + Trade, без Withdraw, IP                                                                                | **Passphrase** API                       | `OKX_LIVE_API_KEY`, `SECRET`, `PASSPHRASE`    |
+| Bybit   | UTA, Cross/Regular, Spot Margin ВЫКЛ | Только **Spot → Trade**, без Contracts/Withdraw/Transfer, IP                                                  | USDT в **Unified**, не Funding           | `BYBIT_LIVE_API_KEY`, `SECRET`                |
+| Binance | Отдельный Spot                       | Reading + Spot (Margin Trading в галке биржи часто вместе со Spot); без Futures/Withdraw/Transfer/Options, IP | **Скидка комиссий в BNB выкл.**          | `BINANCE_LIVE_API_KEY`, `SECRET`              |
+| Bitget  | UTA **basic**                        | `uta_mgt` + `uta_trade`, без withdraw/copy, IP                                                                | **Passphrase**; **комиссии в BGB выкл.** | `BITGET_LIVE_API_KEY`, `SECRET`, `PASSPHRASE` |
 
 Demo (по желанию, отдельные ключи, не Live):
 
-| Биржа   | Демо                         | Переменные                                      |
-| ------- | ---------------------------- | ----------------------------------------------- |
-| OKX     | Demo Trading                 | `OKX_DEMO_API_KEY`, `SECRET`, `PASSPHRASE`      |
-| Bybit   | Demo Trading                 | `BYBIT_DEMO_API_KEY`, `SECRET`                  |
-| Binance | [Spot Testnet](https://testnet.binance.vision/) | `BINANCE_DEMO_API_KEY`, `SECRET` |
-| Bitget  | Demo Trading                 | `BITGET_DEMO_API_KEY`, `SECRET`, `PASSPHRASE`   |
+| Биржа   | Демо                                            | Переменные                                    |
+| ------- | ----------------------------------------------- | --------------------------------------------- |
+| OKX     | Demo Trading                                    | `OKX_DEMO_API_KEY`, `SECRET`, `PASSPHRASE`    |
+| Bybit   | Demo Trading                                    | `BYBIT_DEMO_API_KEY`, `SECRET`                |
+| Binance | [Spot Testnet](https://testnet.binance.vision/) | `BINANCE_DEMO_API_KEY`, `SECRET`              |
+| Bitget  | Demo Trading                                    | `BITGET_DEMO_API_KEY`, `SECRET`, `PASSPHRASE` |
 
 Обычный Live-ключ для Demo **не** подходит.
 
@@ -84,13 +84,13 @@ BYBIT_LIVE_SECRET=…
 
 ### Частые ошибки Bybit
 
-| Код / симптом              | Что проверить                                |
-| -------------------------- | -------------------------------------------- |
-| `TRADING_KEY_PERMISSIONS`  | Лишние права (Contracts и т.п.)              |
-| `TRADING_IP_REQUIRED`      | Нет IP `89.19.215.46`                        |
-| Баланс ≈ 0                 | Деньги в Funding, а не в Unified             |
-| Isolated margin            | Нужен Cross / Regular                        |
-| Ключ «протух»              | Создан без IP-ограничения                    |
+| Код / симптом             | Что проверить                    |
+| ------------------------- | -------------------------------- |
+| `TRADING_KEY_PERMISSIONS` | Лишние права (Contracts и т.п.)  |
+| `TRADING_IP_REQUIRED`     | Нет IP `89.19.215.46`            |
+| Баланс ≈ 0                | Деньги в Funding, а не в Unified |
+| Isolated margin           | Нужен Cross / Regular            |
+| Ключ «протух»             | Создан без IP-ограничения        |
 
 ---
 
@@ -163,10 +163,10 @@ BITGET_LIVE_PASSPHRASE=…
 
 ## Не путать с другими ключами Bybit
 
-| Назначение                    | Права                                   | Переменные                       |
-| ----------------------------- | --------------------------------------- | -------------------------------- |
-| Спот-бот                      | Только Spot Trade + IP                  | `BYBIT_LIVE_*`                   |
-| Фандинг-хедж (другой субакк.) | Spot + Contracts Orders/Positions       | `EXECUTION_FUNDING_BYBIT_LIVE_*` |
-| Наблюдение депозитов          | **Read-Only**, без торговли и вывода    | `BYBIT_WALLET_READ_*`            |
+| Назначение                    | Права                                | Переменные                       |
+| ----------------------------- | ------------------------------------ | -------------------------------- |
+| Спот-бот                      | Только Spot Trade + IP               | `BYBIT_LIVE_*`                   |
+| Фандинг-хедж (другой субакк.) | Spot + Contracts Orders/Positions    | `EXECUTION_FUNDING_BYBIT_LIVE_*` |
+| Наблюдение депозитов          | **Read-Only**, без торговли и вывода | `BYBIT_WALLET_READ_*`            |
 
 Один субаккаунт/ключ нельзя вешать сразу на спот и фандинг: разные книги учёта.

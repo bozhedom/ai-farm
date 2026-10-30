@@ -884,7 +884,12 @@ describe('multiple independent exchanges', () => {
       const bybitLive = new Exchange()
       bybitLive.identity = 'allocated-bybit-live'
       bybitLive.balances.USDT = { total: units('25'), available: units('25') }
-      await startTrading(scope('bybit', 'live'), 'ТОРГОВАТЬ 25 USDT НА BYBIT', false, () => bybitLive)
+      await startTrading(
+        scope('bybit', 'live'),
+        'ТОРГОВАТЬ 25 USDT НА BYBIT',
+        false,
+        () => bybitLive,
+      )
       expect((await agents(scope('bybit', 'live')))[0]!.parent_id).toBeNull()
       const live = new Exchange()
       live.identity = 'allocated-okx-live'

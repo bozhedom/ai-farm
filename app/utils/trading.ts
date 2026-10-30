@@ -111,8 +111,7 @@ const reasons: Record<string, string> = {
   TRADING_BUSY: 'Сейчас идёт проверка или сверка ордера. Повторите через несколько секунд.',
   TRADING_PAPER_REQUIRED:
     'Раньше для Live нужен был прибыльный Paper; с 28.10.2026 это не требуется.',
-  TRADING_DEMO_REQUIRED:
-    'Раньше для Live нужен был Demo-цикл; с 28.10.2026 это не требуется.',
+  TRADING_DEMO_REQUIRED: 'Раньше для Live нужен был Demo-цикл; с 28.10.2026 это не требуется.',
   TRADING_CONFIRMATION_REQUIRED: 'Введите подтверждение точно как показано в форме.',
   TRADING_CONTROL_CHANGED: 'Во время проверки изменилось управление или бюджет. Запуск отменён.',
   TRADING_DAILY_LOCKED:
