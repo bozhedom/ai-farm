@@ -91,7 +91,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       })
     }
   }
-  const match = /^\/sessions\/([^/]+)(?:\/(screenshot|inspect|actions))?$/.exec(path)
+  const match = /^\/sessions\/([^/]+)(?:\/(screenshot|inspect|actions|diagnostics))?$/.exec(path)
   if (!match) return send(res, 404, { error: 'NOT_FOUND' })
   const id = idSchema.safeParse(match[1])
   const session = id.success ? sessions.get(id.data) : null
@@ -101,6 +101,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return send(res, 200, { ok: await serialized(session.id, () => sessions.end(session.id)) })
   if (req.method === 'GET' && !sub)
     return send(res, 200, await serialized(session.id, () => sessions.state(session)))
+  if (req.method === 'GET' && sub === 'diagnostics')
+    return send(res, 200, sessions.diagnostics(session))
   if (req.method === 'GET' && sub === 'screenshot')
     return send(
       res,

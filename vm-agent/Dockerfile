@@ -10,4 +10,5 @@ RUN mkdir -p /agent/profile && chown -R pwuser:pwuser /agent/profile
 # The image ships a non-root user for the browser; the agent never needs root.
 USER pwuser
 EXPOSE 8787
-CMD ["node", "--import", "tsx", "src/server.ts"]
+# A display lets the same normal Chromium renderer handle interactive login widgets.
+CMD ["xvfb-run", "-a", "--server-args=-screen 0 1280x800x24", "node", "--import", "tsx", "src/server.ts"]

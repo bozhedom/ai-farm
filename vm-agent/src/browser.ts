@@ -34,6 +34,26 @@ const NAVIGATION_TIMEOUT_MS = 20_000
 export const SETTLE_MS = 5000
 export const NETWORK_IDLE_MS = 2500
 
+/** Docker runs a normal browser in Xvfb; local/test runs can still use headless Chromium. */
+export function browserHeadless(value = process.env.VM_AGENT_HEADLESS) {
+  if (value === undefined || value === '' || value === 'true') return true
+  if (value === 'false') return false
+  throw new Error('VM_AGENT_HEADLESS_INVALID')
+}
+
+export type BrowserFailure = { host: string; kind: string; code: string }
+/** Diagnostics contain no URLs, query strings, headers, bodies or page/credential text. */
+export function browserFailure(url: string, kind: string, code: string): BrowserFailure | null {
+  if (!URL.canParse(url)) return null
+  const parsed = new URL(url)
+  if (!['http:', 'https:'].includes(parsed.protocol)) return null
+  return {
+    host: parsed.hostname,
+    kind: /^[a-z]{1,30}$/.test(kind) ? kind : 'other',
+    code: /^(?:HTTP_[45]\d\d|net::ERR_[A-Z_]+)$/.test(code) ? code : 'REQUEST_FAILED',
+  }
+}
+
 type Loadable = Pick<Page, 'waitForLoadState'>
 /** Waits for domcontentloaded, then a quiet network, never longer than the two bounds. */
 export async function settle(page: Loadable, settleMs = SETTLE_MS, idleMs = NETWORK_IDLE_MS) {
@@ -41,7 +61,7 @@ export async function settle(page: Loadable, settleMs = SETTLE_MS, idleMs = NETW
   await page.waitForLoadState('networkidle', { timeout: idleMs }).catch(() => undefined)
 }
 
-type Session = { id: string; page: Page; lastUsedAt: number }
+type Session = { id: string; page: Page; lastUsedAt: number; failures: BrowserFailure[] }
 
 export const elementScript = `(target) => {
   const pick = (node) => {
@@ -151,7 +171,7 @@ export class Sessions {
     this.proxy ??= await startProxy()
     mkdirSync(PROFILE_DIR, { recursive: true })
     const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-      headless: true,
+      headless: browserHeadless(),
       args: ['--disable-dev-shm-usage', '--disable-background-networking'],
       // Everything, loopback included, goes through the guarding proxy.
       proxy: { server: `http://127.0.0.1:${this.proxy.port}`, bypass: '<-loopback>' },
@@ -200,7 +220,20 @@ export class Sessions {
     const context = await this.launch()
     const page = await context.newPage()
     const id = randomUUID()
-    const session: Session = { id, page, lastUsedAt: Date.now() }
+    const session: Session = { id, page, lastUsedAt: Date.now(), failures: [] }
+    const failed = (url: string, kind: string, code: string) => {
+      const failure = browserFailure(url, kind, code)
+      if (!failure) return
+      session.failures.push(failure)
+      if (session.failures.length > 20) session.failures.shift()
+    }
+    page.on('requestfailed', (request) =>
+      failed(request.url(), request.resourceType(), request.failure()?.errorText || ''),
+    )
+    page.on('response', (response) => {
+      if (response.status() >= 400)
+        failed(response.url(), response.request().resourceType(), `HTTP_${response.status()}`)
+    })
     page.on('dialog', (dialog) => dialog.dismiss().catch(() => undefined))
     page.on('download', (download) => download.cancel().catch(() => undefined))
     this.sessions.set(id, session)
@@ -244,6 +277,10 @@ export class Sessions {
       title: (await page.title().catch(() => '')).slice(0, 500),
       focused: (focused as Element | null) ?? null,
     }
+  }
+
+  diagnostics(session: Session) {
+    return { headless: browserHeadless(), failures: session.failures.slice() }
   }
 
   async inspect(session: Session, x: number, y: number): Promise<Element | null> {

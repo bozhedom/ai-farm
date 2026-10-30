@@ -13,6 +13,7 @@ services:
       VM_AGENT_PORT: '8787'
       VM_AGENT_HOST: 0.0.0.0
       VM_AGENT_PROFILE_DIR: /agent/profile
+      VM_AGENT_HEADLESS: 'false'
     # The browser profile (cookies, platform logins the owner made) survives restarts and rebuilds.
     volumes:
       - vm-profile:/agent/profile
