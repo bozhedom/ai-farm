@@ -324,6 +324,9 @@ const outwardElement = (element: ElementInfo | null | undefined) =>
   !!element &&
   (outwardText.test(` ${element.text} `) ||
     outwardText.test(` ${element.name} `) ||
+    // Kwork's final send control is not a native submit button. Its form-opening link
+    // says "Предложить услугу" and must not consume the single-use send permit.
+    /^предложить$/iu.test(element.text.trim()) ||
     element.type === 'submit')
 /** Card, code, password and identity fields by name or autocomplete hint. */
 const sensitiveElement = (element: ElementInfo | null | undefined) =>

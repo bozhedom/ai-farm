@@ -125,6 +125,37 @@ async function freelanceReady() {
 }
 
 describe('computer use on freelance platforms: assessment, proposals, permits', () => {
+  it('records a Kwork offer sent by its non-submit control and prevents a second send', async () => {
+    await freelanceReady()
+    await setPlatformLogin('kwork.ru', true)
+    await addOwnerGoal('Отправь подготовленный отклик на текстовое задание Kwork')
+    const url = 'https://kwork.ru/new_offer?project=42'
+    const agent = new FakeVmAgent({
+      target: { ...sendButton, tag: 'div', type: '', text: 'Предложить' },
+    })
+    const model = scripted([
+      () => ({ name: 'navigate', arguments: { url } }),
+      () => note(url),
+      () => draft(url, { platform_domain: 'kwork.ru' }),
+      () => click,
+      () => click,
+    ])
+    await computerUseTick({ agent, model })
+    expect(agent.actions.filter((entry) => entry.action.name === 'click')).toHaveLength(1)
+    const [proposal] = await query('SELECT * FROM computer_use_proposals')
+    expect(proposal).toMatchObject({ status: 'sent', platform_domain: 'kwork.ru', sent_url: url })
+    expect(proposal.sent_at).toBeInstanceOf(Date)
+    const [permit] = await query('SELECT * FROM computer_use_send_permits')
+    expect(permit).toMatchObject({ status: 'used', proposal_id: proposal.id, used_step_no: 4 })
+    const shown = await computerUseView()
+    expect(shown.platforms.find((entry) => entry.domain === 'kwork.ru')).toMatchObject({
+      proposalsToday: 1,
+      sentToday: 1,
+    })
+    expect(shown.approvals).toHaveLength(1)
+    expect(shown.approvals[0]!.reason).toBe('COMPUTER_USE_OUTWARD_ACTION')
+  })
+
   it('drafts a proposal, types it, sends it once through a permit and asks the second time', async () => {
     await freelanceReady()
     await addOwnerGoal('Проверь новые задания на fl.ru и откликнись на подходящие')

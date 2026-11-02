@@ -61,6 +61,33 @@ const element = (partial: Partial<ElementInfo>): ElementInfo => ({
 })
 
 describe('computer-use policy: browsing runs, outward actions wait, fraud is refused', () => {
+  it('requires a permit for Kwork offer submission without consuming it on the form link', () => {
+    const url = 'https://kwork.ru/new_offer?project=42'
+    const target = element({ tag: 'div', text: ' Предложить ' })
+    const click = { name: 'click' as const, x: 100, y: 100 }
+    expect(classifyAction(click, page(url, { target }))).toEqual({
+      verdict: 'approval',
+      reason: 'COMPUTER_USE_OUTWARD_ACTION',
+    })
+    expect(classifyAction(click, page(url, { target, permit: { domain: 'kwork.ru' } }))).toEqual({
+      verdict: 'allow',
+      reason: 'COMPUTER_USE_SEND_PERMIT',
+    })
+    expect(classifyAction(click, page(url, { target, permit: { domain: 'fl.ru' } }))).toEqual({
+      verdict: 'approval',
+      reason: 'COMPUTER_USE_OUTWARD_ACTION',
+    })
+    expect(
+      classifyAction(
+        click,
+        page('https://kwork.ru/projects/42/view', {
+          target: element({ tag: 'a', text: 'Предложить услугу', href: url }),
+          permit: { domain: 'kwork.ru' },
+        }),
+      ),
+    ).toEqual({ verdict: 'allow', reason: '' })
+  })
+
   it('opens the observed Kwork translation category without approving money transfers', () => {
     const category = element({ tag: 'span', text: 'Тексты и переводы' })
     const click = { name: 'click' as const, x: 199, y: 498 }
