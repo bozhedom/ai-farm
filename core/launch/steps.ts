@@ -261,7 +261,10 @@ export function launchSteps(input: LaunchInput): LaunchView {
     codes: modelCodes,
   })
 
+  const budgetBlocked =
+    computer.enabled && ['BUDGET_BLOCKED', 'OPENAI_BUDGET_BLOCKED'].includes(computer.lastError)
   const budgetsOk =
+    !budgetBlocked &&
     model.dailyKopecks > model.daySpentKopecks &&
     model.monthlyKopecks > model.monthSpentKopecks &&
     (!model.paid || model.paidTotalMicrousd > model.paidSpentMicrousd)
@@ -278,7 +281,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
     linkLabel: 'Деньги',
     state: budgetsOk
       ? `В сутки ${rub(model.dailyKopecks)}, в месяц ${rub(model.monthlyKopecks)}${model.paid ? `, всего на платную модель ${usd(model.paidTotalMicrousd)}` : ''}. Потрачено сегодня ${rub(model.daySpentKopecks)}, за месяц ${rub(model.monthSpentKopecks)}${model.paid ? `, по платной модели ${usd(model.paidSpentMicrousd)}` : ''}.`
-      : `Доступный бюджет закончился или равен нулю. За сутки ${rub(model.daySpentKopecks)} из ${rub(model.dailyKopecks)}, за месяц ${rub(model.monthSpentKopecks)} из ${rub(model.monthlyKopecks)}${model.paid ? `; платная модель ${usd(model.paidSpentMicrousd)} из ${usd(model.paidTotalMicrousd)}` : ''}. Новые платные вызовы ждут.`,
+      : `Доступный бюджет закончился, равен нулю или не вмещает резерв следующего вызова. За сутки ${rub(model.daySpentKopecks)} из ${rub(model.dailyKopecks)}, за месяц ${rub(model.monthSpentKopecks)} из ${rub(model.monthlyKopecks)}${model.paid ? `; платная модель ${usd(model.paidSpentMicrousd)} из ${usd(model.paidTotalMicrousd)}` : ''}. Новые платные вызовы ждут.`,
   })
 
   const scheduleOn = system.autonomyAllowed && system.scheduleEnabled
@@ -329,7 +332,8 @@ export function launchSteps(input: LaunchInput): LaunchView {
 
   const halted = computer.failures >= computer.maxFailures
   const vmDown = computer.lastError === 'COMPUTER_USE_VM_UNAVAILABLE'
-  const computerOn = vmOk && computer.enabled && !halted
+  const waiting = budgetBlocked || computer.lastError === 'COMPUTER_USE_DAILY_LIMIT' || vmDown
+  const computerOn = vmOk && computer.enabled && !halted && !waiting
   add({
     id: 'computer-on',
     group: 'freelance',
@@ -344,9 +348,13 @@ export function launchSteps(input: LaunchInput): LaunchView {
             : 'Посмотрите последние задания в истории на странице раздела.',
           'Нажмите переключатель «Работа модели в браузере» на странице раздела: счётчик сбоев сбросится, задания пойдут снова.',
         ]
-      : computer.enabled
-        ? ['Ничего делать не нужно.']
-        : ['Включите переключатель «Работа модели в браузере» на странице раздела.'],
+      : waiting
+        ? [
+            'Посмотрите текущую причину в «Компьютере ИИ»; при денежном ограничении проверьте лимиты и резервы в «Деньгах».',
+          ]
+        : computer.enabled
+          ? ['Ничего делать не нужно.']
+          : ['Включите переключатель «Работа модели в браузере» на странице раздела.'],
     link: '/office/computer#computer-state',
     linkLabel: 'Компьютер ИИ',
     state: !vmOk
@@ -355,7 +363,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
         ? `Остановлен: ${computer.failures} сбоя подряд. Последняя ошибка: ${reason(computer.lastError) || 'нет записи'}. Последний шаг ${since(computer.lastStepAt, now)}.`
         : !computer.enabled
           ? 'Выключен переключателем в кабинете.'
-          : `Работает. Последний шаг ${since(computer.lastStepAt, now)}, последнее завершённое задание ${since(computer.lastDoneAt, now)}${computer.failures ? `, сбоев подряд ${computer.failures} из ${computer.maxFailures}` : ''}${computer.lastError ? `. Последняя ошибка: ${reason(computer.lastError)}` : ''}.`,
+          : `${waiting ? 'Ожидает устранения ограничения.' : 'Работает.'} Последний шаг ${since(computer.lastStepAt, now)}, последнее завершённое задание ${since(computer.lastDoneAt, now)}${computer.failures ? `, сбоев подряд ${computer.failures} из ${computer.maxFailures}` : ''}${computer.lastError ? `. Последняя ошибка: ${reason(computer.lastError)}` : ''}.`,
     codes: computer.lastError ? [computer.lastError] : [],
   })
 

@@ -1,4 +1,5 @@
 import { config } from '../config'
+import { COMPUTER_USE_POLICY } from '../computer-use/policy'
 import { query } from '../db'
 import { exchanges } from '../trading/types'
 import { hasKeys } from '../trading/wire'
@@ -24,7 +25,7 @@ export async function directionReadiness(): Promise<DirectionReadiness[]> {
       ),
       query('SELECT exchange,mode,status,checked_at,check_error,reason FROM trading_portfolios'),
       query('SELECT track,mode,status FROM execution_portfolios'),
-      query('SELECT enabled FROM computer_use WHERE id=true'),
+      query('SELECT enabled,failures,last_error FROM computer_use WHERE id=true'),
       query('SELECT enabled FROM trading_manager WHERE id=true'),
       query(
         "SELECT DISTINCT exchange FROM trading_agents WHERE mode='paper' AND status='active' AND kind IN ('grid','dca')",
@@ -121,9 +122,23 @@ export async function directionReadiness(): Promise<DirectionReadiness[]> {
       id: 'computer',
       title: 'Фриланс через браузер',
       status: c.COMPUTER_USE_ENABLED && c.VM_AGENT_URL ? 'работает' : 'требует подключения',
-      active: farm && c.COMPUTER_USE_ENABLED && !!c.VM_AGENT_URL && !!computer?.enabled,
+      active:
+        farm &&
+        c.COMPUTER_USE_ENABLED &&
+        !!c.VM_AGENT_URL &&
+        !!computer?.enabled &&
+        computer.failures < COMPUTER_USE_POLICY.maxFailuresInRow &&
+        ![
+          'BUDGET_BLOCKED',
+          'OPENAI_BUDGET_BLOCKED',
+          'COMPUTER_USE_DAILY_LIMIT',
+          'COMPUTER_USE_VM_UNAVAILABLE',
+        ].includes(computer.last_error),
       detail:
-        'Поиск и отклики доступны на подключённых аккаунтах. Наличие отклика не означает выигранный заказ и оплату.',
+        'Поиск и отклики доступны на подключённых аккаунтах. Наличие отклика не означает выигранный заказ и оплату.' +
+        (computer?.last_error
+          ? ' Есть текущее ограничение: подробности в «Компьютере ИИ» и «Запуске».'
+          : ''),
       link: '/office/computer',
     },
     {

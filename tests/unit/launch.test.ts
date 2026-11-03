@@ -413,3 +413,17 @@ describe('launch checklist', () => {
     expect(tradingWord('TRADING_SOMETHING_NEW')).toContain('TRADING_SOMETHING_NEW')
   })
 })
+
+it('shows a current reserve rejection even with positive balance and zero technical failures', () => {
+  const input = production()
+  input.computer.failures = 0
+  input.computer.lastError = 'OPENAI_BUDGET_BLOCKED'
+  input.model.paidSpentMicrousd = 89_541_908
+  const view = launchSteps(input)
+  const steps = view.groups.flatMap((g) => g.steps)
+  expect(steps.find((s) => s.id === 'budgets')).toMatchObject({ status: 'needed' })
+  expect(steps.find((s) => s.id === 'budgets')!.state).toContain('резерв следующего вызова')
+  expect(steps.find((s) => s.id === 'computer-on')).toMatchObject({ status: 'needed' })
+  expect(steps.find((s) => s.id === 'computer-on')!.state).toContain('Ожидает')
+  expect(view.done).toBeLessThan(view.total)
+})

@@ -52,10 +52,11 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
     ),
     query(
       `SELECT
-        (SELECT max(coalesce(finished_at,created_at)) FROM tool_calls WHERE status='done' AND NOT is_demo) AS last_ok,
+        (SELECT max(coalesce(finished_at,created_at)) FROM tool_calls WHERE status='done' AND NOT is_demo AND provider IN ('openai','yandex','ollama','openrouter')) AS last_ok,
         (SELECT error_code FROM tool_calls failed WHERE failed.status<>'done' AND failed.error_code IS NOT NULL AND NOT failed.is_demo
+           AND failed.provider IN ('openai','yandex','ollama','openrouter')
            AND (failed.status='uncertain' OR (failed.created_at > now()-interval '24 hours'
-           AND NOT EXISTS (SELECT 1 FROM tool_calls ok WHERE ok.role=failed.role AND ok.status='done' AND ok.created_at>failed.created_at)))
+           AND NOT EXISTS (SELECT 1 FROM tool_calls ok WHERE ok.role=failed.role AND ok.provider=failed.provider AND ok.status='done' AND ok.created_at>failed.created_at)))
            ORDER BY created_at DESC LIMIT 1) AS last_error`,
     ),
     budgetSummary(),
@@ -138,7 +139,7 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
       enabled: !!cu?.enabled,
       failures: cu?.failures ?? 0,
       maxFailures: COMPUTER_USE_POLICY.maxFailuresInRow,
-      lastError: cu?.failures ? String(cu.last_error ?? '') : '',
+      lastError: String(cu?.last_error ?? ''),
       lastStepAt: iso(cu?.last_step),
       lastDoneAt: iso(cu?.last_done),
       approvals: cu?.approvals ?? 0,

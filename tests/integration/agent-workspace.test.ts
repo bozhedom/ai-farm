@@ -231,3 +231,43 @@ it('separates a running paper portfolio from a connected live direction', async 
   await query("UPDATE system_state SET worker_heartbeat=now()-interval '10 minutes' WHERE id=true")
   expect((await directionReadiness()).every((r) => !r.active)).toBe(true)
 })
+
+it('shows a budget-blocked browser as inactive without treating it as a technical failure', async () => {
+  const { directionReadiness } = await import('../../core/earnings/readiness')
+  vi.spyOn(settings, 'config').mockReturnValue({
+    ...settings.config(),
+    COMPUTER_USE_ENABLED: true,
+    VM_AGENT_URL: 'http://vm.invalid',
+  })
+  await query('UPDATE system_state SET worker_heartbeat=now() WHERE id=true')
+  await query(
+    "INSERT INTO computer_use(id,enabled,failures,last_error) VALUES(true,true,0,'OPENAI_BUDGET_BLOCKED')",
+  )
+  expect((await directionReadiness()).find((r) => r.id === 'computer')).toMatchObject({
+    active: false,
+    status: 'работает',
+  })
+  await query("UPDATE computer_use SET last_error='' WHERE id=true")
+  expect((await directionReadiness()).find((r) => r.id === 'computer')!.active).toBe(true)
+})
+
+it('launch shows model activity separately from search and retains current nonfailure budget stops', async () => {
+  const { launchInput } = await import('../../core/launch/view')
+  const reservation = await reserveBudget('launch-observation', 'scout')
+  for (const [provider, created] of [
+    ['ollama', '2026-10-03T12:00:00Z'],
+    ['searxng', '2026-11-03T12:00:00Z'],
+  ]) {
+    await query(
+      `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,is_demo,provider,created_at)
+      VALUES($1,$2,$3,$2,'done',0,false,$2,$4)`,
+      [randomUUID(), provider, reservation, created],
+    )
+  }
+  await query(
+    "INSERT INTO computer_use(id,enabled,failures,last_error) VALUES(true,true,0,'OPENAI_BUDGET_BLOCKED')",
+  )
+  const view = await launchInput()
+  expect(view.model.lastSuccessAt).toBe('2026-10-03T12:00:00.000Z')
+  expect(view.computer.lastError).toBe('OPENAI_BUDGET_BLOCKED')
+})
