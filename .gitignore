@@ -16,4 +16,5 @@ test-results/
 
 # Local office files and recordings
 *.docx
+!docs/38-user-guide.docx
 *.ogg
