@@ -1,3 +1,5 @@
+import { applyIdeaDecisions } from './ideas'
+import { scheduleIdeaResearch } from './jobs/report'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { config } from './config'
@@ -75,6 +77,8 @@ type FarmState = Awaited<ReturnType<typeof lockResearchWindow>> & {
   scouts_per_strategy_per_day: number
   leads_per_day: number
   schedule_hour_utc: number
+  idea_daily_limit: number
+  idea_products_per_day: number | null
 }
 
 /**
@@ -101,6 +105,15 @@ export async function scheduleWork(now = new Date()) {
       return
     await scheduleResearch(db, state, now)
     await scheduleFarm(db, state, now, weekNumber)
+    await applyIdeaDecisions(db)
+    await scheduleIdeaResearch(
+      db,
+      Math.min(
+        state.idea_products_per_day ?? config().IDEA_PRODUCTS_PER_DAY,
+        config().IDEA_PRODUCTS_PER_DAY,
+      ),
+      true,
+    )
   })
 }
 
@@ -245,7 +258,9 @@ async function scheduleFarm(db: Connection, state: FarmState, now: Date, weekNum
     db,
   )
   const assignments: { agentId: string; topicId: string; category: string }[] = []
-  let scoutRoom = POLICY.maxIdeasPerDay - (await scoutsToday(db))
+  let scoutRoom =
+    Math.min(POLICY.maxIdeasPerDay, state.idea_daily_limit ?? POLICY.maxIdeasPerDay) -
+    (await scoutsToday(db))
   // One agent a day, in turn, explores: its first scout ignores its focus and takes the least
   // recently scouted topic anywhere. New earning directions get scouted without rewriting the
   // parameters of agents that already compete in a generation.
@@ -366,7 +381,9 @@ export async function requestScout(topicId?: string) {
     )
     if (!active.length) throw new Error('INVALID_POPULATION')
     const day = new Date().toISOString().slice(0, 10)
-    const room = POLICY.maxIdeasPerDay - (await scoutsToday(db))
+    const room =
+      Math.min(POLICY.maxIdeasPerDay, state.idea_daily_limit ?? POLICY.maxIdeasPerDay) -
+      (await scoutsToday(db))
     if (room <= 0) throw new Error('IDEAS_DAILY_LIMIT')
     const chosen = (topicId ? [[...active].sort((a, b) => a.ideas - b.ideas)[0]!] : active).slice(
       0,
@@ -410,11 +427,15 @@ export const farmSettingsSchema = z
     evolutionRoundsPerDay: z.number().int().min(0).max(24).optional(),
     scoutsPerStrategyPerDay: z.number().int().min(0).max(6).optional(),
     leadsPerDay: z.number().int().min(0).max(12).optional(),
-    scheduleHourUtc: z.number().int().min(0).max(20).optional(),
+    scheduleHourUtc: z.number().int().min(0).max(23).optional(),
+    ideaDailyLimit: z.number().int().min(0).max(POLICY.maxIdeasPerDay).optional(),
+    ideaProductsPerDay: z.number().int().min(0).max(12).optional(),
+    dailyBudgetKopecks: z.number().int().min(0).max(100000000).optional(),
+    monthlyBudgetKopecks: z.number().int().min(0).max(100000000).optional(),
   })
   .strict()
 
-/** Owner settings of the farm cycle. Money limits stay in the server environment. */
+/** Owner settings of the farm cycle. Owner money limits can only tighten the server environment ceilings. */
 export async function updateFarmSettings(value: unknown) {
   const input = farmSettingsSchema.parse(value)
   const columns: [keyof typeof input, string][] = [
@@ -424,10 +445,23 @@ export async function updateFarmSettings(value: unknown) {
     ['scoutsPerStrategyPerDay', 'scouts_per_strategy_per_day'],
     ['leadsPerDay', 'leads_per_day'],
     ['scheduleHourUtc', 'schedule_hour_utc'],
+    ['ideaDailyLimit', 'idea_daily_limit'],
+    ['ideaProductsPerDay', 'idea_products_per_day'],
+    ['dailyBudgetKopecks', 'owner_daily_budget_kopecks'],
+    ['monthlyBudgetKopecks', 'owner_monthly_budget_kopecks'],
   ]
+  const c = config()
+  if (
+    (input.dailyBudgetKopecks ?? 0) > c.DAILY_BUDGET_KOPECKS ||
+    (input.monthlyBudgetKopecks ?? 0) > c.MONTHLY_BUDGET_KOPECKS ||
+    (input.ideaProductsPerDay ?? 0) > c.IDEA_PRODUCTS_PER_DAY
+  )
+    throw new Error('SETTINGS_SERVER_LIMIT')
   const changes = columns.filter(([key]) => input[key] !== undefined)
   if (!changes.length) return input
   return transaction(async (db) => {
+    await query('SELECT id FROM system_state WHERE id=true FOR UPDATE', [], db)
+    await query('SELECT pg_advisory_xact_lock(735093)', [], db)
     await query(
       `UPDATE system_state SET ${changes.map(([, column], i) => `${column}=$${i + 1}`).join(',')} WHERE id=true`,
       changes.map(([key]) => input[key]),
@@ -490,12 +524,12 @@ export async function autonomyStatus(
   const openrouterCostBlocked =
     c.MODEL_PROVIDER === 'openrouter' && budget.openrouterActualMicrousd > 0
   const budgetBlocked =
-    budget.daySpent + budget.outstanding + researchReserve > c.DAILY_BUDGET_KOPECKS ||
+    budget.daySpent + budget.outstanding + researchReserve > budget.dailyLimit ||
     budget.monthSpent +
       budget.outstanding +
       researchReserve +
-      Math.min(100000, Math.floor(c.MONTHLY_BUDGET_KOPECKS / 3)) >
-      c.MONTHLY_BUDGET_KOPECKS ||
+      Math.min(100000, Math.floor(budget.monthlyLimit / 3)) >
+      budget.monthlyLimit ||
     (c.MODEL_PROVIDER === 'openai' &&
       budget.openaiSpentMicrousd >= c.OPENAI_TOTAL_BUDGET_MICROUSD) ||
     openrouterCostBlocked

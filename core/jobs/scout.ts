@@ -77,11 +77,12 @@ export async function scout(job: Job) {
     return
   }
   // Hard daily cap on ideas, whoever asked for the scouting.
+  const [settings] = await query('SELECT idea_daily_limit FROM system_state WHERE id=true')
   const [today] = await query(
     `SELECT count(*)::int AS n FROM ideas
      WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
   )
-  if ((today!.n as number) >= POLICY.maxIdeasPerDay) {
+  if ((today!.n as number) >= Math.min(POLICY.maxIdeasPerDay, settings!.idea_daily_limit)) {
     await audit('scout_skipped', 'Разведка пропущена: дневной лимит идей исчерпан.', {
       jobId: job.id,
       agentId: strategy.id,
@@ -113,7 +114,19 @@ export async function scout(job: Job) {
       [strategy.id],
     ),
   ])
+  const [revisedIdea] = job.payload.ownerIdeaId
+    ? await query('SELECT title,research,critique FROM ideas WHERE id=$1', [
+        job.payload.ownerIdeaId,
+      ])
+    : []
   const context = {
+    ownerRevision: revisedIdea
+      ? {
+          previous: revisedIdea,
+          corrections: job.payload.ownerBrief,
+          rule: 'Это правки владельца, а не доказательства. Перепроверь источники и исполнимость; не обходи политику. Сохрани исправленную идею отдельным результатом.',
+        }
+      : null,
     topic: {
       id: topic.id,
       industry: categoryById[topic.category]!.label,
@@ -154,7 +167,7 @@ export async function scout(job: Job) {
   })
   const idea = validateIdea(raw, evidence, demo, topicId)
   const fingerprint = ideaFingerprint(idea.title, idea.audience)
-  const recent = await recentIdeas()
+  const recent = (await recentIdeas()).filter((row) => row.id !== job.payload.ownerIdeaId)
   const duplicateOf = findDuplicate(fingerprint, recent)
   const similar = recent
     .filter((row) => jaccard(fingerprint, row.fingerprint) >= 0.3)

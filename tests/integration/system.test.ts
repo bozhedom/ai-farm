@@ -1627,7 +1627,11 @@ describe('public customer-source candidates', () => {
       ),
     ).toBe(true)
     expect(JSON.stringify(candidates.items)).not.toContain('contact@example.org')
-    expect(JSON.stringify(candidates.items)).not.toContain('999')
+    expect(JSON.stringify(candidates.items)).not.toContain('+7 (999) 123-45-67')
+    // Random UUIDs may contain 999; the contact check concerns source text and URLs.
+    expect(
+      JSON.stringify(candidates.items.map(({ title, snippet, url }) => ({ title, snippet, url }))),
+    ).not.toContain('999')
   })
 
   it('validates owner updates and never counts a manually won candidate as revenue', async () => {

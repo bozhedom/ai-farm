@@ -96,8 +96,12 @@ export type OfficeIdea = {
   /** Why the farm could not build a product from this idea (ideas.build_error), in words. */
   buildError?: string | null
   buildFailedAt?: string | null
+  buildState?: string | null
+  buildJobError?: string | null
   /** Added by the UX pass: the newest product built from this idea. */
   product?: {
+    historical?: boolean
+    version?: number
     id: string
     name: string
     publicUrl: string
@@ -311,6 +315,11 @@ export type OfficeReport = {
   createdAt: string
 }
 export type OfficeSettings = {
+  ideaDailyLimit?: number
+  ideaProductsPerDay?: number
+  dailyBudgetKopecks?: number
+  monthlyBudgetKopecks?: number
+  serverLimits?: { dailyKopecks: number; monthlyKopecks: number; productsPerDay: number }
   mode: string
   scheduleEnabled: boolean
   researchScope: 'rotate' | 'all'
@@ -337,6 +346,10 @@ export type OfficeSettingsUpdate = Partial<
     | 'scoutsPerStrategyPerDay'
     | 'leadsPerDay'
     | 'scheduleHourUtc'
+    | 'ideaDailyLimit'
+    | 'ideaProductsPerDay'
+    | 'dailyBudgetKopecks'
+    | 'monthlyBudgetKopecks'
   >
 >
 

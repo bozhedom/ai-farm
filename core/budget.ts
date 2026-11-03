@@ -10,6 +10,8 @@ import { ProviderHttpError, ProviderRejectedError } from './providers/rejection'
 export async function budgetSummary(db: Connection = pool) {
   const [s] = await query(
     `SELECT
+    (SELECT owner_daily_budget_kopecks FROM system_state WHERE id=true) AS owner_day,
+    (SELECT owner_monthly_budget_kopecks FROM system_state WHERE id=true) AS owner_month,
     COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::int AS day_spent,
     COALESCE((SELECT sum(charged_kopecks) FROM tool_calls WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::int AS month_spent,
     COALESCE((SELECT sum(limit_kopecks-spent_kopecks) FROM budget_reservations WHERE status='open'),0)::int AS outstanding,
@@ -21,6 +23,14 @@ export async function budgetSummary(db: Connection = pool) {
     db,
   )
   return {
+    dailyLimit: Math.min(
+      config().DAILY_BUDGET_KOPECKS,
+      s!.owner_day ?? config().DAILY_BUDGET_KOPECKS,
+    ),
+    monthlyLimit: Math.min(
+      config().MONTHLY_BUDGET_KOPECKS,
+      s!.owner_month ?? config().MONTHLY_BUDGET_KOPECKS,
+    ),
     daySpent: s!.day_spent as number,
     monthSpent: s!.month_spent as number,
     outstanding: s!.outstanding as number,
@@ -75,10 +85,10 @@ export async function reserveBudget(
   const limit = reserveFor(category)
   const s = await budgetSummary(db)
   const protectedOrders =
-    category !== 'order' ? Math.min(100000, Math.floor(c.MONTHLY_BUDGET_KOPECKS / 3)) : 0
+    category !== 'order' ? Math.min(100000, Math.floor(s.monthlyLimit / 3)) : 0
   if (
-    s.daySpent + s.outstanding + limit > c.DAILY_BUDGET_KOPECKS ||
-    s.monthSpent + s.outstanding + limit + protectedOrders > c.MONTHLY_BUDGET_KOPECKS
+    s.daySpent + s.outstanding + limit > s.dailyLimit ||
+    s.monthSpent + s.outstanding + limit + protectedOrders > s.monthlyLimit
   )
     throw new Error('BUDGET_BLOCKED')
   const id = randomUUID()
@@ -248,8 +258,8 @@ export async function meteredCall<T>(args: {
     )
       throw new Error('OPENAI_BUDGET_BLOCKED')
     if (
-      totals.daySpent + args.maximum > config().DAILY_BUDGET_KOPECKS ||
-      totals.monthSpent + args.maximum > config().MONTHLY_BUDGET_KOPECKS
+      totals.daySpent + args.maximum > totals.dailyLimit ||
+      totals.monthSpent + args.maximum > totals.monthlyLimit
     )
       throw new Error('BUDGET_BLOCKED')
     checkWorkerDrain()
@@ -407,8 +417,8 @@ export async function fundOrderReservation(id: string, db: Connection) {
   const s = await budgetSummary(db)
   const extra = limit - reservation.limit_kopecks
   if (
-    s.daySpent + s.outstanding + extra > c.DAILY_BUDGET_KOPECKS ||
-    s.monthSpent + s.outstanding + extra > c.MONTHLY_BUDGET_KOPECKS
+    s.daySpent + s.outstanding + extra > s.dailyLimit ||
+    s.monthSpent + s.outstanding + extra > s.monthlyLimit
   )
     throw new Error('BUDGET_BLOCKED')
   await query('UPDATE budget_reservations SET limit_kopecks=$2 WHERE id=$1', [id, limit], db)
@@ -420,7 +430,7 @@ export async function orderBudgetAvailable(db: Connection) {
   const limit = ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? c.ORDER_RESERVE_KOPECKS : 0
   const s = await budgetSummary(db)
   return (
-    s.daySpent + s.outstanding + limit <= c.DAILY_BUDGET_KOPECKS &&
-    s.monthSpent + s.outstanding + limit <= c.MONTHLY_BUDGET_KOPECKS
+    s.daySpent + s.outstanding + limit <= s.dailyLimit &&
+    s.monthSpent + s.outstanding + limit <= s.monthlyLimit
   )
 }

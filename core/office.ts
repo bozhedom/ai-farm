@@ -263,9 +263,13 @@ function ideaView(
     ownerOutcomeAt: iso(row.owner_outcome_at),
     buildError: row.build_error ? buildErrorText(row.build_error) : null,
     buildFailedAt: iso(row.build_failed_at),
+    buildState: row.build_state ?? null,
+    buildJobError: row.build_job_error ? buildErrorText(row.build_job_error) : null,
     product: product
       ? {
           id: product.id,
+          historical: !!product.historical,
+          version: product.idea_version,
           name: serviceName(product.template, product.spec?.name ?? product.template),
           publicUrl: publicUrl(product.slug),
           visibility: product.visibility,
@@ -280,8 +284,10 @@ function ideaView(
 async function ideaProducts(ids: string[]) {
   if (!ids.length) return []
   return query(
-    `SELECT DISTINCT ON (idea_id) id,idea_id,slug,template,spec,visibility,status,is_demo FROM products
-     WHERE idea_id=ANY($1::uuid[]) ORDER BY idea_id,(status='sandbox') DESC,created_at DESC`,
+    `SELECT DISTINCT ON (h.idea_id) p.id,h.idea_id,p.slug,p.template,v.spec,p.visibility,p.status,v.is_demo,
+       v.version AS idea_version,(p.hypothesis_id<>h.id) AS historical
+     FROM hypotheses h JOIN product_versions v ON v.hypothesis_id=h.id JOIN products p ON p.id=v.product_id
+     WHERE h.idea_id=ANY($1::uuid[]) ORDER BY h.idea_id,v.created_at DESC`,
     [ids],
   )
 }
@@ -329,7 +335,7 @@ export async function officeIdeas(filter: unknown = {}): Promise<OfficeIdeaList>
   }`
   const [rows, [count], label, [counts], byCategory] = await Promise.all([
     query(
-      `SELECT * FROM ideas ${where} ORDER BY rank_score DESC,created_at DESC,id LIMIT $3 OFFSET $4`,
+      `SELECT *, (SELECT status FROM jobs j WHERE j.kind='research' AND j.payload->>'ideaId'=ideas.id::text ORDER BY created_at DESC LIMIT 1) AS build_state, (SELECT error_code FROM jobs j WHERE j.kind='research' AND j.payload->>'ideaId'=ideas.id::text ORDER BY created_at DESC LIMIT 1) AS build_job_error FROM ideas ${where} ORDER BY rank_score DESC,created_at DESC,id LIMIT $3 OFFSET $4`,
       [...values, limit, input.offset],
     ),
     query(`SELECT count(*)::int AS n FROM ideas ${where}`, values),
@@ -367,7 +373,10 @@ export async function officeIdeas(filter: unknown = {}): Promise<OfficeIdeaList>
 
 export async function officeIdea(id: string): Promise<OfficeIdea> {
   if (!z.uuid().safeParse(id).success) throw new Error('IDEA_NOT_FOUND')
-  const [row] = await query('SELECT * FROM ideas WHERE id=$1', [id])
+  const [row] = await query(
+    "SELECT *, (SELECT status FROM jobs j WHERE j.kind='research' AND j.payload->>'ideaId'=ideas.id::text ORDER BY created_at DESC LIMIT 1) AS build_state, (SELECT error_code FROM jobs j WHERE j.kind='research' AND j.payload->>'ideaId'=ideas.id::text ORDER BY created_at DESC LIMIT 1) AS build_job_error FROM ideas WHERE id=$1",
+    [id],
+  )
   if (!row) throw new Error('IDEA_NOT_FOUND')
   return ideaView(row, await labelsNow(), await ideaChecks([id]), await ideaProducts([id]))
 }
@@ -765,7 +774,7 @@ export async function officeMoney(): Promise<OfficeMoney> {
     daySpentKopecks: budget.daySpent,
     monthSpentKopecks: budget.monthSpent,
     outstandingKopecks: budget.outstanding,
-    limits: { dailyKopecks: c.DAILY_BUDGET_KOPECKS, monthlyKopecks: c.MONTHLY_BUDGET_KOPECKS },
+    limits: { dailyKopecks: budget.dailyLimit, monthlyKopecks: budget.monthlyLimit },
     byCategory,
     testPayments: { count: payments!.n, kopecks: payments!.kopecks },
     realRevenueKopecks: payments!.revenue,
@@ -848,6 +857,24 @@ export async function officeSettings(): Promise<OfficeSettings> {
     scoutsPerStrategyPerDay: state!.scouts_per_strategy_per_day,
     leadsPerDay: state!.leads_per_day,
     scheduleHourUtc: state!.schedule_hour_utc ?? 0,
+    ideaDailyLimit: state!.idea_daily_limit,
+    ideaProductsPerDay: Math.min(
+      state!.idea_products_per_day ?? c.IDEA_PRODUCTS_PER_DAY,
+      c.IDEA_PRODUCTS_PER_DAY,
+    ),
+    dailyBudgetKopecks: Math.min(
+      state!.owner_daily_budget_kopecks ?? c.DAILY_BUDGET_KOPECKS,
+      c.DAILY_BUDGET_KOPECKS,
+    ),
+    monthlyBudgetKopecks: Math.min(
+      state!.owner_monthly_budget_kopecks ?? c.MONTHLY_BUDGET_KOPECKS,
+      c.MONTHLY_BUDGET_KOPECKS,
+    ),
+    serverLimits: {
+      dailyKopecks: c.DAILY_BUDGET_KOPECKS,
+      monthlyKopecks: c.MONTHLY_BUDGET_KOPECKS,
+      productsPerDay: c.IDEA_PRODUCTS_PER_DAY,
+    },
     providers: {
       model:
         c.MODEL_PROVIDER === 'openai' && c.OPENAI_TRANSPORT === 'openrouter'
@@ -861,7 +888,16 @@ export async function officeSettings(): Promise<OfficeSettings> {
             : 'Тестовый ETH (Sepolia)'
           : 'Тестовая кнопка',
     },
-    limits: { dailyKopecks: c.DAILY_BUDGET_KOPECKS, monthlyKopecks: c.MONTHLY_BUDGET_KOPECKS },
+    limits: {
+      dailyKopecks: Math.min(
+        state!.owner_daily_budget_kopecks ?? c.DAILY_BUDGET_KOPECKS,
+        c.DAILY_BUDGET_KOPECKS,
+      ),
+      monthlyKopecks: Math.min(
+        state!.owner_monthly_budget_kopecks ?? c.MONTHLY_BUDGET_KOPECKS,
+        c.MONTHLY_BUDGET_KOPECKS,
+      ),
+    },
     researchEnabled: state!.research_enabled,
     modelId: modelIds[c.MODEL_PROVIDER]?.(c) ?? null,
   }

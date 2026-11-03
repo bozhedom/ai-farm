@@ -223,6 +223,12 @@ export async function report(job: Job) {
  * without a public product go first, so the storefront grows before versions are replaced.
  */
 export async function scheduleIdeaResearch(db: Connection, limit: number, scheduled: boolean) {
+  const [settings] = await query(
+    'SELECT idea_products_per_day FROM system_state WHERE id=true',
+    [],
+    db,
+  )
+  limit = Math.min(limit, settings?.idea_products_per_day ?? limit)
   const [today] = await query(
     `SELECT count(*)::int AS n FROM jobs WHERE dedupe_key LIKE 'idea-research:%'
      AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
@@ -240,7 +246,7 @@ export async function scheduleIdeaResearch(db: Connection, limit: number, schedu
      AND (NOT i.is_demo OR $1)
      AND NOT EXISTS(SELECT 1 FROM hypotheses h WHERE h.idea_id=i.id)
      AND NOT EXISTS(SELECT 1 FROM jobs j WHERE j.dedupe_key='idea-research:'||i.id::text)
-     ORDER BY listed,i.rank_score DESC,i.created_at,i.id LIMIT 50`,
+     ORDER BY i.rank_score DESC,listed,i.created_at,i.id LIMIT 50`,
     [isDemoStand()],
     db,
   )

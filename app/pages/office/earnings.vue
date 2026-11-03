@@ -77,6 +77,7 @@ async function control(action: 'enable' | 'pause' | 'refresh') {
       <p v-if="status.offline" class="t-notice t-warning" role="alert">
         Нет связи. Показываем последнее состояние.
       </p>
+      <OfficeDirections />
       <div class="e-layout">
         <nav class="e-navigation" aria-label="Направления работы">
           <NuxtLink

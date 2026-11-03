@@ -15,6 +15,32 @@ type Posted = { url: string; body: unknown }
 
 async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: boolean } = {}) {
   const posted: Posted[] = []
+  const modelView = {
+    defaultModel: 'openai/gpt-6-astra',
+    switchAvailable: true,
+    master: 'Общие правила сервера.',
+    roles: [
+      {
+        id: 'director',
+        name: 'Руководитель',
+        instruction: '',
+        model: '',
+        revision: 0,
+        effectivePrompt:
+          'Общие правила сервера. Руководитель проверяет расходы и подтверждённый доход.',
+      },
+      {
+        id: 'manager',
+        name: 'Торговый менеджер',
+        instruction: '',
+        model: '',
+        revision: 0,
+        effectivePrompt: 'Общие правила сервера. Только Paper.',
+      },
+    ],
+    contexts: [] as { id: string; role: string; title: string; content: string }[],
+  }
+
   const json = (route: Route, body: unknown, status = 200) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
   const page10 = <T>(items: T[], offset: number) => ({
@@ -28,8 +54,22 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname
+    if (request.method() === 'DELETE' && path.startsWith('/api/office/models/context/')) {
+      posted.push({ url: path, body: request.postDataJSON() })
+      modelView.contexts = modelView.contexts.filter((c) => !path.endsWith(c.id))
+      return json(route, { ok: true })
+    }
     if (request.method() === 'POST') {
       posted.push({ url: path, body: request.postDataJSON() })
+      if (path === '/api/office/models/context')
+        modelView.contexts.push({ id: 'ctx-1', ...request.postDataJSON() })
+      if (path === '/api/office/models') {
+        const body = request.postDataJSON()
+        Object.assign(
+          modelView.roles.find((r) => r.id === body.role)!,
+          { ...body, revision: body.revision + 1 },
+        )
+      }
       if (path === '/api/orders') return json(route, { id: fx.deliveredOrder.id })
       if (path.endsWith('/relink'))
         return json(route, { token: 'T'.repeat(43), url: `/order/${'T'.repeat(43)}` })
@@ -38,6 +78,38 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (options.offline && path.startsWith('/api/office/'))
       return json(route, { statusMessage: 'DOWN' }, 503)
     const offset = Number(url.searchParams.get('offset') || 0)
+    if (path === '/api/office/models') return json(route, modelView)
+    if (path === '/api/office/models/catalog')
+      return json(route, [{ id: 'vendor/eligible', name: 'Доступная модель', browser: true }])
+    if (path === '/api/office/directions')
+      return json(route, [
+        {
+          id: 'spot-bybit',
+          title: 'Спот · BYBIT',
+          status: 'работает',
+          active: true,
+          detail: 'Торговое подключение проверено. Live запущен.',
+          link: '/office/trading',
+        },
+        {
+          id: 'funding',
+          title: 'Фандинг Bybit',
+          status: 'тестовый режим',
+          active: true,
+          detail: 'Активна тренировка на виртуальных средствах.',
+          link: '/office/earnings?track=yield',
+        },
+        {
+          id: 'prediction',
+          title: 'Kalshi',
+          status: 'требует подключения',
+          active: false,
+          detail: 'Аккаунт не подключён.',
+          link: '/office/earnings?track=prediction',
+        },
+      ])
+    if (path === '/api/earnings')
+      return json(route, { monitor: { enabled: true }, report: null, arbitrage: null })
     if (path === '/api/office/overview') return json(route, fx.overview)
     if (path === '/api/office/income') return json(route, fx.income)
     if (path === '/api/office/launch') return json(route, fx.launch)
@@ -134,6 +206,8 @@ async function noHorizontalScroll(page: Page) {
 
 const fx = officeFixtures()
 const sections: { name: string; path: string; ready: string }[] = [
+  { name: 'models', path: '/office/models', ready: 'Настройка роли' },
+  { name: 'directions', path: '/office/earnings', ready: 'Спот · BYBIT' },
   { name: 'overview', path: '/office', ready: 'Источники заработка' },
   { name: 'launch', path: '/office/launch', ready: 'Готовность к заработку' },
   { name: 'farm', path: '/office/farm', ready: 'Что произошло сегодня' },
@@ -242,7 +316,7 @@ test.describe('launch behaviour', () => {
       page.getByText('Тренировка и Demo идут на тестовые деньги, это не доход.'),
     ).toBeVisible()
     await expect(page.locator('#step-platforms')).toContainText('Начните с: kwork.ru, fl.ru')
-    await expect(page.locator('#step-bybit-live-key')).toContainText('только с правом Spot Trade')
+    await expect(page.locator('#step-bybit-live-key')).toContainText('Spot Trade')
     await expect(page.getByRole('link', { name: 'Запуск' }).first()).toBeVisible()
   })
 })
@@ -375,7 +449,7 @@ test.describe('office behaviour', () => {
     const posted = await stubOffice(page, fx)
     await page.goto('/office/settings')
     await page.getByLabel('Минимум идей для отбора').fill('2')
-    await page.getByRole('button', { name: 'Сохранить' }).click()
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
     await expect
       .poll(() => posted.find((p) => p.url === '/api/office/settings')?.body)
       .toMatchObject({ evolutionMinIdeas: 2 })
@@ -515,3 +589,50 @@ for (const width of [1440, 390]) {
     })
   })
 }
+
+test('owner changes a role model, uploads manager context and deletes it', async ({ page }) => {
+  const posted = await stubOffice(page, fx)
+  await page.goto('/office/models?role=manager')
+  await expect(page.getByLabel('Роль', { exact: true })).toHaveValue('manager')
+  await page.getByRole('button', { name: 'Загрузить доступные модели' }).click()
+  await page.getByLabel('Модель', { exact: true }).selectOption('vendor/eligible')
+  await page
+    .getByLabel('Ваши инструкции для роли')
+    .fill('Сначала исследовать комиссии и частоту сделок.')
+  await page.getByRole('button', { name: 'Сохранить настройки роли' }).click()
+  await expect
+    .poll(() => posted.find((p) => p.url === '/api/office/models')?.body)
+    .toMatchObject({ role: 'manager', model: 'vendor/eligible' })
+  await page.getByLabel('Загрузить текстовый файл').setInputFiles({
+    name: 'market.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('Наблюдаем комиссии на бумажном портфеле.'),
+  })
+  await page.getByRole('button', { name: 'Добавить контекст' }).click()
+  await expect(page.locator('.context-item')).toContainText('market.txt')
+  await expect
+    .poll(() => posted.find((p) => p.url === '/api/office/models/context')?.body)
+    .toMatchObject({ role: 'manager', content: 'Наблюдаем комиссии на бумажном портфеле.' })
+  await page.getByRole('button', { name: 'Удалить контекст' }).click()
+  await expect(page.locator('.context-item')).toHaveCount(0)
+})
+
+test('waiting idea exposes revision and a human decision', async ({ page }) => {
+  const own = officeFixtures()
+  own.ideas[0]!.status = 'new'
+  own.ideas[0]!.critique.verdict = 'PASS'
+  own.ideas[0]!.product = null
+  const posted = await stubOffice(page, own)
+  await page.goto(`/office/ideas/${own.ideas[0]!.id}`)
+  await expect(page.getByRole('button', { name: 'Принять идею' })).toBeVisible()
+  await page
+    .getByLabel('Что исправить или уточнить')
+    .fill('Проверить спрос у небольших мастерских, уточнить цену.')
+  await page.getByRole('button', { name: 'Внести правки и проверить заново' }).click()
+  await expect
+    .poll(() => posted.find((p) => p.url.endsWith('/decision'))?.body)
+    .toMatchObject({
+      action: 'revise',
+      brief: 'Проверить спрос у небольших мастерских, уточнить цену.',
+    })
+})

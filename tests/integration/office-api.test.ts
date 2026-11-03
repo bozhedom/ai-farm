@@ -1,3 +1,9 @@
+import profilesGet from '../../server/api/office/models/index.get'
+import profilesPost from '../../server/api/office/models/index.post'
+import contextPost from '../../server/api/office/models/context.post'
+import contextDelete from '../../server/api/office/models/context/[id].delete'
+import directionGet from '../../server/api/office/directions.get'
+import decisionPost from '../../server/api/office/ideas/[id]/decision.post'
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { createApp, createRouter, toNodeListener, type EventHandler } from 'h3'
@@ -39,6 +45,8 @@ let server: Server
 let base = ''
 
 const gets: [string, EventHandler][] = [
+  ['/api/office/models', profilesGet],
+  ['/api/office/directions', directionGet],
   ['/api/trading', trading],
   ['/api/office/overview', overview],
   ['/api/office/ideas', ideas],
@@ -56,6 +64,9 @@ const gets: [string, EventHandler][] = [
   ['/api/public/catalog', catalog],
 ]
 const posts: [string, EventHandler][] = [
+  ['/api/office/models', profilesPost],
+  ['/api/office/models/context', contextPost],
+  ['/api/office/ideas/:id/decision', decisionPost],
   ['/api/trading/control', tradingControl],
   ['/api/office/ideas/:id', ideaUpdate],
   ['/api/office/agents/evolve', evolve],
@@ -74,6 +85,7 @@ beforeAll(async () => {
   const router = createRouter()
   for (const [path, handler] of gets) router.get(path, handler)
   for (const [path, handler] of posts) router.post(path, handler)
+  router.delete('/api/office/models/context/:id', contextDelete)
   app.use(router)
   server = createServer(toNodeListener(app))
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -87,14 +99,19 @@ afterAll(async () => {
   await pool.end()
 })
 
-async function call(method: 'GET' | 'POST', path: string, cookie?: string, body?: unknown) {
+async function call(
+  method: 'GET' | 'POST' | 'DELETE',
+  path: string,
+  cookie?: string,
+  body?: unknown,
+) {
   const response = await fetch(base + path, {
     method,
     headers: {
       ...(cookie ? { cookie: `farm_session=${cookie}` } : {}),
-      ...(method === 'POST' ? { origin, 'content-type': 'application/json' } : {}),
+      ...(method !== 'GET' ? { origin, 'content-type': 'application/json' } : {}),
     },
-    body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    body: method !== 'GET' ? JSON.stringify(body ?? {}) : undefined,
   })
   const text = await response.text()
   let json: any = null
@@ -114,6 +131,16 @@ describe('owner office API', () => {
       expect([route, (await call('GET', path(route))).status]).toEqual([route, 401])
     for (const [route] of posts)
       expect([route, (await call('POST', path(route), undefined, {})).status]).toEqual([route, 401])
+    expect(
+      (
+        await call(
+          'DELETE',
+          '/api/office/models/context/00000000-0000-4000-8000-000000000000',
+          undefined,
+          {},
+        )
+      ).status,
+    ).toBe(401)
     expect((await call('GET', '/api/public/catalog')).status).toBe(200)
     // A foreign origin is refused before the session is even checked.
     const foreign = await fetch(base + '/api/office/scout', {
