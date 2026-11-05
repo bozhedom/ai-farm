@@ -34,6 +34,7 @@ const roleRuntime = new AsyncLocalStorage<string>()
 const definition = (role: string) => modelRoles.find((r) => r.id === role || r.name === role)
 export const masterPrompt = () => readFileSync('prompts/master.md', 'utf8')
 export function roleInstruction(role: string) {
+  if (role === 'Помощник кабинета') return readFileSync('prompts/assistant.md', 'utf8')
   const item = definition(role)
   if (!item) return ''
   const baseline = readFileSync(`prompts/roles/${item.id}.md`, 'utf8')
@@ -45,6 +46,7 @@ export function roleInstruction(role: string) {
 }
 export function roleContext(role: string) {
   const id = definition(role)?.id
+  if (!id) return []
   return (runtime.getStore()?.contexts ?? [])
     .filter((c) => c.role === id || c.role === 'all')
     .map(({ id, title, content }) => ({ id, title, content }))

@@ -1,5 +1,15 @@
 /** Server error codes in owner words: what happened and what to do next. */
 const messages: Record<string, string> = {
+  STOPPED: 'Включён аварийный стоп. Платные вызовы остановлены; доступна обычная справка.',
+  ASSISTANT_BUSY: 'Помощник ещё готовит ответ. Подождите и проверьте его повторно.',
+  ASSISTANT_DAILY_LIMIT:
+    'Лимит вопросов помощнику на сегодня исчерпан. Справка доступна в разделах кабинета.',
+  ASSISTANT_REQUEST_EXPIRED:
+    'Этот запрос завершился без сохранённого ответа. Отправьте новый вопрос.',
+  ASSISTANT_MODEL_TOO_EXPENSIVE:
+    'Оценка стоимости ответа выше лимита помощника. Показана обычная справка.',
+  ASSISTANT_UNAVAILABLE: 'Модель сейчас недоступна. Показана обычная справка.',
+
   WORK_FOCUS_PAUSED:
     'Направление отключено режимом «Только выбранные». Измените выбор в «Направлениях».',
   WORK_FOCUS_CHANGED:

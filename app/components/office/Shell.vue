@@ -112,6 +112,7 @@ async function logout() {
   } catch {
     // The session cookie is cleared server side; the login page is the right place either way.
   }
+  clearNuxtState('office-assistant-history')
   await navigateTo('/office/login')
   loggingOut.value = false
 }
@@ -240,6 +241,7 @@ async function logout() {
         </button>
       </nav>
     </div>
+    <OfficeAssistant />
     <Transition name="toast">
       <div
         v-if="toast"

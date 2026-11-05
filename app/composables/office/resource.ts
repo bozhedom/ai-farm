@@ -85,7 +85,10 @@ async function run(key: string) {
     } catch (error) {
       const info = describeError(error)
       if (info.status === 401) {
-        await app.runWithContext(() => navigateTo('/office/login'))
+        await app.runWithContext(() => {
+          clearNuxtState('office-assistant-history')
+          return navigateTo('/office/login')
+        })
         return
       }
       const offline = info.status === 0 || info.status >= 500

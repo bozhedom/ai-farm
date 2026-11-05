@@ -1,5 +1,6 @@
 import focusGet from '../../server/api/office/focus.get'
 import focusPost from '../../server/api/office/focus.post'
+import assistantPost from '../../server/api/office/assistant.post'
 import profilesGet from '../../server/api/office/models/index.get'
 import profilesPost from '../../server/api/office/models/index.post'
 import contextPost from '../../server/api/office/models/context.post'
@@ -68,6 +69,7 @@ const gets: [string, EventHandler][] = [
 ]
 const posts: [string, EventHandler][] = [
   ['/api/office/focus', focusPost],
+  ['/api/office/assistant', assistantPost],
   ['/api/office/models', profilesPost],
   ['/api/office/models/context', contextPost],
   ['/api/office/ideas/:id/decision', decisionPost],
