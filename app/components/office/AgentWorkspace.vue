@@ -250,7 +250,9 @@ function download() {
             @retry="refreshInstructions"
           />
           <details class="model-settings" :open="!tradingOnly">
-            <summary v-if="tradingOnly">Модель для разбора и анализа</summary>
+            <summary>
+              {{ tradingOnly ? 'Модель для разбора и анализа' : 'Модель для роли' }}
+            </summary>
             <div class="workspace-form">
               <label for="role-model">Модель</label>
               <select
@@ -489,6 +491,15 @@ function download() {
 }
 .workspace h2 {
   margin-bottom: 20px;
+}
+.instruction-card > label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.instruction-card > .small {
+  margin: 12px 0 24px;
 }
 .workspace-form {
   display: flex;
