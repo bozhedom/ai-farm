@@ -167,15 +167,6 @@ async function logout() {
         <a href="/storefront" target="_blank" rel="noopener"
           ><OfficeIcon name="external" />Открыть сайт</a
         >
-        <button
-          type="button"
-          class="side-logout side-assistant"
-          aria-haspopup="dialog"
-          aria-controls="office-assistant"
-          @click="assistant?.open()"
-        >
-          <OfficeIcon name="spark" />Помощник
-        </button>
         <button type="button" class="side-logout" :disabled="loggingOut" @click="logout">
           <OfficeIcon name="logout" />{{ loggingOut ? 'Выходим' : 'Выйти' }}
         </button>
@@ -262,6 +253,15 @@ async function logout() {
         </button>
       </nav>
     </div>
+    <button
+      type="button"
+      class="btn btn-primary assistant-launch"
+      aria-haspopup="dialog"
+      aria-controls="office-assistant"
+      @click="assistant?.open()"
+    >
+      <OfficeIcon name="spark" />Помощник
+    </button>
     <OfficeAssistant ref="assistant" />
     <Transition name="toast">
       <div
@@ -309,10 +309,12 @@ async function logout() {
   background: var(--canvas-deep);
   color: var(--ink);
 }
-.side-assistant {
-  color: var(--brand);
-  background: var(--brand-soft);
-  margin: 8px 0;
+.assistant-launch {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  box-shadow: var(--shadow-lg);
 }
 .live.is-quiet {
   color: var(--ink-2);
@@ -341,7 +343,7 @@ async function logout() {
 .toast {
   position: fixed;
   right: var(--s-6);
-  bottom: var(--s-6);
+  bottom: 88px;
   z-index: 70;
   display: flex;
   align-items: center;
@@ -369,7 +371,7 @@ async function logout() {
   transform: translateY(8px);
 }
 @media (max-width: 1023px) {
-  .side-assistant {
+  .assistant-launch {
     display: none;
   }
   .side-close {
