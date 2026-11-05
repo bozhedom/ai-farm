@@ -14,6 +14,7 @@ const { data: launch } = useOfficeLaunch(30000)
 const online = useOfficeOnline()
 const { toast } = useOfficeToast()
 const menuOpen = ref(false)
+const assistant = ref<{ open: () => void }>()
 
 useHead({ bodyAttrs: { class: computed(() => (menuOpen.value ? 'menu-open' : '')) } })
 
@@ -166,6 +167,15 @@ async function logout() {
         <a href="/storefront" target="_blank" rel="noopener"
           ><OfficeIcon name="external" />Открыть сайт</a
         >
+        <button
+          type="button"
+          class="side-logout side-assistant"
+          aria-haspopup="dialog"
+          aria-controls="office-assistant"
+          @click="assistant?.open()"
+        >
+          <OfficeIcon name="spark" />Помощник
+        </button>
         <button type="button" class="side-logout" :disabled="loggingOut" @click="logout">
           <OfficeIcon name="logout" />{{ loggingOut ? 'Выходим' : 'Выйти' }}
         </button>
@@ -204,6 +214,17 @@ async function logout() {
             live.title === 'Ферма работает' ? 'Работает' : live.title
           }}</span></span
         >
+        <button
+          type="button"
+          class="btn btn-icon btn-sm"
+          aria-label="Помощник"
+          title="Помощник"
+          aria-haspopup="dialog"
+          aria-controls="office-assistant"
+          @click="assistant?.open()"
+        >
+          <OfficeIcon name="spark" />
+        </button>
       </header>
       <main id="office-main" class="main">
         <p v-if="!online" class="note note-wait offline" role="status">
@@ -241,7 +262,7 @@ async function logout() {
         </button>
       </nav>
     </div>
-    <OfficeAssistant />
+    <OfficeAssistant ref="assistant" />
     <Transition name="toast">
       <div
         v-if="toast"
@@ -287,6 +308,11 @@ async function logout() {
 .side-logout:hover {
   background: var(--canvas-deep);
   color: var(--ink);
+}
+.side-assistant {
+  color: var(--brand);
+  background: var(--brand-soft);
+  margin: 8px 0;
 }
 .live.is-quiet {
   color: var(--ink-2);
@@ -343,6 +369,9 @@ async function logout() {
   transform: translateY(8px);
 }
 @media (max-width: 1023px) {
+  .side-assistant {
+    display: none;
+  }
   .side-close {
     display: inline-flex;
   }
