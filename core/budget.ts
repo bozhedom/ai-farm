@@ -1,3 +1,5 @@
+import { assertDirectionAllowed } from './work-focus'
+import { ASSISTANT_POLICY, TRADING_INSTRUCTION_POLICY } from './policy'
 import { randomUUID } from 'node:crypto'
 import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
@@ -42,13 +44,27 @@ export async function budgetSummary(db: Connection = pool) {
 }
 
 export type BudgetCategory =
-  'research' | 'order' | 'scout' | 'lead' | 'report' | 'trading_manager' | 'computer_use'
+  | 'research'
+  | 'order'
+  | 'scout'
+  | 'lead'
+  | 'report'
+  | 'trading_manager'
+  | 'computer_use'
+  | 'assistant'
+  | 'trading_instructions'
 /** Farm work stops with the research window and pauses; accepted orders do not. */
 export const farmCategories: readonly BudgetCategory[] = ['research', 'scout', 'lead', 'report']
 
 /** Envelope per task. Free providers reserve nothing, as before. */
 export function reserveFor(category: BudgetCategory) {
   const c = config()
+  if (category === 'trading_instructions')
+    return ['yandex', 'openai'].includes(c.MODEL_PROVIDER)
+      ? TRADING_INSTRUCTION_POLICY.reserveKopecks
+      : 0
+  if (category === 'assistant')
+    return ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? ASSISTANT_POLICY.reserveKopecks : 0
   if (category === 'trading_manager')
     return ['yandex', 'openai'].includes(c.MODEL_PROVIDER) ? managerLimits().reserveKopecks : 0
   // One browser task: its dollar cap converted once, so the ledger shows the same envelope.
@@ -208,6 +224,9 @@ export async function meteredCall<T>(args: {
       db,
     )
     const farm = farmCategories.includes(reservation?.category)
+    if (farm) await assertDirectionAllowed('studio', db)
+    if (reservation?.category === 'trading_manager') await assertDirectionAllowed('manager', db)
+    if (reservation?.category === 'computer_use') await assertDirectionAllowed('computer', db)
     if (!state.research_enabled && farm) return { error: new Error('RESEARCH_WINDOW_CLOSED') }
     if (state.mode === 'emergency_stop') throw new Error('STOPPED')
     if (!reservation || reservation.status !== 'open') throw new Error('RESERVATION_CLOSED')

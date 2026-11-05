@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import { withAgentProfiles, roleModel } from '../agent-profiles'
 import { randomUUID } from 'node:crypto'
 import { ZodError } from 'zod'
@@ -19,6 +20,7 @@ import { advanceManagerTasks } from './tasks'
 import { managerLimits } from './limits'
 
 export interface ManagerRow {
+  instruction_revision: number
   enabled: boolean
   requested_at: Date | null
   attempted_at: Date | null
@@ -110,6 +112,7 @@ export async function controlManager(
   actor: 'owner' | 'autopilot' = 'owner',
 ) {
   if (actor === 'autopilot' && action !== 'enable') throw new Error('AUTOPILOT_CANNOT_DISABLE')
+  if (action !== 'pause') await assertDirectionAllowed('manager')
   await ensureManager()
   await transaction(async (db) => {
     const [row] = await query<ManagerRow>(
@@ -163,7 +166,7 @@ function safeError(error: unknown) {
   if (error instanceof ZodError) return 'MANAGER_PLAN_INVALID'
   if (
     error instanceof Error &&
-    /^(MANAGER_|BUDGET_|OPENAI_BUDGET_|OPENROUTER_|PROVIDER_|MODEL_|LOCAL_|OLLAMA_|UNCERTAIN_|CONTEXT_|STOPPED$|PAUSED$|RESERVATION_)[A-Z_0-9]*$/.test(
+    /^(WORK_FOCUS_|MANAGER_|BUDGET_|OPENAI_BUDGET_|OPENROUTER_|PROVIDER_|MODEL_|LOCAL_|OLLAMA_|UNCERTAIN_|CONTEXT_|STOPPED$|PAUSED$|RESERVATION_)[A-Z_0-9]*$/.test(
       error.message,
     )
   )
@@ -196,7 +199,13 @@ async function claimRun(providerReady: boolean, skip = '') {
         db,
       )
     }
-    if (!row.enabled || system?.mode !== 'running' || !providerReady) return null
+    if (
+      !row.enabled ||
+      system?.mode !== 'running' ||
+      !providerReady ||
+      !(await directionAllowed('manager', db))
+    )
+      return null
     const blocker = managerModelBlocker()
     if (blocker) {
       await query(
@@ -226,6 +235,12 @@ async function claimRun(providerReady: boolean, skip = '') {
       !row.requested_at &&
       row.attempted_at &&
       now - row.attempted_at.getTime() < managerLimits().intervalMs
+    )
+      return null
+    if (
+      row.requested_at &&
+      row.attempted_at &&
+      now - row.attempted_at.getTime() < P.manualCooldownMs
     )
       return null
     const budget = await managerBudget(db)
@@ -273,8 +288,8 @@ async function claimRun(providerReady: boolean, skip = '') {
       error = e.message
     }
     await query(
-      `INSERT INTO trading_manager_runs(id,status,reservation_id,provider,model,is_demo,error,finished_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $7<>'' THEN now() ELSE NULL END)`,
+      `INSERT INTO trading_manager_runs(id,status,reservation_id,provider,model,is_demo,error,finished_at,instruction_revision)
+      VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $7<>'' THEN now() ELSE NULL END,$8)`,
       [
         id,
         error ? 'failed' : 'running',
@@ -283,6 +298,7 @@ async function claimRun(providerReady: boolean, skip = '') {
         provider.model,
         provider.demo,
         error,
+        row.instruction_revision,
       ],
       db,
     )
@@ -293,7 +309,9 @@ async function claimRun(providerReady: boolean, skip = '') {
       [id, P.leaseMs, true, error],
       db,
     )
-    return error ? null : { id, reservationId: reservationId! }
+    return error
+      ? null
+      : { id, reservationId: reservationId!, instructionRevision: row.instruction_revision }
   })
 }
 
@@ -347,16 +365,19 @@ export const planWithModel: ManagerPlanner = async (snapshot, run) => {
 }
 
 async function finishPlan(
-  run: { id: string; reservationId: string },
+  run: { id: string; reservationId: string; instructionRevision: number },
   snapshot: ManagerSnapshot,
   plan: ManagerPlan,
 ) {
   return transaction(async (db) => {
+    await assertDirectionAllowed('manager', db)
     const [owner] = await query<ManagerRow>(
       'SELECT * FROM trading_manager WHERE id=true FOR UPDATE',
       [],
       db,
     )
+    if (owner?.instruction_revision !== run.instructionRevision)
+      throw new Error('MANAGER_INSTRUCTIONS_CHANGED')
     if (
       !owner?.enabled ||
       owner.lease_id !== run.id ||
@@ -375,8 +396,8 @@ async function finishPlan(
         db,
       )
       await query(
-        `INSERT INTO trading_manager_tasks(id,run_id,exchange,source_agent_id,source,proposal,revision,status,reason,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+$10*interval '1 millisecond')`,
+        `INSERT INTO trading_manager_tasks(id,run_id,exchange,source_agent_id,source,proposal,revision,status,reason,expires_at,instruction_revision)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+$10*interval '1 millisecond',$11)`,
         [
           randomUUID(),
           run.id,
@@ -388,6 +409,7 @@ async function finishPlan(
           existing.length ? 'rejected' : 'queued',
           existing.length ? 'MANAGER_EXPERIMENT_ACTIVE' : 'MANAGER_WAITING_EXECUTION',
           P.queuedLifetimeMs,
+          run.instructionRevision,
         ],
         db,
       )
@@ -444,7 +466,7 @@ async function managerTickWithProfiles(
     if (!updated.length) return false
     if (isStopping()) throw new Error('MANAGER_INTERRUPTED')
     const plan = validatePlanAgainstSnapshot(
-      managerPlanSchema.parse(await planner(snapshot, run)),
+      managerPlanSchema.parse(await withAgentProfiles(() => planner(snapshot, run), true)),
       snapshot,
     )
     return await finishPlan(run, snapshot, plan)

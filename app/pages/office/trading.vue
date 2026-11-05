@@ -250,6 +250,9 @@ async function allocationSaved() {
           <p class="t-muted">{{ currentMode.detail }}</p>
         </div>
         <div class="heading-actions">
+          <NuxtLink to="/office/trading-instructions" class="t-link"
+            >Инструкции для торговли</NuxtLink
+          >
           <button class="t-link" @click="help?.showModal()">Как это работает</button>
           <button
             v-if="!exchange && mode === 'paper' && !allRunning && overview"
@@ -278,6 +281,14 @@ async function allocationSaved() {
       </p>
       <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
       <p v-if="notice" class="t-notice" role="status">{{ notice }}</p>
+      <details v-if="exchange && v?.ownerInstructions?.appliedAt" class="t-notice">
+        <summary>Торговые инструкции: версия {{ v.ownerInstructions.revision }}</summary>
+        <ul v-if="v.ownerInstructions.rules.length">
+          <li v-for="rule in v.ownerInstructions.rules" :key="rule">{{ rule }}</li>
+        </ul>
+        <p v-else>Дополнительных ограничений нет; действуют правила сервера.</p>
+        <NuxtLink to="/office/trading-instructions">Изменить инструкции</NuxtLink>
+      </details>
 
       <template v-if="!exchange">
         <p v-if="overviewPending" class="t-empty" role="status">Загружаем биржи…</p>

@@ -106,7 +106,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
 <template>
   <div class="trading-workspace manager-workspace">
     <div class="trading-main">
-      <NuxtLink to="/office/models?role=manager#context" class="t-button"
+      <NuxtLink to="/office/trading-instructions" class="t-button"
         >Модель, промпт и контекст менеджера</NuxtLink
       >
       <div class="page-heading">

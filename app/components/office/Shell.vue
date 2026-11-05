@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { useWorkFocus } from '~/composables/office/focus'
+import { workDirections } from '../../../core/contracts/work-focus'
 import type { IconName } from '~/composables/office/icons'
 import { officeApi, useOfficeToast } from '~/composables/office/actions'
 import { useOfficeLaunch, useOfficeOverview } from '~/composables/office/data'
 import { count } from '~/composables/office/format'
 import { useOfficeOnline } from '~/composables/office/resource'
 
+const { data: focus } = useWorkFocus()
 const route = useRoute()
 const { data: overview } = useOfficeOverview()
 const { data: launch } = useOfficeLaunch(30000)
@@ -109,6 +112,7 @@ async function logout() {
   } catch {
     // The session cookie is cleared server side; the login page is the right place either way.
   }
+  clearNuxtState('office-assistant-history')
   await navigateTo('/office/login')
   loggingOut.value = false
 }
@@ -205,6 +209,16 @@ async function logout() {
         <p v-if="!online" class="note note-wait offline" role="status">
           <OfficeIcon name="wifi" />Нет связи. Показываем последнее состояние, обновим сами.
         </p>
+        <p v-if="focus?.active" class="note note-wait offline" role="status">
+          Только выбранные:
+          {{
+            workDirections
+              .filter((d) => focus?.selected.includes(d.id))
+              .map((d) => d.name)
+              .join(', ')
+          }}.
+          <NuxtLink to="/office/earnings#work-focus">Изменить выбор</NuxtLink>
+        </p>
         <slot />
       </main>
       <nav class="tabbar" aria-label="Разделы">
@@ -227,6 +241,7 @@ async function logout() {
         </button>
       </nav>
     </div>
+    <OfficeAssistant />
     <Transition name="toast">
       <div
         v-if="toast"

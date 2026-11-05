@@ -1,3 +1,4 @@
+import { directionAllowed } from './work-focus'
 import { setTimeout as pause } from 'node:timers/promises'
 import { config } from './config'
 import { audit, query, transaction } from './db'
@@ -401,6 +402,21 @@ async function farmRunning() {
 
 async function apply(d: PlannedDecision, deps: AutopilotDeps): Promise<AutopilotDecision> {
   const decision = strip(d)
+  const direction =
+    d.action === 'enable_schedule'
+      ? 'studio'
+      : d.action === 'enable_manager'
+        ? 'manager'
+        : d.action === 'start_trading'
+          ? 'trading'
+          : d.track
+  if (direction && !(await directionAllowed(direction)))
+    return {
+      ...decision,
+      status: 'blocked',
+      code: 'WORK_FOCUS_PAUSED',
+      text: `${d.name ?? d.key}: запуск ограничен выбором направлений.`,
+    }
   if (!(await farmRunning()))
     return {
       ...decision,

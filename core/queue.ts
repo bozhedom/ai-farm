@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from './work-focus'
 import { randomUUID } from 'node:crypto'
 import { audit, pool, query, transaction, type Connection } from './db'
 import { templateSchema, type Template } from './policy'
@@ -37,6 +38,7 @@ export async function enqueue(
   payload: Record<string, string> = {},
   db: Connection = pool,
 ) {
+  if (!['fulfill', 'evaluate'].includes(kind)) await assertDirectionAllowed('studio', db)
   const [row] = await query(
     'INSERT INTO jobs(id,kind,dedupe_key,payload) VALUES($1,$2,$3,$4) ON CONFLICT(dedupe_key) DO UPDATE SET dedupe_key=EXCLUDED.dedupe_key RETURNING id,status',
     [randomUUID(), kind, key, payload],
@@ -49,6 +51,9 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
     // Serialize farm claims across workers, including a manual run racing the scheduler.
     if (kinds.some((kind) => (farmModelKinds as readonly string[]).includes(kind)))
       await lockResearchWindow(db)
+    if (!(await directionAllowed('studio', db)))
+      kinds = kinds.filter((k) => ['fulfill', 'evaluate'].includes(k))
+    if (!kinds.length) return
     // Priority: orders, then selection and reports, then research, scouting and leads.
     // Scheduled jobs (daily slots and payload.scheduled) wait for the schedule switch.
     const [row] = await query<Job>(
@@ -77,7 +82,7 @@ export async function claimJob(kinds: Job['kind'][]): Promise<Job | undefined> {
       return
     const [claimed] = await query<Job>(
       `UPDATE jobs SET status='running', attempts=attempts+1,started_at=COALESCE(started_at,now()),
-      error_code=CASE WHEN error_code IN ('RESEARCH_DAILY_BUDGET_WAIT','FARM_DAILY_BUDGET_WAIT','FARM_PACING_WAIT','WORKER_DRAINING') THEN null ELSE error_code END,
+      error_code=CASE WHEN error_code IN ('RESEARCH_DAILY_BUDGET_WAIT','FARM_DAILY_BUDGET_WAIT','FARM_PACING_WAIT','WORKER_DRAINING','WORK_FOCUS_PAUSED') THEN null ELSE error_code END,
       locked_until=now()+interval '2 minutes', lease_token=$2 WHERE id=$1 RETURNING *`,
       [row.id, randomUUID()],
       db,
@@ -345,14 +350,16 @@ export async function finishJob(job: Job, error?: unknown) {
       if (!unresolved.length) {
         await query(
           `UPDATE jobs SET status='queued',attempts=GREATEST(attempts-1,0),
-           error_code='WORKER_DRAINING',locked_until=null,lease_token=null,
+           error_code=$2,locked_until=null,lease_token=null,
            run_after=now(),finished_at=null WHERE id=$1`,
-          [job.id],
+          [job.id, error.message],
           db,
         )
         await audit(
           'job_yielded',
-          'Обработчик штатно остановлен между этапами. Ответы, расходы и резерв сохранены; попытка возвращена.',
+          error.message === 'WORK_FOCUS_PAUSED'
+            ? 'Направление приостановлено режимом выбранных агентов. Ответы, расходы, резерв и попытка сохранены.'
+            : 'Обработчик штатно остановлен между этапами. Ответы, расходы и резерв сохранены; попытка возвращена.',
           { jobId: job.id, kind: job.kind },
           db,
         )

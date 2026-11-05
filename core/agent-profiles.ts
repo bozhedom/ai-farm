@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { randomUUID, createHash } from 'node:crypto'
 import { z } from 'zod'
 import { config, paidModelId } from './config'
-import { audit, query, transaction } from './db'
+import { audit, query, transaction, type Connection } from './db'
 
 export const modelRoles = [
   { id: 'scout', name: 'Разведчик' },
@@ -34,6 +34,9 @@ const roleRuntime = new AsyncLocalStorage<string>()
 const definition = (role: string) => modelRoles.find((r) => r.id === role || r.name === role)
 export const masterPrompt = () => readFileSync('prompts/master.md', 'utf8')
 export function roleInstruction(role: string) {
+  if (role === 'Разбор торговых инструкций')
+    return readFileSync('prompts/trading-instructions.md', 'utf8')
+  if (role === 'Помощник кабинета') return readFileSync('prompts/assistant.md', 'utf8')
   const item = definition(role)
   if (!item) return ''
   const baseline = readFileSync(`prompts/roles/${item.id}.md`, 'utf8')
@@ -45,6 +48,7 @@ export function roleInstruction(role: string) {
 }
 export function roleContext(role: string) {
   const id = definition(role)?.id
+  if (!id) return []
   return (runtime.getStore()?.contexts ?? [])
     .filter((c) => c.role === id || c.role === 'all')
     .map(({ id, title, content }) => ({ id, title, content }))
@@ -67,8 +71,8 @@ export function currentModel() {
   return roleModel(roleRuntime.getStore() ?? '') || paidModelId(config())
 }
 export const withModelRole = <T>(role: string, work: () => T): T => roleRuntime.run(role, work)
-export async function withAgentProfiles<T>(work: () => Promise<T>): Promise<T> {
-  if (runtime.getStore()) return work()
+export async function withAgentProfiles<T>(work: () => Promise<T>, fresh = false): Promise<T> {
+  if (!fresh && runtime.getStore()) return work()
   const [profiles, contexts] = await Promise.all([
     query<Profile>('SELECT role,instruction,model,revision,pricing FROM agent_profiles'),
     query<Context>('SELECT id,role,title,content FROM agent_context ORDER BY created_at,id'),
@@ -162,7 +166,7 @@ export async function availableModels() {
     ]
   })
 }
-export async function saveProfile(value: unknown) {
+export async function prepareProfile(value: unknown) {
   const input = profileSchema.parse(value)
   let pricing: ModelPricing | null = null
   if (input.model) {
@@ -176,28 +180,51 @@ export async function saveProfile(value: unknown) {
     if (!selected) throw new Error('MODEL_UNSUPPORTED')
     pricing = selected.pricing
   }
-  return transaction(async (db) => {
-    await query('SELECT pg_advisory_xact_lock(735097)', [], db)
-    const [old] = await query('SELECT revision FROM agent_profiles WHERE role=$1', [input.role], db)
-    if ((old?.revision ?? 0) !== input.revision) throw new Error('PROFILE_CHANGED')
-    await query(
-      `INSERT INTO agent_profiles(role,instruction,model,pricing) VALUES($1,$2,$3,$4)
+  return { input, pricing }
+}
+export async function saveProfile(value: unknown) {
+  const prepared = await prepareProfile(value)
+  return transaction((db) => savePreparedProfile(prepared, db))
+}
+export async function refreshManagerInstructions(db: Connection) {
+  await query('INSERT INTO trading_manager(id) VALUES(true) ON CONFLICT DO NOTHING', [], db)
+  await query(
+    `UPDATE trading_manager SET instruction_revision=instruction_revision+1,
+    requested_at=CASE WHEN enabled THEN coalesce(requested_at,now()) ELSE requested_at END WHERE id=true`,
+    [],
+    db,
+  )
+  await query(
+    "UPDATE trading_manager_tasks SET status='rejected',reason='MANAGER_INSTRUCTIONS_CHANGED' WHERE status='queued'",
+    [],
+    db,
+  )
+}
+export async function savePreparedProfile(
+  { input, pricing }: Awaited<ReturnType<typeof prepareProfile>>,
+  db: Connection,
+) {
+  await query('SELECT pg_advisory_xact_lock(735097)', [], db)
+  const [old] = await query('SELECT revision FROM agent_profiles WHERE role=$1', [input.role], db)
+  if ((old?.revision ?? 0) !== input.revision) throw new Error('PROFILE_CHANGED')
+  await query(
+    `INSERT INTO agent_profiles(role,instruction,model,pricing) VALUES($1,$2,$3,$4)
       ON CONFLICT(role) DO UPDATE SET instruction=$2,model=$3,pricing=$4,revision=agent_profiles.revision+1,updated_at=now()`,
-      [input.role, input.instruction, input.model, pricing],
-      db,
-    )
-    await audit(
-      'agent_profile_changed',
-      'Владелец изменил инструкции и модель роли.',
-      {
-        role: input.role,
-        model: input.model,
-        revision: input.revision + 1,
-        instructionHash: createHash('sha256').update(input.instruction).digest('hex'),
-      },
-      db,
-    )
-  })
+    [input.role, input.instruction, input.model, pricing],
+    db,
+  )
+  await audit(
+    'agent_profile_changed',
+    'Владелец изменил инструкции и модель роли.',
+    {
+      role: input.role,
+      model: input.model,
+      revision: input.revision + 1,
+      instructionHash: createHash('sha256').update(input.instruction).digest('hex'),
+    },
+    db,
+  )
+  if (input.role === 'manager') await refreshManagerInstructions(db)
 }
 export async function addContext(value: unknown) {
   const input = contextSchema.parse(value)
@@ -216,6 +243,7 @@ export async function addContext(value: unknown) {
       [id, input.role, input.title, input.content],
       db,
     )
+    if (input.role === 'manager' || input.role === 'all') await refreshManagerInstructions(db)
     await audit(
       'agent_context_added',
       'Владелец добавил контекст для агентов.',
@@ -228,8 +256,10 @@ export async function addContext(value: unknown) {
 export async function deleteContext(id: string) {
   z.uuid().parse(id)
   return transaction(async (db) => {
+    await query('SELECT pg_advisory_xact_lock(735097)', [], db)
     const rows = await query('DELETE FROM agent_context WHERE id=$1 RETURNING role', [id], db)
     if (!rows.length) throw new Error('CONTEXT_NOT_FOUND')
+    if (rows[0]!.role === 'manager' || rows[0]!.role === 'all') await refreshManagerInstructions(db)
     await audit(
       'agent_context_deleted',
       'Владелец удалил контекст из следующих запусков.',

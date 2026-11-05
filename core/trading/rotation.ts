@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { ownerEntryReason, tradingInstructions } from './owner-rules'
 import { query, type Connection } from '../db'
 import { SCOUT_POLICY as S } from '../policy'
 import { agents, atomic, event, pendingOrder, portfolio } from './store'
@@ -40,19 +41,22 @@ export async function rotateAgents(s: TradingScope, scout: ScoutRow | undefined,
     const p = await portfolio(s, db, true)
     if (p.status !== 'running' || (await pendingOrder(s, db))) return
     const team = await agents(s, db)
+    const { rules } = await tradingInstructions(db)
     for (const a of team) {
       if (BigInt(a.base) || BigInt(a.basis)) continue
       const legacy = a.selector_version !== S.version
       // Existing funded strategies keep their authorization until a qualified successor is promoted.
       if (legacy && s.mode === 'live') continue
-      if (!legacy && Date.now() - a.assigned_at.getTime() < S.minAssignmentMs) continue
+      const restricted = !!ownerEntryReason(rules, a)
+      if (!restricted && !legacy && Date.now() - a.assigned_at.getTime() < S.minAssignmentMs)
+        continue
       const idle =
         Date.now() - Math.max(a.assigned_at.getTime(), a.last_order_at?.getTime() || 0) >=
         S.idleRotationMs
-      if (!legacy && !idle && admitted(scout, a.symbol)) continue
+      if (!restricted && !legacy && !idle && admitted(scout, a.symbol)) continue
       const symbol = pickSymbol(
         a.kind,
-        scout!.coins,
+        scout!.coins.filter((c) => !ownerEntryReason(rules, { symbol: c.symbol, kind: a.kind })),
         team.filter((m) => m.id !== a.id).map((m) => m.symbol),
         legacy ? undefined : a.symbol,
       )

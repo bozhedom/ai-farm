@@ -1,3 +1,4 @@
+import { assertDirectionAllowed } from '../work-focus'
 import { randomUUID } from 'node:crypto'
 import { config, paidModelId, usesSourcePosts } from '../config'
 import { isDemoStand } from '../stand'
@@ -346,6 +347,7 @@ export async function research(job: Job) {
     }
     const publication = await transaction(async (db) => {
       const state = await lockResearchWindow(db)
+      await assertDirectionAllowed('studio', db)
       const [lease] = await query(
         `SELECT id FROM jobs WHERE id=$1 AND status='running'
          AND lease_token=$2 AND locked_until>clock_timestamp() FOR UPDATE`,

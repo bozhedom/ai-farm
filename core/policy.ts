@@ -1198,3 +1198,20 @@ export function productOfferSchemaFor(template: Template) {
       context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
   })
 }
+
+/** Owner help shares the model ledger and emergency stop; it has no action tools. */
+export const ASSISTANT_POLICY = Object.freeze({
+  reserveKopecks: 10000,
+  maxDailyRequests: 40,
+  requestIntervalMs: 3000,
+  leaseMs: 10 * 60_000,
+  maxOutputTokens: 1200,
+})
+
+/** Owner-requested translation into bounded, server-enforced spot settings. */
+export const TRADING_INSTRUCTION_POLICY = Object.freeze({
+  reserveKopecks: 12000,
+  maxDailyRequests: 20,
+  leaseMs: 22 * 60_000,
+  maxOutputTokens: 2000,
+})

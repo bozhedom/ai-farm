@@ -2,6 +2,10 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { officeFixtures, type OfficeFixtures } from './fixtures/office'
+import {
+  defaultTradingRules,
+  type TradingInstructionsView,
+} from '../../core/contracts/trading-instructions'
 
 /**
  * Walks every owner office section at 1440 and 390 px with the office API stubbed by typed
@@ -15,6 +19,15 @@ type Posted = { url: string; body: unknown }
 
 async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: boolean } = {}) {
   const posted: Posted[] = []
+  const instructions: TradingInstructionsView = {
+    revision: 0,
+    profileRevision: 0,
+    rules: defaultTradingRules(),
+    managerNotes: [],
+    appliedAt: null,
+    source: null,
+    synchronized: true,
+  }
   const modelView = {
     defaultModel: 'openai/gpt-6-astra',
     switchAvailable: true,
@@ -63,12 +76,22 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
       posted.push({ url: path, body: request.postDataJSON() })
       if (path === '/api/office/models/context')
         modelView.contexts.push({ id: 'ctx-1', ...request.postDataJSON() })
-      if (path === '/api/office/models') {
+      if (path === '/api/office/models' || path === '/api/office/trading-instructions') {
         const body = request.postDataJSON()
         Object.assign(
           modelView.roles.find((r) => r.id === body.role)!,
           { ...body, revision: body.revision + 1 },
         )
+        if (path === '/api/office/trading-instructions') {
+          Object.assign(instructions, {
+            revision: instructions.revision + 1,
+            profileRevision: body.revision + 1,
+            appliedAt: new Date().toISOString(),
+            source: 'model',
+            managerNotes: ['Исследовать комиссии и частоту сделок.'],
+          })
+          return json(route, { applied: true, issues: [], current: instructions })
+        }
       }
       if (path === '/api/orders') return json(route, { id: fx.deliveredOrder.id })
       if (path.endsWith('/relink'))
@@ -78,7 +101,16 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (options.offline && path.startsWith('/api/office/'))
       return json(route, { statusMessage: 'DOWN' }, 503)
     const offset = Number(url.searchParams.get('offset') || 0)
+    if (path === '/api/office/focus')
+      return json(route, {
+        enabled: false,
+        active: false,
+        selected: ['trading', 'manager'],
+        until: null,
+        revision: 0,
+      })
     if (path === '/api/office/models') return json(route, modelView)
+    if (path === '/api/office/trading-instructions') return json(route, instructions)
     if (path === '/api/office/models/catalog')
       return json(route, [{ id: 'vendor/eligible', name: 'Доступная модель', browser: true }])
     if (path === '/api/office/directions')
@@ -86,6 +118,8 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
         {
           id: 'spot-bybit',
           title: 'Спот · BYBIT',
+          group: 'real',
+          activity: 'Live · торговля включена',
           status: 'работает',
           active: true,
           detail: 'Торговое подключение проверено. Live запущен.',
@@ -94,6 +128,8 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
         {
           id: 'funding',
           title: 'Фандинг Bybit',
+          group: 'test',
+          activity: 'Paper · симуляция',
           status: 'тестовый режим',
           active: true,
           detail: 'Активна тренировка на виртуальных средствах.',
@@ -102,6 +138,8 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
         {
           id: 'prediction',
           title: 'Kalshi',
+          group: 'other',
+          activity: 'Реальные операции не подключены',
           status: 'требует подключения',
           active: false,
           detail: 'Аккаунт не подключён.',
@@ -207,6 +245,7 @@ async function noHorizontalScroll(page: Page) {
 const fx = officeFixtures()
 const sections: { name: string; path: string; ready: string }[] = [
   { name: 'models', path: '/office/models', ready: 'Настройка роли' },
+  { name: 'trading-instructions', path: '/office/trading-instructions', ready: 'Правила торговли' },
   { name: 'directions', path: '/office/earnings', ready: 'Спот · BYBIT' },
   { name: 'overview', path: '/office', ready: 'Источники заработка' },
   { name: 'launch', path: '/office/launch', ready: 'Готовность к заработку' },
@@ -590,6 +629,50 @@ for (const width of [1440, 390]) {
   })
 }
 
+test('logout clears assistant history without a render error and the next login starts empty', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const errors = watchConsole(page)
+  await stubOffice(page, fx)
+  await page.route('**/api/office/assistant', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        text: 'Выберите группы агентов в разделе «Направления».',
+        sections: ['earnings'],
+        at: new Date().toISOString(),
+        source: 'guide',
+        reason: '',
+      }),
+    }),
+  )
+  await page.goto('/office')
+  await expect(
+    page.getByRole('heading', { name: 'Источники заработка', exact: true }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Помощник', exact: true }).click()
+  await page.getByLabel('Ваш вопрос', { exact: true }).fill('Как оставить только криптоторговлю?')
+  await page.getByRole('button', { name: 'Отправить вопрос' }).click()
+  await expect(page.getByRole('log')).toContainText('Выберите группы агентов')
+  await page.getByRole('button', { name: 'Закрыть помощника' }).click()
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click()
+  await expect(page).toHaveURL(/\/office\/login$/)
+  expect(errors).toEqual([])
+  await page.getByLabel('Пароль', { exact: true }).fill('test-only-owner-password')
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await expect(page).toHaveURL(/\/office$/)
+  await expect(
+    page.getByRole('heading', { name: 'Источники заработка', exact: true }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Помощник', exact: true }).click()
+  await expect(page.getByRole('log')).toContainText('Помогу разобраться в настройках')
+  await expect(page.getByRole('log')).not.toContainText('Как оставить только криптоторговлю?')
+  await expect(page.getByRole('log')).not.toContainText('Выберите группы агентов')
+  expect(errors).toEqual([])
+})
+
 test('owner changes a role model, uploads manager context and deletes it', async ({ page }) => {
   const posted = await stubOffice(page, fx)
   await page.goto('/office/models?role=manager')
@@ -599,10 +682,11 @@ test('owner changes a role model, uploads manager context and deletes it', async
   await page
     .getByLabel('Ваши инструкции для роли')
     .fill('Сначала исследовать комиссии и частоту сделок.')
-  await page.getByRole('button', { name: 'Сохранить настройки роли' }).click()
+  await page.getByRole('button', { name: 'Сохранить и применить' }).click()
   await expect
-    .poll(() => posted.find((p) => p.url === '/api/office/models')?.body)
+    .poll(() => posted.find((p) => p.url === '/api/office/trading-instructions')?.body)
     .toMatchObject({ role: 'manager', model: 'vendor/eligible' })
+  await expect(page.getByRole('heading', { name: 'Действует версия 1' })).toBeVisible()
   await page.getByLabel('Загрузить текстовый файл').setInputFiles({
     name: 'market.txt',
     mimeType: 'text/plain',
@@ -636,3 +720,71 @@ test('waiting idea exposes revision and a human decision', async ({ page }) => {
       brief: 'Проверить спрос у небольших мастерских, уточнить цену.',
     })
 })
+
+for (const width of [1440, 390])
+  for (const theme of ['light', 'dark']) {
+    test(`new workspace states and assistant ${theme} ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      const errors = watchConsole(page)
+      const posted = await stubOffice(page, fx)
+      await page.route('**/api/office/assistant', (route) =>
+        route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            text: 'Спот · BYBIT: Live · торговля включена. Фандинг Bybit: Paper · симуляция. Реальных операций нет.',
+            sections: ['earnings'],
+            at: new Date().toISOString(),
+            source: 'guide',
+            reason: 'OPENAI_BUDGET_BLOCKED',
+          }),
+        }),
+      )
+      await page.goto('/office/earnings')
+      await expect(page.getByText('Спот · BYBIT')).toBeVisible()
+      await page.evaluate(
+        (value) => document.documentElement.setAttribute('data-theme', value),
+        theme,
+      )
+      await expect(page.locator('[data-group="real"]')).not.toContainText('Фандинг')
+      await page.locator('[data-group="test"] summary').click()
+      await expect(page.locator('[data-direction="funding"]')).toContainText('Paper · симуляция')
+      await expect(page.locator('[data-direction="funding"]')).not.toContainText('Активно')
+      await noHorizontalScroll(page)
+      await page.screenshot({
+        path: join(shots, `new-directions-${theme}-${width}.png`),
+        fullPage: true,
+      })
+      await page.goto('/office/trading-instructions')
+      await expect(
+        page.getByRole('heading', { name: 'Правила торговли', exact: true }),
+      ).toBeVisible()
+      await page.evaluate(
+        (value) => document.documentElement.setAttribute('data-theme', value),
+        theme,
+      )
+      await page.getByLabel('Правила торговли, ограничения и подход').fill('Не покупать BTC')
+      await page.getByRole('button', { name: 'Сохранить и применить' }).click()
+      await expect(page.getByRole('heading', { name: 'Действует версия 1' })).toBeVisible()
+      expect(posted.some((p) => p.url === '/api/office/trading-instructions')).toBe(true)
+      await noHorizontalScroll(page)
+      await page.screenshot({
+        path: join(shots, `new-instructions-${theme}-${width}.png`),
+        fullPage: true,
+      })
+      await page.getByRole('button', { name: 'Помощник', exact: true }).click()
+      await page.getByLabel('Ваш вопрос', { exact: true }).fill('Что сейчас работает?')
+      await page.getByRole('button', { name: 'Отправить вопрос' }).click()
+      await expect(page.getByRole('log')).toContainText('Справка без ИИ')
+      await expect(page.getByRole('log')).toContainText('ИИ-ответ недоступен')
+      await noHorizontalScroll(page)
+      await page.screenshot({
+        path: join(shots, `new-assistant-${theme}-${width}.png`),
+        fullPage: true,
+      })
+      await page.getByRole('navigation', { name: 'Разделы из ответа' }).getByRole('link').click()
+      await expect(page).toHaveURL(/office\/earnings$/)
+      await page.getByRole('button', { name: 'Помощник', exact: true }).click()
+      await expect(page.getByRole('log')).toContainText('Что сейчас работает?')
+      expect(errors).toEqual([])
+    })
+  }

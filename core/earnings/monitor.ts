@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import { randomUUID } from 'node:crypto'
 import { audit, query, transaction } from '../db'
 import { EARNINGS_POLICY as P } from '../policy'
@@ -58,6 +59,7 @@ export async function earningsView(): Promise<EarningsView> {
 }
 
 export async function controlEarnings(action: 'enable' | 'pause' | 'refresh') {
+  if (action !== 'pause') await assertDirectionAllowed('monitor')
   await ensureMonitor()
   await transaction(async (db) => {
     const [row] = await query<MonitorRow>(
@@ -147,6 +149,7 @@ export async function earningsTick(
   },
 ) {
   await ensureMonitor()
+  if (!(await directionAllowed('monitor'))) return false
   const lease = randomUUID()
   const [claimed] = await query<MonitorRow>(
     `UPDATE earnings_monitor SET lease_id=$1,lease_until=now()+$2*interval '1 millisecond',attempted_at=now()

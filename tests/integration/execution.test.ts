@@ -1,3 +1,4 @@
+import { saveWorkFocus } from '../../core/work-focus'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { pool, query } from '../../core/db'
@@ -828,4 +829,20 @@ describe('execution Live enablement', () => {
     await controlExecution('prediction', 'live', 'start', h.factory)
     expect((await portfolio('prediction', 'live')).status).toBe('running')
   })
+})
+
+it('blocks new execution operations but reconciles previously submitted legs outside focus', async () => {
+  const h = harness()
+  await start(h)
+  await saveWorkFocus({ enabled: true, selected: ['trading'], duration: 'manual', revision: 0 })
+  await executionTick(h.factory)
+  expect(await query('SELECT id FROM execution_operations')).toHaveLength(0)
+  await expect(controlExecution('prediction', 'paper', 'start', h.factory)).rejects.toThrow(
+    'WORK_FOCUS_PAUSED',
+  )
+  await seedPrepared(h, 'submitted')
+  h.state.lookup = async (prepared) => terminal(prepared.intent)
+  await executionTick(h.factory)
+  expect((await onlyLeg()).state).toBe('terminal')
+  expect(h.broadcast).not.toHaveBeenCalled()
 })

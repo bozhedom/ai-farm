@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import { withAgentProfiles } from '../agent-profiles'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -175,6 +176,7 @@ const controlWords: Record<ControlAction, string> = {
   auto_proposals_off: 'Владелец запретил самостоятельную отправку откликов и ответов.',
 }
 export async function controlComputerUse(action: ControlAction) {
+  if (action === 'enable') await assertDirectionAllowed('computer')
   await ensureComputerUse()
   await transaction(async (db) => {
     await query('SELECT * FROM computer_use WHERE id=true FOR UPDATE', [], db)
@@ -247,6 +249,7 @@ export async function pickRotationGoal(index: number, db: Connection) {
 }
 
 export async function addOwnerGoal(text: string) {
+  await assertDirectionAllowed('computer')
   const goal = validateGoal(text)
   const c = config()
   const provider = computerUseProvider()
@@ -510,7 +513,13 @@ async function claimTask(): Promise<Claim | null> {
     // The owner is at the browser: no model step until the manual lease ends.
     if (owner.manual_until && owner.manual_until.getTime() > now) return null
     const c = config()
-    if (!owner.enabled || system?.mode !== 'running' || computerUseReady(c)) return null
+    if (
+      !owner.enabled ||
+      system?.mode !== 'running' ||
+      computerUseReady(c) ||
+      !(await directionAllowed('computer', db))
+    )
+      return null
     if (owner.failures >= P.maxFailuresInRow) return null
     const spent = await dailySpend(db)
     if (!computerUseProvider().demo && spent.microusd >= c.COMPUTER_USE_DAILY_CAP_MICROUSD) {
@@ -900,7 +909,7 @@ function safeError(error: unknown) {
   if (error instanceof VmAgentUnavailable) return error.message
   if (
     error instanceof Error &&
-    /^(COMPUTER_|BUDGET_|OPENAI_|OPENROUTER_|PROVIDER_|MODEL_|UNCERTAIN_|CONTEXT_|INVALID_|STOPPED$|PAUSED$|RESERVATION_)[A-Z_0-9]*$/.test(
+    /^(WORK_FOCUS_|COMPUTER_|BUDGET_|OPENAI_|OPENROUTER_|PROVIDER_|MODEL_|UNCERTAIN_|CONTEXT_|INVALID_|STOPPED$|PAUSED$|RESERVATION_)[A-Z_0-9]*$/.test(
       error.message,
     )
   )
@@ -909,7 +918,7 @@ function safeError(error: unknown) {
 }
 /** Codes that leave the task resumable: nothing about the task itself went wrong. */
 const resumable =
-  /^(STOPPED|PAUSED|COMPUTER_USE_PAUSED|COMPUTER_USE_DAILY_LIMIT|BUDGET_BLOCKED|OPENAI_BUDGET_BLOCKED|WORKER_DRAINING|COMPUTER_USE_LEASE_LOST)$/
+  /^(WORK_FOCUS_PAUSED|STOPPED|PAUSED|COMPUTER_USE_PAUSED|COMPUTER_USE_DAILY_LIMIT|BUDGET_BLOCKED|OPENAI_BUDGET_BLOCKED|WORKER_DRAINING|COMPUTER_USE_LEASE_LOST)$/
 
 type Outcome = { kind: 'continue' | 'stop' }
 
@@ -926,6 +935,7 @@ async function perform(
   agent: VmAgentClient,
   action: VmAction,
 ): Promise<{ ok: boolean; error: string; url: string; title: string }> {
+  await assertDirectionAllowed('computer')
   const sessionId = await ensureSession(task, agent)
   return agent.act(sessionId, action)
 }
@@ -1532,6 +1542,7 @@ async function runStep(
   }
   const callKey = `computer-use:${task.id}:${stepNo}`
   const raw = await model(input)
+  await assertDirectionAllowed('computer')
   let call: ToolCall
   try {
     call = parseToolCall(raw.name, raw.arguments)
@@ -1748,6 +1759,7 @@ async function computerUseTickWithProfiles(deps: ComputerUseDeps, isStopping: ()
   const startedAt = now()
   try {
     while (!isStopping() && now() - startedAt < P.tickBudgetMs) {
+      if (!(await directionAllowed('computer'))) break
       const outcome = await runStep(claim, agent, model, writer)
       if (outcome.kind !== 'continue') break
     }

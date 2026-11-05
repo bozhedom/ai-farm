@@ -1,9 +1,11 @@
+import { saveWorkFocus } from '../../core/work-focus'
+import { applyTradingInstructions } from '../../core/trading/instructions'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { pool, query } from '../../core/db'
 import { config } from '../../core/config'
 import { listing } from '../../core/trading/universe'
-import { cost, decimal, units } from '../../core/trading/decimal'
+import { cost, decimal, units, fee } from '../../core/trading/decimal'
 import { paperFill } from '../../core/trading/accounting'
 import {
   controlTrading,
@@ -130,6 +132,136 @@ beforeEach(async () => {
 afterAll(() => pool.end())
 
 describe('durable trading lifecycle', () => {
+  it('uses the saved profit target and holding deadline for existing positions', async () => {
+    await startTrading(scope('okx', 'paper'), '', false, factory)
+    await tick()
+    await applyTradingInstructions({
+      requestId: randomUUID(),
+      role: 'manager',
+      model: '',
+      instruction: 'Тейк-профит 2%; держать позицию не дольше 60 минут',
+      revision: 0,
+      instructionsRevision: 0,
+    })
+    exchange.price = '101.5'
+    exchange.reference = '101.5'
+    await noCooldown()
+    await tick()
+    expect(await query("SELECT id FROM trading_orders WHERE side='sell'")).toHaveLength(0)
+    exchange.price = '103'
+    exchange.reference = '103'
+    await tick()
+    expect(
+      (await query("SELECT reason FROM trading_orders WHERE side='sell'")).every(
+        (o) => o.reason === 'OWNER_TAKE_PROFIT',
+      ),
+    ).toBe(true)
+    expect((await query("SELECT id FROM trading_orders WHERE side='sell'")).length).toBeGreaterThan(
+      0,
+    )
+    exchange.price = '100'
+    exchange.reference = '102'
+    await noCooldown()
+    await tick()
+    await query(
+      "UPDATE trading_agents SET position_opened_at=now()-interval '61 minutes' WHERE base>0",
+    )
+    exchange.reference = '100'
+    await tick()
+    expect(
+      (await query("SELECT id FROM trading_orders WHERE reason='OWNER_TIME_EXIT'")).length,
+    ).toBeGreaterThan(0)
+  })
+  it.each(['paper', 'demo', 'live'] as const)(
+    'applies saved order sizes and tighter protection on the next %s tick without restarting',
+    async (mode) => {
+      const enabled = config().TRADING_LIVE_ENABLED
+      if (mode === 'live') config().TRADING_LIVE_ENABLED = true
+      try {
+        const apply = (instruction: string, revision: number) =>
+          applyTradingInstructions({
+            requestId: randomUUID(),
+            role: 'manager',
+            model: '',
+            instruction,
+            revision,
+            instructionsRevision: revision,
+          })
+        await apply('Покупка не больше 7 USDT', 0)
+        expect((await portfolio(scope('okx', mode))).status).toBe('idle')
+        await startTrading(
+          scope('okx', mode),
+          mode === 'live' ? 'ТОРГОВАТЬ 100 USDT НА OKX' : '',
+          false,
+          factory,
+        )
+        await tick()
+        const buys = await query(
+          "SELECT qty,price FROM trading_orders WHERE mode=$1 AND side='buy'",
+          [mode],
+        )
+        expect(buys.length).toBeGreaterThan(0)
+        for (const buy of buys) {
+          const value = cost(BigInt(buy.qty), BigInt(buy.price))
+          expect(value + fee(value, 25)).toBeLessThanOrEqual(units('7'))
+        }
+        await apply('Приостановить новые покупки; стоп-лосс 1%', 1)
+        exchange.price = '98.8'
+        await tick()
+        expect(
+          await query("SELECT id FROM trading_orders WHERE mode=$1 AND side='buy'", [mode]),
+        ).toHaveLength(buys.length)
+        expect(
+          (
+            await query("SELECT reason FROM trading_orders WHERE mode=$1 AND side='sell'", [mode])
+          ).some((o) => o.reason === 'OWNER_POSITION_STOP'),
+        ).toBe(true)
+      } finally {
+        config().TRADING_LIVE_ENABLED = enabled
+      }
+    },
+  )
+
+  it.each([
+    ['Экспозиция не более 0%', 0],
+    ['Не более 1 сделок в день', 1],
+    ['Пауза между покупками 60 минут', 1],
+  ])(
+    'enforces the text constraint "%s" across agents in one portfolio',
+    async (instruction, count) => {
+      await applyTradingInstructions({
+        requestId: randomUUID(),
+        role: 'manager',
+        model: '',
+        instruction,
+        revision: 0,
+        instructionsRevision: 0,
+      })
+      await startTrading(scope('okx', 'paper'), '', false, factory)
+      await tick()
+      expect(
+        await query("SELECT id FROM trading_orders WHERE mode='paper' AND side='buy'"),
+      ).toHaveLength(Number(count))
+    },
+  )
+
+  it('rotates free slots toward allowed coins and never sends an entry for an excluded coin', async () => {
+    await startTrading(scope('okx', 'paper'), '', false, factory)
+    await applyTradingInstructions({
+      requestId: randomUUID(),
+      role: 'manager',
+      model: '',
+      instruction: 'Покупать только ETH',
+      revision: 0,
+      instructionsRevision: 0,
+    })
+    await tick()
+    const orders = await query(
+      "SELECT symbol FROM trading_orders WHERE mode='paper' AND side='buy'",
+    )
+    expect(orders.length).toBeGreaterThan(0)
+    expect(orders.every((o) => o.symbol === 'ETH-USDT')).toBe(true)
+  })
   it('does not report a planned budget as funds on an unconnected exchange', async () => {
     expect((await tradingView(scope('okx', 'live'))).metrics).toMatchObject({
       capital: '100',
@@ -1316,4 +1448,24 @@ describe('classic strategy rollout and complete active balances', () => {
     expect(after.last_signal).toBe('SCOUT_TIME_EXIT')
     expect(classicState(after).tranches).toHaveLength(0)
   })
+})
+
+it('blocks new spot entries outside focus while still closing existing positions', async () => {
+  await startTrading(scope('okx', 'paper'), '', false, factory)
+  await tick()
+  const initial = await query("SELECT id FROM trading_orders WHERE side='buy'")
+  expect(initial.length).toBeGreaterThan(0)
+  await saveWorkFocus({ enabled: true, selected: ['studio'], duration: 'manual', revision: 0 })
+  await expect(startTrading(scope('okx', 'demo'), '', false, factory)).rejects.toThrow(
+    'WORK_FOCUS_PAUSED',
+  )
+  await noCooldown()
+  await tick()
+  expect(await query("SELECT id FROM trading_orders WHERE side='buy'")).toHaveLength(initial.length)
+  exchange.price = '103'
+  exchange.reference = '103'
+  await noCooldown()
+  await tick()
+  expect((await query("SELECT id FROM trading_orders WHERE side='sell'")).length).toBeGreaterThan(0)
+  expect(await query("SELECT id FROM trading_orders WHERE side='buy'")).toHaveLength(initial.length)
 })

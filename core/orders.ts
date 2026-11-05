@@ -1,3 +1,4 @@
+import { assertDirectionAllowed } from './work-focus'
 import { withAgentProfiles } from './agent-profiles'
 import { createHash, randomUUID } from 'node:crypto'
 import { config, usesSourcePosts } from './config'
@@ -105,6 +106,7 @@ export async function insertOrder(
     fundOnPayment?: boolean
   },
 ) {
+  await assertDirectionAllowed('services', db)
   const [strategy] = await query(
     "SELECT * FROM strategies WHERE status='active' ORDER BY random() LIMIT 1",
     [],

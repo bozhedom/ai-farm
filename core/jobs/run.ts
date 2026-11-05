@@ -1,3 +1,4 @@
+import { assertDirectionAllowed } from '../work-focus'
 import { withAgentProfiles } from '../agent-profiles'
 import { activityContext } from '../activity'
 import { evaluateWeek } from '../evolution'
@@ -10,6 +11,7 @@ import { research } from './research'
 import { scout } from './scout'
 
 export async function runJob(job: Job, lifecycle: { isStopping?: () => boolean } = {}) {
+  if (!['fulfill', 'evaluate'].includes(job.kind)) await assertDirectionAllowed('studio')
   return withAgentProfiles(() =>
     activityContext.run({ jobId: job.id, ...lifecycle }, async () => {
       if (job.kind === 'research') await research(job)

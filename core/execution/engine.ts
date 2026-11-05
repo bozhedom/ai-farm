@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import { randomUUID } from 'node:crypto'
 import { query, transaction } from '../db'
 import { EXECUTION_POLICY as P } from '../policy'
@@ -113,6 +114,7 @@ export async function controlExecution(
       await executionEvent(p, action === 'close' ? 'EXECUTION_CLOSE_REQUESTED' : 'EXECUTION_PAUSED')
       return { ok: true }
     }
+    await assertDirectionAllowed(track)
     if (p.status === 'running') return { ok: true }
     if (executionRiskStopped(p)) throw new Error('EXECUTION_RISK_STOP')
     if (units(p.capital) < units(P.minCapital)) throw new Error('EXECUTION_ALLOCATION_REQUIRED')
@@ -340,6 +342,7 @@ async function runPortfolio(
   if (!op) {
     if (
       p.status !== 'running' ||
+      !(await directionAllowed(p.track)) ||
       isStopping() ||
       (p.last_scan && Date.now() - p.last_scan.getTime() < P.scanMs)
     )
@@ -390,6 +393,7 @@ async function runPortfolio(
       throw new Error('EXECUTION_BUDGET_EXCEEDED')
     if (isStopping()) return
     await transaction(async (db) => {
+      await assertDirectionAllowed(p.track, db)
       await query(
         'INSERT INTO execution_operations(id,track,mode,reserve,plan) VALUES($1,$2,$3,$4,$5)',
         [
