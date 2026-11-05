@@ -1,3 +1,4 @@
+import { managerModelArgs } from '../../core/manager/runtime'
 import { enqueue } from '../../core/queue'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
@@ -270,4 +271,32 @@ it('launch shows model activity separately from search and retains current nonfa
   const view = await launchInput()
   expect(view.model.lastSuccessAt).toBe('2026-10-03T12:00:00.000Z')
   expect(view.computer.lastError).toBe('OPENAI_BUDGET_BLOCKED')
+})
+
+it('includes trading instructions and materials in the exact manager request without weakening its capabilities', async () => {
+  await saveProfile({
+    role: 'manager',
+    instruction: 'Проверяй комиссии до гипотезы.',
+    model: '',
+    revision: 0,
+  })
+  await addContext({
+    role: 'manager',
+    title: 'Эксперимент',
+    content: 'Сравнить просадку двух подходов.',
+  })
+  await addContext({ role: 'critic', title: 'Не торговля', content: 'Карточки товаров.' })
+  await withAgentProfiles(async () => {
+    const args = managerModelArgs(
+      { at: '', portfolios: [], recentTasks: [] },
+      { id: 'preview', reservationId: '' },
+    )
+    const request = prepareModelRequest(args)
+    expect(request.system).toContain('Проверяй комиссии до гипотезы.')
+    const context = JSON.parse(request.context)
+    expect(context.ownerContext).toHaveLength(1)
+    expect(context.ownerContext[0].title).toBe('Эксперимент')
+    expect(context.capabilities).toContain('Не предлагай запуск')
+    expect(context.capabilities).toContain('Live')
+  })
 })

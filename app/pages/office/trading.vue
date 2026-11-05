@@ -250,6 +250,9 @@ async function allocationSaved() {
           <p class="t-muted">{{ currentMode.detail }}</p>
         </div>
         <div class="heading-actions">
+          <NuxtLink to="/office/trading-instructions" class="t-link"
+            >Инструкции для торговли</NuxtLink
+          >
           <button class="t-link" @click="help?.showModal()">Как это работает</button>
           <button
             v-if="!exchange && mode === 'paper' && !allRunning && overview"
