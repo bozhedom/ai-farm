@@ -139,6 +139,7 @@ export function sizeOrder(
   side: 'buy' | 'sell',
   clientId: string,
   maxQty?: bigint,
+  maxBuyBudget?: bigint,
 ): OrderRequest | null {
   const { tick, lot, minQty, symbol } = market.instrument
   // Round inward: the rounded limit never exceeds the configured slippage cap.
@@ -149,7 +150,7 @@ export function sizeOrder(
         tick
   const budget = min(
     isClassic(agent.kind) ? classicPlan(agent).budget : units(String(P.orderUsdt)),
-    BigInt(agent.cash),
+    min(BigInt(agent.cash), maxBuyBudget ?? BigInt(agent.cash)),
   )
   const qty =
     side === 'buy'

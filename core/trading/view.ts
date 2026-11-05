@@ -1,4 +1,6 @@
 import { query } from '../db'
+import { tradingInstructions } from './owner-rules'
+import { describeTradingRules } from '../contracts/trading-instructions'
 import { config } from '../config'
 import { TRADING_POLICY as P } from '../policy'
 import type { TradingView } from '../contracts/trading'
@@ -15,6 +17,8 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
   const { mode, exchange } = s
   await ensurePortfolios()
   const p = await portfolio(s)
+  const instructions = await tradingInstructions()
+  const rules = instructions.rules
   const team = await query<AgentRow>(
     `SELECT * FROM trading_agents WHERE mode=$1 AND exchange=$2 AND status='active'
      UNION ALL
@@ -65,6 +69,11 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
   return {
     mode,
     exchange,
+    ownerInstructions: {
+      revision: instructions.revision,
+      rules: describeTradingRules(rules),
+      appliedAt: instructions.appliedAt,
+    },
     liveConfirmation: liveConfirmation(p),
     allocationEditable: !p.started_at && !p.account_identity,
     status: p.status,
@@ -95,12 +104,12 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
       roundTrips: lifetime!.trips,
     },
     limits: {
-      orderUsdt: P.orderUsdt,
-      exposureBps: P.maxExposureBps,
+      orderUsdt: rules.maxOrderUsdt === null ? P.orderUsdt : Number(rules.maxOrderUsdt),
+      exposureBps: rules.maxExposureBps ?? P.maxExposureBps,
       dailyLossBps: P.dailyLossBps,
       drawdownBps: P.drawdownBps,
-      positionStopBps: P.positionStopBps,
-      maxOrdersPerDay: P.maxOrdersPerDay,
+      positionStopBps: rules.positionStopBps ?? P.positionStopBps,
+      maxOrdersPerDay: rules.maxOrdersPerDay ?? P.maxOrdersPerDay,
       evaluationDays: P.minEvaluationDays,
       evaluationTrips: P.minRoundTrips,
     },

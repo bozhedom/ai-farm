@@ -43,6 +43,7 @@ export type TradingMarketView = {
 }
 
 export type TradingView = {
+  ownerInstructions?: { revision: number; rules: string[]; appliedAt: string | null }
   exchange: TradingExchange
   liveConfirmation: string
   allocationEditable: boolean

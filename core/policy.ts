@@ -1207,3 +1207,11 @@ export const ASSISTANT_POLICY = Object.freeze({
   leaseMs: 10 * 60_000,
   maxOutputTokens: 1200,
 })
+
+/** Owner-requested translation into bounded, server-enforced spot settings. */
+export const TRADING_INSTRUCTION_POLICY = Object.freeze({
+  reserveKopecks: 12000,
+  maxDailyRequests: 20,
+  leaseMs: 22 * 60_000,
+  maxOutputTokens: 2000,
+})

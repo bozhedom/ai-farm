@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { saveProfile, roleInstruction } from '../../core/agent-profiles'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { pool, query } from '../../core/db'
 import { config } from '../../core/config'
@@ -161,6 +162,47 @@ beforeEach(async () => {
 afterAll(() => pool.end())
 
 describe('durable paper manager', () => {
+  it('discards a late plan after an instruction edit and uses the new text for the next permitted review', async () => {
+    await controlManager('enable')
+    expect(
+      await managerTick(async (snapshot) => {
+        await saveProfile({
+          role: 'manager',
+          model: '',
+          revision: 0,
+          instruction: 'Объясняй комиссии перед каждым экспериментом.',
+        })
+        return plan(snapshot)
+      }),
+    ).toBe(false)
+    expect(await query('SELECT id FROM trading_manager_tasks')).toHaveLength(0)
+    expect((await query('SELECT error FROM trading_manager_runs'))[0]!.error).toBe(
+      'MANAGER_INSTRUCTIONS_CHANGED',
+    )
+    expect(
+      (await query('SELECT requested_at FROM trading_manager'))[0]!.requested_at,
+    ).toBeInstanceOf(Date)
+    const planner = vi.fn(async (snapshot: ManagerSnapshot) => {
+      expect(roleInstruction('Торговый менеджер')).toContain(
+        'Объясняй комиссии перед каждым экспериментом.',
+      )
+      return plan(snapshot)
+    })
+    expect(await managerTick(planner)).toBe(false)
+    expect(planner).not.toHaveBeenCalled()
+    await query("UPDATE trading_manager SET attempted_at=now()-interval '31 minutes'")
+    expect(await managerTick(planner)).toBe(true)
+    await saveProfile({
+      role: 'manager',
+      model: '',
+      revision: 1,
+      instruction: 'Проверяй также просадку.',
+    })
+    expect((await query('SELECT status,reason FROM trading_manager_tasks'))[0]).toMatchObject({
+      status: 'rejected',
+      reason: 'MANAGER_INSTRUCTIONS_CHANGED',
+    })
+  })
   it('publishes task foreign keys while another transaction holds the portfolio mutation lock', async () => {
     await controlManager('enable')
     const locked = deferred<void>(),

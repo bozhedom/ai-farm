@@ -1,4 +1,6 @@
 import focusGet from '../../server/api/office/focus.get'
+import instructionsGet from '../../server/api/office/trading-instructions.get'
+import instructionsPost from '../../server/api/office/trading-instructions.post'
 import focusPost from '../../server/api/office/focus.post'
 import assistantPost from '../../server/api/office/assistant.post'
 import profilesGet from '../../server/api/office/models/index.get'
@@ -48,6 +50,7 @@ let server: Server
 let base = ''
 
 const gets: [string, EventHandler][] = [
+  ['/api/office/trading-instructions', instructionsGet],
   ['/api/office/focus', focusGet],
   ['/api/office/models', profilesGet],
   ['/api/office/directions', directionGet],
@@ -68,6 +71,7 @@ const gets: [string, EventHandler][] = [
   ['/api/public/catalog', catalog],
 ]
 const posts: [string, EventHandler][] = [
+  ['/api/office/trading-instructions', instructionsPost],
   ['/api/office/focus', focusPost],
   ['/api/office/assistant', assistantPost],
   ['/api/office/models', profilesPost],

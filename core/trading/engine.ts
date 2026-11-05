@@ -1,4 +1,10 @@
 import { assertDirectionAllowed, directionAllowed } from '../work-focus'
+import {
+  orderWithinOwnerLimit,
+  ownerEntryReason,
+  ownerSignal,
+  tradingInstructions,
+} from './owner-rules'
 import { randomUUID } from 'node:crypto'
 import { query, transaction, type Connection } from '../db'
 import { config } from '../config'
@@ -243,6 +249,7 @@ async function submit(
   markets: Record<TradingSymbol, Market>,
   venue: TradingVenue,
   db: Connection,
+  instructionsRevision: number,
 ) {
   const market = markets[request.symbol]
   validateMarket(market)
@@ -250,6 +257,8 @@ async function submit(
   // The transaction reserves the only unresolved-order slot and fences concurrent owner stops.
   const row = await atomic(db, async () => {
     const current = await portfolio(p, db, true)
+    const instructions = await tradingInstructions(db, true)
+    if (instructions.revision !== instructionsRevision) return null
     if (request.side === 'buy' && !(await directionAllowed('trading', db))) return null
     if (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell'))
       return null
@@ -265,6 +274,31 @@ async function submit(
     )
       return null
     if (request.side === 'buy') {
+      const restricted = ownerEntryReason(instructions.rules, fresh)
+      if (restricted || !orderWithinOwnerLimit(instructions.rules, request)) {
+        await query(
+          'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
+          [fresh.id, restricted || 'OWNER_ORDER_LIMIT'],
+          db,
+        )
+        return null
+      }
+      if (instructions.rules.entryIntervalMinutes !== null) {
+        const recent = await query(
+          `SELECT id FROM trading_orders WHERE mode=$1 AND exchange=$2 AND side='buy'
+          AND status NOT IN ('canceled','rejected') AND created_at>clock_timestamp()-$3*interval '1 minute' LIMIT 1`,
+          [p.mode, p.exchange, instructions.rules.entryIntervalMinutes],
+          db,
+        )
+        if (recent.length) {
+          await query(
+            "UPDATE trading_agents SET last_signal='OWNER_ENTRY_INTERVAL' WHERE id=$1",
+            [fresh.id],
+            db,
+          )
+          return null
+        }
+      }
       if (isClassic(fresh.kind)) {
         if (p.mode !== 'paper') throw new Error('TRADING_CLASSIC_PAPER_ONLY')
         const plan = classicPlan(fresh)
@@ -287,7 +321,18 @@ async function submit(
         [p.mode, p.exchange],
         db,
       )
-      if (today!.count >= P.maxOrdersPerDay) return null
+      if (
+        today!.count >=
+        Math.min(P.maxOrdersPerDay, instructions.rules.maxOrdersPerDay ?? P.maxOrdersPerDay)
+      ) {
+        if (instructions.rules.maxOrdersPerDay !== null)
+          await query(
+            "UPDATE trading_agents SET last_signal='OWNER_ORDER_COUNT' WHERE id=$1",
+            [fresh.id],
+            db,
+          )
+        return null
+      }
       let invested = 0n,
         equity = 0n
       for (const member of team) {
@@ -301,7 +346,19 @@ async function submit(
         equity += BigInt(member.cash) + position
       }
       const ceiling = equity < BigInt(current.capital) ? equity : BigInt(current.capital)
-      if ((invested + value) * BPS > ceiling * BigInt(P.maxExposureBps)) return null
+      if (
+        (invested + value) * BPS >
+        ceiling *
+          BigInt(Math.min(P.maxExposureBps, instructions.rules.maxExposureBps ?? P.maxExposureBps))
+      ) {
+        if (instructions.rules.maxExposureBps !== null)
+          await query(
+            "UPDATE trading_agents SET last_signal='OWNER_EXPOSURE_LIMIT' WHERE id=$1",
+            [fresh.id],
+            db,
+          )
+        return null
+      }
     } else if (request.qty > BigInt(fresh.base)) throw new Error('TRADING_ORDER_LIMIT')
     const [created] = await query<OrderRow>(
       `INSERT INTO trading_orders(id,mode,agent_id,client_id,symbol,side,qty,price,status,reason,exchange)
@@ -339,7 +396,9 @@ async function submit(
   }
   const dispatch = await atomic(db, async () => {
     const current = await portfolio(p, db, true)
+    const instructions = await tradingInstructions(db, true)
     if (
+      instructions.revision !== instructionsRevision ||
       (request.side === 'buy' && !(await directionAllowed('trading', db))) ||
       (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell'))
     ) {
@@ -757,8 +816,16 @@ export async function tradingTick(
               if (isStopping() || (await pendingOrder(s, db))) break
               const market = markets[agent.symbol]
               if (!market) continue
+              const instructions = await tradingInstructions(db)
+              const decisionAgent =
+                instructions.rules.takeProfitBps === null
+                  ? agent
+                  : {
+                      ...agent,
+                      params: { ...agent.params, takeProfitBps: instructions.rules.takeProfitBps },
+                    }
               let decision = signal(
-                agent,
+                decisionAgent,
                 market,
                 forceExit && BigInt(agent.base) >= market.instrument.minQty,
               )
@@ -797,6 +864,7 @@ export async function tradingTick(
                 await event(s, 'demo', 'DEMO_PROBE_COMPLETE', {}, db)
                 break
               }
+              decision = ownerSignal(instructions.rules, agent, market, decision)
               await query(
                 'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
                 [agent.id, decision.reason],
@@ -812,7 +880,10 @@ export async function tradingTick(
               )
                 throw new Error('TRADING_FEE_UNKNOWN')
               const urgent =
-                decision.side === 'sell' && ['RISK_EXIT', 'POSITION_STOP'].includes(decision.reason)
+                decision.side === 'sell' &&
+                ['RISK_EXIT', 'POSITION_STOP', 'OWNER_POSITION_STOP', 'OWNER_TIME_EXIT'].includes(
+                  decision.reason,
+                )
               if (
                 !urgent &&
                 agent.last_order_at &&
@@ -825,8 +896,21 @@ export async function tradingTick(
                 decision.side,
                 randomUUID().replaceAll('-', ''),
                 decision.maxQty,
+                instructions.rules.maxOrderUsdt === null
+                  ? undefined
+                  : units(instructions.rules.maxOrderUsdt),
               )
-              if (request) await submit(p, agent, request, decision.reason, markets, venue, db)
+              if (request)
+                await submit(
+                  p,
+                  agent,
+                  request,
+                  decision.reason,
+                  markets,
+                  venue,
+                  db,
+                  instructions.revision,
+                )
               else
                 await query(
                   'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',

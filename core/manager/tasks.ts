@@ -20,6 +20,7 @@ import { exchanges, type AgentRow, type TradingScope } from '../trading/types'
 import { proposalSchema, sameParams, type ManagerAgentSnapshot, type ManagerProposal } from './plan'
 
 export interface TaskRow {
+  instruction_revision: number
   id: string
   run_id: string
   exchange: TradingScope['exchange']
@@ -50,7 +51,7 @@ export async function applyManagerTask(s: TradingScope, db: Connection) {
   if (s.mode !== 'paper' || !(await directionAllowed('manager', db))) return
   const p = await portfolio(s, db, true)
   const [manager] = await query(
-    'SELECT enabled FROM trading_manager WHERE id=true FOR SHARE',
+    'SELECT enabled,instruction_revision FROM trading_manager WHERE id=true FOR SHARE',
     [],
     db,
   )
@@ -60,6 +61,8 @@ export async function applyManagerTask(s: TradingScope, db: Connection) {
     db,
   )
   if (!task) return
+  if (task.instruction_revision !== manager?.instruction_revision)
+    return taskReason(task, 'MANAGER_INSTRUCTIONS_CHANGED', db, 'rejected')
   if (task.expires_at.getTime() <= Date.now())
     return taskReason(task, 'MANAGER_TASK_EXPIRED', db, 'expired')
   if (task.revision !== p.manager_revision)

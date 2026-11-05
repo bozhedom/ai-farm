@@ -20,6 +20,7 @@ import { advanceManagerTasks } from './tasks'
 import { managerLimits } from './limits'
 
 export interface ManagerRow {
+  instruction_revision: number
   enabled: boolean
   requested_at: Date | null
   attempted_at: Date | null
@@ -236,6 +237,12 @@ async function claimRun(providerReady: boolean, skip = '') {
       now - row.attempted_at.getTime() < managerLimits().intervalMs
     )
       return null
+    if (
+      row.requested_at &&
+      row.attempted_at &&
+      now - row.attempted_at.getTime() < P.manualCooldownMs
+    )
+      return null
     const budget = await managerBudget(db)
     if (
       budget.runs >= managerLimits().maxDailyRuns ||
@@ -281,8 +288,8 @@ async function claimRun(providerReady: boolean, skip = '') {
       error = e.message
     }
     await query(
-      `INSERT INTO trading_manager_runs(id,status,reservation_id,provider,model,is_demo,error,finished_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $7<>'' THEN now() ELSE NULL END)`,
+      `INSERT INTO trading_manager_runs(id,status,reservation_id,provider,model,is_demo,error,finished_at,instruction_revision)
+      VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $7<>'' THEN now() ELSE NULL END,$8)`,
       [
         id,
         error ? 'failed' : 'running',
@@ -291,6 +298,7 @@ async function claimRun(providerReady: boolean, skip = '') {
         provider.model,
         provider.demo,
         error,
+        row.instruction_revision,
       ],
       db,
     )
@@ -301,7 +309,9 @@ async function claimRun(providerReady: boolean, skip = '') {
       [id, P.leaseMs, true, error],
       db,
     )
-    return error ? null : { id, reservationId: reservationId! }
+    return error
+      ? null
+      : { id, reservationId: reservationId!, instructionRevision: row.instruction_revision }
   })
 }
 
@@ -355,7 +365,7 @@ export const planWithModel: ManagerPlanner = async (snapshot, run) => {
 }
 
 async function finishPlan(
-  run: { id: string; reservationId: string },
+  run: { id: string; reservationId: string; instructionRevision: number },
   snapshot: ManagerSnapshot,
   plan: ManagerPlan,
 ) {
@@ -366,6 +376,8 @@ async function finishPlan(
       [],
       db,
     )
+    if (owner?.instruction_revision !== run.instructionRevision)
+      throw new Error('MANAGER_INSTRUCTIONS_CHANGED')
     if (
       !owner?.enabled ||
       owner.lease_id !== run.id ||
@@ -384,8 +396,8 @@ async function finishPlan(
         db,
       )
       await query(
-        `INSERT INTO trading_manager_tasks(id,run_id,exchange,source_agent_id,source,proposal,revision,status,reason,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+$10*interval '1 millisecond')`,
+        `INSERT INTO trading_manager_tasks(id,run_id,exchange,source_agent_id,source,proposal,revision,status,reason,expires_at,instruction_revision)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+$10*interval '1 millisecond',$11)`,
         [
           randomUUID(),
           run.id,
@@ -397,6 +409,7 @@ async function finishPlan(
           existing.length ? 'rejected' : 'queued',
           existing.length ? 'MANAGER_EXPERIMENT_ACTIVE' : 'MANAGER_WAITING_EXECUTION',
           P.queuedLifetimeMs,
+          run.instructionRevision,
         ],
         db,
       )
@@ -453,7 +466,7 @@ async function managerTickWithProfiles(
     if (!updated.length) return false
     if (isStopping()) throw new Error('MANAGER_INTERRUPTED')
     const plan = validatePlanAgainstSnapshot(
-      managerPlanSchema.parse(await planner(snapshot, run)),
+      managerPlanSchema.parse(await withAgentProfiles(() => planner(snapshot, run), true)),
       snapshot,
     )
     return await finishPlan(run, snapshot, plan)
