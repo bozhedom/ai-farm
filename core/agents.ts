@@ -11,7 +11,7 @@ import { categoryById, taxonomyCategoryIds } from './taxonomy'
 
 /**
  * Agents are rows of `strategies`. Their parameters are server data: the model never writes
- * instructions, and the owner changes only numeric settings. Names are computed, not stored.
+ * instructions, and the owner configures role instructions separately in agent_profiles. Names are computed, not stored.
  */
 export type StrategyRow = {
   id: string

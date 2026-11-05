@@ -140,7 +140,7 @@ describe('farm day in demo mode', () => {
       new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), hour))
     await updateFarmSettings({ scheduleHourUtc: 9 })
     expect((await officeSettings()).scheduleHourUtc).toBe(9)
-    await expect(updateFarmSettings({ scheduleHourUtc: 23 })).rejects.toThrow()
+    await expect(updateFarmSettings({ scheduleHourUtc: 24 })).rejects.toThrow()
     await scheduleWork(at(8))
     expect(
       await query("SELECT id FROM jobs WHERE kind IN ('scout','research','lead')"),

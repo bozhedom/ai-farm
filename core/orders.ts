@@ -1,3 +1,4 @@
+import { withAgentProfiles } from './agent-profiles'
 import { createHash, randomUUID } from 'node:crypto'
 import { config, usesSourcePosts } from './config'
 import { audit, query, transaction, type Connection } from './db'
@@ -110,11 +111,13 @@ export async function insertOrder(
     db,
   )
   if (!strategy) throw new Error('NO_ACTIVE_STRATEGY')
-  assertOrderModelBudget({
-    product: productSchema.parse(o.product.spec),
-    input: o.input,
-    approach: strategy.approach,
-  })
+  await withAgentProfiles(async () =>
+    assertOrderModelBudget({
+      product: productSchema.parse(o.product.spec),
+      input: o.input,
+      approach: strategy.approach,
+    }),
+  )
   const id = randomUUID()
   const reservationId = o.fundOnPayment
     ? await openUnfundedReservation(`order:${id}`, db)

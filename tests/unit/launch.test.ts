@@ -145,10 +145,11 @@ describe('launch checklist', () => {
     const key = byId(view, 'bybit-live-key')
     expect(key.status).toBe('needed')
     expect(key.state).toContain('отклонён')
-    expect(key.state).toContain('только с правом Spot Trade')
+    expect(key.state).toContain('Spot Trade с необязательным Derivatives Trade')
     expect(key.codes).toEqual(['TRADING_KEY_PERMISSIONS'])
     expect(byId(view, 'bybit-demo')).toMatchObject({
-      status: 'needed',
+      status: 'optional',
+      required: false,
       state: 'Demo-ключ не внесён.',
     })
     const live = byId(view, 'live-trading')
@@ -166,7 +167,7 @@ describe('launch checklist', () => {
     expect(view.total).toBe(required.length)
     expect(view.done).toBe(required.filter((s) => s.status === 'done').length)
     expect(view.done).toBe(6)
-    expect(view.total).toBe(12)
+    expect(view.total).toBe(8)
   })
 
   it('never carries a secret: the view is built from booleans, counts and codes only', () => {
@@ -411,4 +412,18 @@ describe('launch checklist', () => {
     expect(tradingWord('TRADING_KEY_PERMISSIONS')).toContain('Spot Trade')
     expect(tradingWord('TRADING_SOMETHING_NEW')).toContain('TRADING_SOMETHING_NEW')
   })
+})
+
+it('shows a current reserve rejection even with positive balance and zero technical failures', () => {
+  const input = production()
+  input.computer.failures = 0
+  input.computer.lastError = 'OPENAI_BUDGET_BLOCKED'
+  input.model.paidSpentMicrousd = 89_541_908
+  const view = launchSteps(input)
+  const steps = view.groups.flatMap((g) => g.steps)
+  expect(steps.find((s) => s.id === 'budgets')).toMatchObject({ status: 'needed' })
+  expect(steps.find((s) => s.id === 'budgets')!.state).toContain('резерв следующего вызова')
+  expect(steps.find((s) => s.id === 'computer-on')).toMatchObject({ status: 'needed' })
+  expect(steps.find((s) => s.id === 'computer-on')!.state).toContain('Ожидает')
+  expect(view.done).toBeLessThan(view.total)
 })

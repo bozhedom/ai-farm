@@ -44,6 +44,7 @@ const items = computed<Item[]>(() => {
     { to: '/office/computer', label: 'Компьютер ИИ', icon: 'screen' },
     { to: '/office/farm', label: 'Ферма идей', icon: 'leaf', short: 'Ферма' },
     { to: '/office/ideas', label: 'Идеи', icon: 'idea', count: o?.totals.ideas },
+    { to: '/office/models', label: 'Модели и контекст', icon: 'agents' },
     { to: '/office/agents', label: 'Агенты', icon: 'agents', count: o?.totals.activeAgents },
     { to: '/office/products', label: 'Продукты', icon: 'box', count: o?.totals.publicProducts },
     {

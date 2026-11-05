@@ -1,3 +1,4 @@
+import { withAgentProfiles, roleModel } from '../agent-profiles'
 import { randomUUID } from 'node:crypto'
 import { ZodError } from 'zod'
 import { config, paidModelId } from '../config'
@@ -31,7 +32,7 @@ export function managerProvider() {
     provider: c.MODEL_PROVIDER,
     model:
       c.MODEL_PROVIDER === 'openai'
-        ? paidModelId(c)
+        ? roleModel('manager') || paidModelId(c)
         : c.MODEL_PROVIDER === 'openrouter'
           ? c.OPENROUTER_MODEL
           : c.MODEL_PROVIDER === 'ollama'
@@ -338,9 +339,11 @@ export function managerModelBlocker() {
 }
 export const planWithModel: ManagerPlanner = async (snapshot, run) => {
   const args = managerModelArgs(snapshot, run)
-  if (prepareModelRequest(args).maximum > managerLimits().reserveKopecks)
-    throw new Error('MANAGER_MODEL_TOO_EXPENSIVE')
-  return model(args)
+  return withAgentProfiles(async () => {
+    if (prepareModelRequest(args).maximum > managerLimits().reserveKopecks)
+      throw new Error('MANAGER_MODEL_TOO_EXPENSIVE')
+    return model(args)
+  })
 }
 
 async function finishPlan(
@@ -414,6 +417,13 @@ export async function managerTick(
   planner: ManagerPlanner = planWithModel,
   isStopping = () => false,
   providerReady = true,
+) {
+  return withAgentProfiles(() => managerTickWithProfiles(planner, isStopping, providerReady))
+}
+async function managerTickWithProfiles(
+  planner: ManagerPlanner,
+  isStopping: () => boolean,
+  providerReady: boolean,
 ) {
   await ensureManager()
   if (isStopping()) return false

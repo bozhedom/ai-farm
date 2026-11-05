@@ -2,6 +2,11 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { MANAGER_POLICY } from '../../core/policy'
 import { managerLimits } from '../../core/manager/limits'
 
+vi.mock('../../core/agent-profiles', async (original) => ({
+  ...(await original<object>()),
+  withAgentProfiles: (work: () => Promise<unknown>) => work(),
+}))
+
 afterEach(() => vi.unstubAllEnvs())
 it('checks the actual paid envelope before charging or sending a model request', async () => {
   vi.resetModules()

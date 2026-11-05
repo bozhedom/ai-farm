@@ -52,8 +52,11 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
     ),
     query(
       `SELECT
-        (SELECT max(coalesce(finished_at,created_at)) FROM tool_calls WHERE status='done' AND NOT is_demo) AS last_ok,
-        (SELECT error_code FROM tool_calls WHERE status<>'done' AND error_code IS NOT NULL AND NOT is_demo
+        (SELECT max(coalesce(finished_at,created_at)) FROM tool_calls WHERE status='done' AND NOT is_demo AND provider IN ('openai','yandex','ollama','openrouter')) AS last_ok,
+        (SELECT error_code FROM tool_calls failed WHERE failed.status<>'done' AND failed.error_code IS NOT NULL AND NOT failed.is_demo
+           AND failed.provider IN ('openai','yandex','ollama','openrouter')
+           AND (failed.status='uncertain' OR (failed.created_at > now()-interval '24 hours'
+           AND NOT EXISTS (SELECT 1 FROM tool_calls ok WHERE ok.role=failed.role AND ok.provider=failed.provider AND ok.status='done' AND ok.created_at>failed.created_at)))
            ORDER BY created_at DESC LIMIT 1) AS last_error`,
     ),
     budgetSummary(),
@@ -123,8 +126,8 @@ export async function launchInput(now = new Date()): Promise<LaunchInput> {
       lastSuccessAt: iso(calls?.last_ok),
       lastErrorCode: String(calls?.last_error ?? ''),
       costAlert: c.MODEL_PROVIDER === 'openrouter' && budget.openrouterActualMicrousd > 0,
-      dailyKopecks: c.DAILY_BUDGET_KOPECKS,
-      monthlyKopecks: c.MONTHLY_BUDGET_KOPECKS,
+      dailyKopecks: budget.dailyLimit,
+      monthlyKopecks: budget.monthlyLimit,
       paidTotalMicrousd: c.OPENAI_TOTAL_BUDGET_MICROUSD,
       daySpentKopecks: budget.daySpent,
       monthSpentKopecks: budget.monthSpent,

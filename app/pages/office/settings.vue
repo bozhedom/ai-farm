@@ -24,13 +24,17 @@ const mode = computed<OfficeMode | undefined>(
   () => overview.value?.mode || (s.value?.mode as OfficeMode | undefined),
 )
 
-type Form = Required<Omit<OfficeSettingsUpdate, 'scheduleHourUtc'>>
+type Form = Required<
+  Omit<OfficeSettingsUpdate, 'scheduleHourUtc' | 'dailyBudgetKopecks' | 'monthlyBudgetKopecks'>
+>
 const form = reactive<Form>({
   evolutionEnabled: true,
   evolutionMinIdeas: 6,
   evolutionRoundsPerDay: 1,
   scoutsPerStrategyPerDay: 1,
   leadsPerDay: 3,
+  ideaDailyLimit: 24,
+  ideaProductsPerDay: 2,
 })
 const dirty = ref(false)
 watch(
@@ -42,6 +46,8 @@ watch(
     form.evolutionRoundsPerDay = value.evolutionRoundsPerDay
     form.scoutsPerStrategyPerDay = value.scoutsPerStrategyPerDay
     form.leadsPerDay = value.leadsPerDay
+    form.ideaDailyLimit = value.ideaDailyLimit ?? 24
+    form.ideaProductsPerDay = value.ideaProductsPerDay ?? 2
   },
   { immediate: true },
 )
@@ -53,32 +59,46 @@ const fields: {
   max: number
 }[] = [
   {
+    key: 'ideaDailyLimit',
+    label: 'Всего идей в сутки',
+    hint: 'включая ручные поиски и правки; 0 останавливает новые поиски',
+    min: 0,
+    max: 24,
+  },
+  {
+    key: 'ideaProductsPerDay',
+    label: 'Сборок из идей в сутки',
+    hint: 'в пределах серверного максимума; 0 выключает сборку из идей',
+    min: 0,
+    max: 12,
+  },
+  {
     key: 'evolutionMinIdeas',
     label: 'Минимум идей для отбора',
     hint: 'у каждого разведчика',
-    min: 2,
-    max: 50,
+    min: 1,
+    max: 100,
   },
   {
     key: 'evolutionRoundsPerDay',
     label: 'Отборов в день',
     hint: 'сколько раз в день можно проводить отбор',
-    min: 1,
-    max: 10,
+    min: 0,
+    max: 24,
   },
   {
     key: 'scoutsPerStrategyPerDay',
     label: 'Разведок на агента в день',
     hint: 'больше разведок, больше расходов',
-    min: 1,
-    max: 10,
+    min: 0,
+    max: 6,
   },
   {
     key: 'leadsPerDay',
     label: 'Поисков клиентов в день',
     hint: 'по продуктам на сайте',
     min: 0,
-    max: 20,
+    max: 12,
   },
 ]
 async function save() {
@@ -88,6 +108,8 @@ async function save() {
     evolutionRoundsPerDay: Number(form.evolutionRoundsPerDay),
     scoutsPerStrategyPerDay: Number(form.scoutsPerStrategyPerDay),
     leadsPerDay: Number(form.leadsPerDay),
+    ideaDailyLimit: Number(form.ideaDailyLimit),
+    ideaProductsPerDay: Number(form.ideaProductsPerDay),
   }
   const done = await run(
     'save',
@@ -115,7 +137,7 @@ function restartResearch() {
 // The hour is stored in UTC; the owner picks it in the browser's local time.
 const hourOptions = computed(() => {
   const base = new Date()
-  return Array.from({ length: 21 }, (_, utc) => {
+  return Array.from({ length: 24 }, (_, utc) => {
     const at = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), utc))
     return {
       utc,
@@ -149,6 +171,33 @@ function setScope(event: Event) {
   )
 }
 
+const dayRub = ref(0)
+const monthRub = ref(0)
+const budgetDirty = ref(false)
+watch(
+  s,
+  (value) => {
+    if (!value || budgetDirty.value) return
+    dayRub.value = Math.floor(value.limits.dailyKopecks / 100)
+    monthRub.value = Math.floor(value.limits.monthlyKopecks / 100)
+  },
+  { immediate: true },
+)
+async function saveBudget() {
+  if (![dayRub.value, monthRub.value].every((v) => Number.isSafeInteger(v) && v >= 0)) return
+  await run(
+    'budget',
+    async () => {
+      await officeApi.saveSettings({
+        dailyBudgetKopecks: dayRub.value * 100,
+        monthlyBudgetKopecks: monthRub.value * 100,
+      })
+      budgetDirty.value = false
+      await refresh()
+    },
+    'Лимиты сохранены. Уже начатые вызовы будут учтены.',
+  )
+}
 const checks = computed(() => {
   const c = health.value?.checks || {}
   return [
@@ -301,7 +350,9 @@ onMounted(() => {
                 type="number"
                 inputmode="numeric"
                 :min="f.min"
-                :max="f.max"
+                :max="
+                  f.key === 'ideaProductsPerDay' ? (s.serverLimits?.productsPerDay ?? f.max) : f.max
+                "
                 required
                 @input="dirty = true"
               />
@@ -336,11 +387,48 @@ onMounted(() => {
             <dd class="num">{{ rub(s.limits.monthlyKopecks) }}</dd>
           </div>
         </dl>
-        <p class="small muted">Лимиты расходов настраивает администратор.</p>
+        <form class="stack-sm" @submit.prevent="saveBudget">
+          <label for="day-budget">Ваш лимит на сутки, ₽</label
+          ><input
+            id="day-budget"
+            v-model.number="dayRub"
+            class="input"
+            type="number"
+            min="0"
+            step="1"
+            :max="Math.floor((s.serverLimits?.dailyKopecks ?? s.limits.dailyKopecks) / 100)"
+            required
+            @input="budgetDirty = true"
+          />
+          <label for="month-budget">Ваш лимит на месяц, ₽</label
+          ><input
+            id="month-budget"
+            v-model.number="monthRub"
+            class="input"
+            type="number"
+            min="0"
+            step="1"
+            :max="Math.floor((s.serverLimits?.monthlyKopecks ?? s.limits.monthlyKopecks) / 100)"
+            required
+            @input="budgetDirty = true"
+          />
+          <button class="btn btn-primary btn-sm" :disabled="!!busy || !budgetDirty">
+            Сохранить лимиты
+          </button>
+        </form>
+        <p class="small muted">
+          Общие для всех модельных задач. Ноль запрещает новые платные вызовы. Серверный потолок:
+          {{ rub(s.serverLimits?.dailyKopecks ?? s.limits.dailyKopecks) }} в день и
+          {{ rub(s.serverLimits?.monthlyKopecks ?? s.limits.monthlyKopecks) }} в месяц. Долларовый
+          бюджет провайдера и торговые ограничения сохраняются.
+        </p>
       </section>
 
       <section class="card rise" aria-labelledby="providers-title">
         <h2 id="providers-title">Подключения</h2>
+        <NuxtLink to="/office/models" class="btn btn-sm"
+          >Промпты, выбор моделей и контекст</NuxtLink
+        >
         <dl class="lines">
           <div>
             <dt>Модель</dt>

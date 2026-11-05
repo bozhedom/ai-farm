@@ -3,6 +3,7 @@ import type { IdeaStatus } from '../../../../core/contracts/office'
 import { officeApi, useOfficeAction } from '~/composables/office/actions'
 import { useOfficeIdea } from '~/composables/office/data'
 import { reasonText } from '~/composables/office/errors'
+import { officeFetch } from '~/composables/office/resource'
 import { when } from '~/composables/office/format'
 import {
   ideaStatus,
@@ -18,6 +19,23 @@ const id = computed(() => String(route.params.id))
 const { data: idea, status, pending, refresh } = useOfficeIdea(id)
 useHead({ title: computed(() => idea.value?.title || 'Идея') })
 
+const correction = ref('')
+async function decide(action: 'approve' | 'reject' | 'revise' | 'build') {
+  await run(
+    'decision',
+    async () => {
+      await officeFetch(`/api/office/ideas/${id.value}/decision`, {
+        method: 'POST',
+        body: { action, brief: correction.value },
+      })
+      correction.value = ''
+      await refresh()
+    },
+    action === 'revise'
+      ? 'Правки отправлены на повторную проверку. Новая версия появится отдельной идеей.'
+      : 'Решение сохранено.',
+  )
+}
 const note = ref('')
 const noteDirty = ref(false)
 watch(
@@ -83,6 +101,88 @@ const checkStatus: Record<string, string> = {
       </template>
     </OfficeState>
     <template v-else>
+      <section v-if="idea.status !== 'productized'" class="card decision-panel">
+        <h2>{{ idea.status === 'new' ? 'Ждёт решения' : 'Решение по идее' }}</h2>
+        <p v-if="idea.buildState === 'queued' || idea.buildState === 'running'" role="status">
+          {{ idea.buildState === 'running' ? 'Продукт собирается.' : 'Сборка стоит в очереди.' }}
+          Проверка качества и лимиты обязательны даже при 100 баллах.
+        </p>
+        <p v-else-if="idea.buildJobError || idea.buildError">
+          {{ idea.buildJobError || idea.buildError }} Внесите исправления и отправьте на повторную
+          проверку.
+        </p>
+        <p v-else-if="idea.status === 'accepted'">
+          Идея готова к сборке. Лучшие идеи идут первыми в пределах суточного количества продуктов и
+          бюджета. 100 баллов отражают оценку идеи, готовность продукта подтверждает отдельная
+          проверка.
+        </p>
+        <p v-else>
+          Прочитайте вывод критика. Можно принять проверенную идею, отклонить её или дать конкретные
+          правки для новой проверки.
+        </p>
+        <div class="row actions">
+          <button
+            v-if="idea.status === 'new' && idea.critique.verdict === 'PASS'"
+            class="btn btn-primary btn-sm"
+            :disabled="!!busy"
+            @click="decide('approve')"
+          >
+            Принять идею
+          </button>
+          <button
+            v-if="
+              ['new', 'accepted'].includes(idea.status) &&
+              idea.farmExecutable &&
+              idea.critique.verdict === 'PASS' &&
+              !idea.buildState
+            "
+            class="btn btn-primary btn-sm"
+            :disabled="!!busy"
+            @click="decide('build')"
+          >
+            Собрать продукт
+          </button>
+          <button
+            v-if="
+              ['new', 'accepted', 'needs_human'].includes(idea.status) &&
+              !idea.ownerStatus &&
+              !['running', 'queued'].includes(idea.buildState || '')
+            "
+            class="btn btn-sm"
+            :disabled="!!busy"
+            @click="decide('reject')"
+          >
+            Отклонить идею
+          </button>
+        </div>
+        <form class="stack-sm" @submit.prevent="decide('revise')">
+          <label for="idea-correction">Что исправить или уточнить</label>
+          <textarea
+            id="idea-correction"
+            v-model="correction"
+            class="textarea"
+            rows="4"
+            minlength="10"
+            maxlength="2000"
+            required
+            placeholder="Уточните аудиторию, задачу покупателя, цену или способ проверки спроса"
+          />
+          <button
+            class="btn btn-sm"
+            :disabled="
+              !!busy ||
+              correction.trim().length < 10 ||
+              ['queued', 'running'].includes(idea.buildState || '')
+            "
+          >
+            Внести правки и проверить заново
+          </button>
+        </form>
+      </section>
+      <p v-if="idea.product?.historical" class="card small">
+        По этой идее создана версия {{ idea.product.version }} продукта. Сейчас у услуги другая
+        версия; исходный результат сохранён в истории проверок ниже.
+      </p>
       <div class="page-head">
         <div class="head-main">
           <h1>{{ idea.title }}</h1>
@@ -204,7 +304,8 @@ const checkStatus: Record<string, string> = {
             </li>
           </ul>
           <p v-else-if="!idea.buildError" class="muted">
-            Ещё не собирали. Руководитель решит после дневного отчёта.
+            Ещё не собирали. Сборка пойдёт по приоритету и расписанию, в пределах бюджета. Можно
+            запустить её кнопкой «Собрать продукт».
           </p>
         </section>
         <section v-else class="card card-tint-clay rise">
@@ -289,7 +390,7 @@ const checkStatus: Record<string, string> = {
               v-model="note"
               class="textarea"
               rows="5"
-              maxlength="2000"
+              maxlength="1000"
               placeholder="Например: проверить цену у конкурентов"
               @input="noteDirty = true"
             />
@@ -305,6 +406,12 @@ const checkStatus: Record<string, string> = {
   </div>
 </template>
 <style scoped>
+.decision-panel {
+  margin-bottom: 24px;
+}
+.decision-panel form {
+  margin-top: 16px;
+}
 .back {
   display: inline-flex;
   align-items: center;

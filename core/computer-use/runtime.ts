@@ -1,3 +1,4 @@
+import { withAgentProfiles } from '../agent-profiles'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
@@ -1730,6 +1731,9 @@ export type ComputerUseDeps = {
  * a resumable stop leaves the task running without a lease and the next tick picks it up.
  */
 export async function computerUseTick(deps: ComputerUseDeps = {}, isStopping = () => false) {
+  return withAgentProfiles(() => computerUseTickWithProfiles(deps, isStopping))
+}
+async function computerUseTickWithProfiles(deps: ComputerUseDeps, isStopping: () => boolean) {
   await ensureComputerUse()
   await expireApprovals()
   await expirePermits()

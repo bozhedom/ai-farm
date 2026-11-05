@@ -154,6 +154,9 @@ function evolve() {
     <div class="page-head">
       <div>
         <h1>Агенты</h1>
+        <NuxtLink to="/office/models?role=scout" class="btn btn-sm"
+          >Промпты, модели и контекст</NuxtLink
+        >
         <p>
           Поколение {{ data?.generation ?? 1 }}. Лучшие разведчики получают копию, худшие уходят в
           архив.

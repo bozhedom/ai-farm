@@ -138,7 +138,7 @@ const groupOrder: LaunchGroup[] = ['required', 'freelance', 'payments', 'trading
 
 const tradingWords: Record<string, string> = {
   TRADING_KEY_PERMISSIONS:
-    'у ключа лишние права или нет права на спот-торговлю. Нужен ключ субаккаунта только с правом Spot Trade, без вывода и переводов, привязанный к IP сервера',
+    'нет Spot Trade или есть запрещённые права. Для текущего legacy Bybit допускается Spot Trade с необязательным Derivatives Trade; сервер отправляет только спотовые заявки, без вывода и переводов',
   TRADING_CREDENTIALS_REQUIRED: 'ключ не внесён',
   TRADING_IP_REQUIRED: 'ключ не привязан к IP сервера',
   TRADING_ACCOUNT_MODE: 'на Bybit нужен единый торговый счёт с обычной маржой (Regular Margin)',
@@ -257,28 +257,31 @@ export function launchSteps(input: LaunchInput): LaunchView {
             ? 'OpenRouter списал деньги за бесплатный запрос, новые вызовы остановлены. Проверьте расходы в кабинете OpenRouter.'
             : model.readyNow === false
               ? `Ключ есть, но модель сейчас недоступна${model.lastErrorCode ? ` (${model.lastErrorCode})` : ''}. Последний удачный вызов: ${since(model.lastSuccessAt, now)}.`
-              : `${paidRoute ? 'GPT-6 Astra через OpenRouter' : `Провайдер ${model.provider}`}. Последний удачный вызов: ${since(model.lastSuccessAt, now)}.${model.readyNow === null ? ' Воркер ещё не отчитался о проверке.' : ''}`,
+              : `${paidRoute ? 'Платные модели через OpenRouter' : `Провайдер ${model.provider}`}. Последний удачный вызов: ${since(model.lastSuccessAt, now)}.${model.readyNow === null ? ' Воркер ещё не отчитался о проверке.' : ''}`,
     codes: modelCodes,
   })
 
+  const budgetBlocked =
+    computer.enabled && ['BUDGET_BLOCKED', 'OPENAI_BUDGET_BLOCKED'].includes(computer.lastError)
   const budgetsOk =
-    model.dailyKopecks > 0 &&
-    model.monthlyKopecks > 0 &&
-    (!model.paid || model.paidTotalMicrousd > 0)
+    !budgetBlocked &&
+    model.dailyKopecks > model.daySpentKopecks &&
+    model.monthlyKopecks > model.monthSpentKopecks &&
+    (!model.paid || model.paidTotalMicrousd > model.paidSpentMicrousd)
   add({
     id: 'budgets',
     group: 'required',
     status: budgetsOk ? 'done' : 'needed',
-    title: 'Пределы расходов на модель заданы',
-    why: 'Ферма тратит на модель только в этих пределах; когда они исчерпаны, она ждёт следующего дня, а не останавливается навсегда.',
+    title: 'Бюджет модели и остаток средств',
+    why: 'Ферма тратит на модель только в этих пределах; суточный лимит обновляется на следующие UTC-сутки, месячный — в новом месяце. Общий долларовый лимит сам не обновляется. Для нового вызова должен помещаться весь резерв.',
     actions: [
-      'Проверьте пределы в «Деньгах». Менять их может только админ в .env: DAILY_BUDGET_KOPECKS, MONTHLY_BUDGET_KOPECKS, OPENAI_TOTAL_BUDGET_MICROUSD.',
+      'Проверьте расходы в «Деньгах» и лимиты в «Настройках». Владелец меняет дневной и месячный лимит в пределах серверного потолка. Общий долларовый предел провайдера меняется отдельно на сервере.',
     ],
     link: '/office/money',
     linkLabel: 'Деньги',
     state: budgetsOk
       ? `В сутки ${rub(model.dailyKopecks)}, в месяц ${rub(model.monthlyKopecks)}${model.paid ? `, всего на платную модель ${usd(model.paidTotalMicrousd)}` : ''}. Потрачено сегодня ${rub(model.daySpentKopecks)}, за месяц ${rub(model.monthSpentKopecks)}${model.paid ? `, по платной модели ${usd(model.paidSpentMicrousd)}` : ''}.`
-      : 'Один из пределов равен нулю: модель не может работать.',
+      : `Доступный бюджет закончился, равен нулю или не вмещает резерв следующего вызова. За сутки ${rub(model.daySpentKopecks)} из ${rub(model.dailyKopecks)}, за месяц ${rub(model.monthSpentKopecks)} из ${rub(model.monthlyKopecks)}${model.paid ? `; платная модель ${usd(model.paidSpentMicrousd)} из ${usd(model.paidTotalMicrousd)}` : ''}. Новые платные вызовы ждут.`,
   })
 
   const scheduleOn = system.autonomyAllowed && system.scheduleEnabled
@@ -329,7 +332,8 @@ export function launchSteps(input: LaunchInput): LaunchView {
 
   const halted = computer.failures >= computer.maxFailures
   const vmDown = computer.lastError === 'COMPUTER_USE_VM_UNAVAILABLE'
-  const computerOn = vmOk && computer.enabled && !halted
+  const waiting = budgetBlocked || computer.lastError === 'COMPUTER_USE_DAILY_LIMIT' || vmDown
+  const computerOn = vmOk && computer.enabled && !halted && !waiting
   add({
     id: 'computer-on',
     group: 'freelance',
@@ -344,9 +348,13 @@ export function launchSteps(input: LaunchInput): LaunchView {
             : 'Посмотрите последние задания в истории на странице раздела.',
           'Нажмите переключатель «Работа модели в браузере» на странице раздела: счётчик сбоев сбросится, задания пойдут снова.',
         ]
-      : computer.enabled
-        ? ['Ничего делать не нужно.']
-        : ['Включите переключатель «Работа модели в браузере» на странице раздела.'],
+      : waiting
+        ? [
+            'Посмотрите текущую причину в «Компьютере ИИ»; при денежном ограничении проверьте лимиты и резервы в «Деньгах».',
+          ]
+        : computer.enabled
+          ? ['Ничего делать не нужно.']
+          : ['Включите переключатель «Работа модели в браузере» на странице раздела.'],
     link: '/office/computer#computer-state',
     linkLabel: 'Компьютер ИИ',
     state: !vmOk
@@ -355,7 +363,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
         ? `Остановлен: ${computer.failures} сбоя подряд. Последняя ошибка: ${reason(computer.lastError) || 'нет записи'}. Последний шаг ${since(computer.lastStepAt, now)}.`
         : !computer.enabled
           ? 'Выключен переключателем в кабинете.'
-          : `Работает. Последний шаг ${since(computer.lastStepAt, now)}, последнее завершённое задание ${since(computer.lastDoneAt, now)}${computer.failures ? `, сбоев подряд ${computer.failures} из ${computer.maxFailures}` : ''}${computer.lastError ? `. Последняя ошибка: ${reason(computer.lastError)}` : ''}.`,
+          : `${waiting ? 'Ожидает устранения ограничения.' : 'Работает.'} Последний шаг ${since(computer.lastStepAt, now)}, последнее завершённое задание ${since(computer.lastDoneAt, now)}${computer.failures ? `, сбоев подряд ${computer.failures} из ${computer.maxFailures}` : ''}${computer.lastError ? `. Последняя ошибка: ${reason(computer.lastError)}` : ''}.`,
     codes: computer.lastError ? [computer.lastError] : [],
   })
 
@@ -397,7 +405,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
       ...(computer.autoProposals
         ? []
         : ['Включите переключатель «Автоотклики и ответы заказчикам» на странице раздела.']),
-      'Отклики идут от вашего имени: за работу перед заказчиком отвечаете вы. Оплату, пароли и вопросы об ИИ модель передаёт вам.',
+      'Отклики идут от вашего имени: за работу перед заказчиком отвечаете вы. Оплату и вопросы об ИИ модель передаёт вам; сохранённый пароль вводит сервер.',
     ],
     link: '/office/computer#computer-state',
     linkLabel: 'Компьютер ИИ',
@@ -426,6 +434,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
   // ---- payments -----------------------------------------------------------------------------
   add({
     id: 'usdt-address',
+    required: false,
     group: 'payments',
     status: wallet.address ? 'done' : 'needed',
     title: 'Адрес USDT для зарубежных клиентов',
@@ -444,6 +453,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
   const keyOk = wallet.keyStatus === 'read_only'
   add({
     id: 'wallet-key',
+    required: false,
     group: 'payments',
     status: keyOk ? 'done' : 'needed',
     title: 'Ключ Bybit только для чтения поступлений',
@@ -490,9 +500,10 @@ export function launchSteps(input: LaunchInput): LaunchView {
   add({
     id: 'bybit-demo',
     group: 'trading',
-    status: demoVerified ? 'done' : 'needed',
+    required: false,
+    status: demoVerified ? 'done' : 'optional',
     title: 'Проверка на тестовом счёте Bybit (Demo)',
-    why: 'Реальная торговля никогда не откроется без удачной пробной покупки и продажи на Demo. Деньги Demo ненастоящие.',
+    why: 'Необязательная проверка на виртуальных деньгах. Demo не является условием допуска к Live.',
     actions: [
       'В Bybit включите Demo Trading и создайте там API-ключ (только чтение + Spot Trade, без вывода).',
       'Админ вписывает BYBIT_DEMO_API_KEY и BYBIT_DEMO_SECRET в .env и перезапускает web/worker.',
@@ -515,10 +526,11 @@ export function launchSteps(input: LaunchInput): LaunchView {
   const liveKeyOk = b.liveKeys && !!b.live.checkedAt && (!b.live.checkError || liveAccountIssue)
   add({
     id: 'bybit-live-key',
+    required: false,
     group: 'trading',
     status: liveKeyOk ? 'done' : 'needed',
     title: 'Торговый ключ Bybit для реального счёта',
-    why: 'Нужен, чтобы покупать и продавать на ваши деньги. Сервер принимает только ключ с правом Spot Trade, без вывода и переводов.',
+    why: 'Нужен, чтобы покупать и продавать на ваши деньги. Сервер исполняет только спотовые заявки. Текущий ключ Bybit допускается с Spot Trade и необязательным Derivatives Trade; другие непустые группы прав запрещены.',
     actions: [
       'Создайте в Bybit субаккаунт только для фермы и переведите на него USDT (минимум ' +
         `${trading.minLiveUsdt} USDT).`,
@@ -595,7 +607,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
     status: execDemoReady.length ? 'done' : 'optional',
     required: false,
     title: 'Направления: фандинг, арбитраж, DeFi, прогнозы',
-    why: 'Тренировка идёт сама на виртуальных деньгах. Для Demo нужны отдельные ключи, Live открывается после пяти Demo-циклов и ваших флагов.',
+    why: 'Paper использует виртуальные средства. Реальные операции требуют отдельных подключений, бюджета и разрешения владельца. Ожидание Demo-циклов для Live не требуется.',
     actions: [
       'Для Demo фандинга: отдельный ключ Bybit (FUNDING_BYBIT_DEMO_*), для прогнозов Kalshi (PREDICTION_KALSHI_DEMO_*), для DeFi тестовый кошелёк (DEFI_DEMO_CONFIG). Всё в .env через админа.',
     ],
@@ -624,10 +636,7 @@ export function launchSteps(input: LaunchInput): LaunchView {
     codes: s.codes ?? [],
   }))
   const required = full.filter((s) => s.required)
-  const next =
-    full.find((s) => s.required && s.status === 'needed') ??
-    full.find((s) => s.status === 'needed') ??
-    null
+  const next = full.find((s) => s.required && s.status === 'needed') ?? null
   return {
     generatedAt: now.toISOString(),
     done: required.filter((s) => s.status === 'done').length,

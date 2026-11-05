@@ -1,3 +1,4 @@
+import { withAgentProfiles } from '../agent-profiles'
 import { query } from '../db'
 import { MANAGER_POLICY as P } from '../policy'
 import type { ManagerView } from '../contracts/manager'
@@ -12,6 +13,9 @@ import type { TaskRow } from './tasks'
 import { managerLimits } from './limits'
 
 export async function managerView(): Promise<ManagerView> {
+  return withAgentProfiles(managerViewWithProfiles)
+}
+async function managerViewWithProfiles(): Promise<ManagerView> {
   await ensureManager()
   const [states, systems, budget, runs, tasks] = await Promise.all([
     query<ManagerRow>('SELECT * FROM trading_manager WHERE id=true'),

@@ -1,3 +1,4 @@
+import { currentModel, currentPricing } from '../agent-profiles'
 import { z } from 'zod'
 import { config, paidModelId } from '../config'
 import { query } from '../db'
@@ -22,16 +23,22 @@ const usageSchema = z.object({
 /** The fixed part of every paid OpenRouter request: one route at the published tariff. */
 export function paidRequestEnvelope(maxTokens: number) {
   return {
-    model: paidModelId(config()),
+    model: currentModel(),
     max_tokens: maxTokens,
-    reasoning: { effort: 'low', exclude: true },
+    ...(currentModel() === paidModelId(config())
+      ? { reasoning: { effort: 'low', exclude: true } }
+      : {}),
     stream: false,
     provider: {
       require_parameters: true,
       allow_fallbacks: false,
       data_collection: 'deny',
       // Dollars per million tokens, the short-context tariff in openai-cost.ts.
-      max_price: { prompt: 10, completion: 50, request: 0 },
+      max_price: {
+        prompt: (currentPricing()?.inputNano ?? 10000) / 1000,
+        completion: (currentPricing()?.outputNano ?? 50000) / 1000,
+        request: 0,
+      },
     },
     plugins: [],
   }
@@ -103,7 +110,7 @@ export async function openrouterPaidRequest(args: {
   if (cached + writes > input || output > args.maxTokens)
     throw new Error('OPENROUTER_USAGE_INVALID')
   const microusd = Math.max(
-    openaiCost(input, output, cached, writes),
+    openaiCost(input, output, cached, writes, currentPricing()),
     openrouterCost(usage.data.cost),
   )
   // Record billed usage even when the answer is incomplete, refused or invalid.
