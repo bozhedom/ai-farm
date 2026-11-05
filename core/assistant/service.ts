@@ -99,9 +99,8 @@ function guideReply(input: Question, snapshot: Snapshot, reason = ''): Assistant
   const summary = `Состояние на ${snapshot.at}: ${state}. ${snapshot.workerAlive ? 'Обработчик недавно отвечал.' : 'Свежего подтверждения работы обработчика нет.'} ${snapshot.focus.active ? 'Новые запуски ограничены выбранными направлениями.' : 'Общий фильтр направлений выключен.'}`
   const codeRequest = /код|программ|исходник/i.test(input.question)
   const asksForState =
-    /сейчас|происходит|работает|работают|запущен|арбитраж|фандинг|defi|байбит|bybit/i.test(
-      input.question,
-    )
+    /сейчас|происходит|запущен/i.test(input.question) ||
+    (!/^как\s/i.test(input.question) && /работает|работают/i.test(input.question))
   const directionFacts = snapshot.directions
     .map((item) =>
       `${item.title}: ${item.activity}. ${item.group === 'test' ? 'Тестовый режим, реальных операций нет.' : item.status === 'требует подключения' ? 'Нужно подключение.' : ''}`.trim(),

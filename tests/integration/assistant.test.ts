@@ -104,6 +104,19 @@ it('does not describe old or disabled market data as a working monitor', async (
   expect((await directionReadiness()).find((d) => d.id === 'monitor')!.active).toBe(false)
 })
 
+it('explains the current section when asked how it works instead of replacing help with a status list', async () => {
+  await query("UPDATE system_state SET mode='emergency_stop'")
+  const reply = await askAssistant({
+    ...question(),
+    question: 'Как работает этот раздел?',
+    section: 'trading-instructions',
+  })
+  expect(reply.source).toBe('guide')
+  expect(reply.text).toContain('Сохранить и применить')
+  expect(reply.text).not.toContain('По текущему состоянию:')
+  expect(reply.sections).toEqual(['trading-instructions'])
+})
+
 it('does not spend past the budget and labels provider failures as a fallback', async () => {
   vi.spyOn(settings, 'config').mockReturnValue({
     ...settings.config(),
