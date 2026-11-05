@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { officeFetch, useOfficeResource } from '~/composables/office/resource'
-import { useOfficeAction } from '~/composables/office/actions'
+import { useOfficeAction, useOfficeToast } from '~/composables/office/actions'
+import { when } from '~/composables/office/format'
+import { describeError } from '~/composables/office/errors'
+import {
+  describeTradingRules,
+  type TradingInstructionsView,
+  type ApplyInstructionsResult,
+} from '../../../core/contracts/trading-instructions'
 type Role = {
   id: string
   name: string
@@ -22,8 +29,31 @@ const { data, pending, status, refresh } = useOfficeResource<View>(
   () => 'model-profiles',
   () => officeFetch('/api/office/models'),
 )
-const { busy, run } = useOfficeAction()
+const { busy, error, run } = useOfficeAction()
+const { show } = useOfficeToast()
 const selected = ref(props.tradingOnly ? 'manager' : String(route.query.role || 'director'))
+const managesTrading = computed(() => selected.value === 'manager')
+const {
+  data: appliedInstructions,
+  refresh: refreshInstructions,
+  status: instructionsStatus,
+  pending: instructionsPending,
+} = useOfficeResource<TradingInstructionsView>(
+  () => (managesTrading.value ? 'trading-instructions' : null),
+  () => officeFetch('/api/office/trading-instructions'),
+)
+const instructionIssues = ref<string[]>([])
+let pendingApply: {
+  fingerprint: string
+  body: {
+    requestId: string
+    role: string
+    instruction: string
+    model: string
+    revision: number
+    instructionsRevision: number
+  }
+} | null = null
 const visibleContexts = computed(() =>
   (data.value?.contexts ?? []).filter((c) => !props.tradingOnly || c.role === 'manager'),
 )
@@ -59,23 +89,53 @@ async function catalog() {
   )
 }
 async function save() {
-  await run(
-    'profile',
-    async () => {
-      await officeFetch('/api/office/models', {
-        method: 'POST',
-        body: {
-          role: selected.value,
-          instruction: instruction.value,
-          model: model.value,
-          revision: revision.value,
-        },
+  const saved = await run('profile', async () => {
+    const body = {
+      role: selected.value,
+      instruction: instruction.value,
+      model: model.value,
+      revision: revision.value,
+    }
+    instructionIssues.value = []
+    if (managesTrading.value) {
+      if (!appliedInstructions.value) return false
+      const payload = { ...body, instructionsRevision: appliedInstructions.value.revision }
+      const fingerprint = JSON.stringify({
+        role: body.role,
+        instruction: body.instruction,
+        model: body.model,
       })
-      dirty.value = false
-      await refresh()
-    },
-    'Сохранено. Настройки применятся в следующем запуске.',
-  )
+      if (pendingApply?.fingerprint !== fingerprint)
+        pendingApply = { fingerprint, body: { ...payload, requestId: crypto.randomUUID() } }
+      let result: ApplyInstructionsResult
+      try {
+        result = await officeFetch<ApplyInstructionsResult>('/api/office/trading-instructions', {
+          method: 'POST',
+          body: pendingApply.body,
+          timeout: 135000,
+        })
+      } catch (e) {
+        const info = describeError(e)
+        if (info.status >= 400 && info.status < 500 && info.code !== 'TRADING_INSTRUCTIONS_BUSY')
+          pendingApply = null
+        throw e
+      }
+      pendingApply = null
+      instructionIssues.value = result.issues
+      if (!result.applied) return false
+      revision.value = result.current.profileRevision
+      await refreshInstructions()
+    } else await officeFetch('/api/office/models', { method: 'POST', body })
+    dirty.value = false
+    await refresh()
+    return true
+  })
+  if (saved)
+    show(
+      managesTrading.value
+        ? 'Применено. Трейдеры проверяют новую версию перед следующими действиями.'
+        : 'Сохранено. Настройки применятся в следующем запуске.',
+    )
 }
 const title = ref('')
 const content = ref('')
@@ -147,7 +207,7 @@ function download() {
         <p>
           {{
             tradingOnly
-              ? 'Правила, подход к экспериментам и материалы для ИИ-менеджера торговли.'
+              ? 'Напишите правила обычным текстом и примените их к работающим спотовым трейдерам.'
               : 'Инструкции, выбор модели и материалы для каждой роли.'
           }}
         </p>
@@ -157,17 +217,23 @@ function download() {
       </button>
     </div>
     <p v-if="tradingOnly" class="note note-wait guidance-note">
-      Инструкции получает ИИ-менеджер при следующем разборе Paper. Спотовые трейдеры выполняют
-      алгоритмы и не читают свободный текст. Жёсткие лимиты риска действуют независимо от
-      инструкции; текст не меняет капитал, режим счёта и допуск к Live.
+      После сохранения поддерживаемые правила действуют перед следующими торговыми действиями на
+      всех биржах в Paper, Demo и уже разрешённом Live. Перезапуск не нужен. Ниже видно, что именно
+      применяется. Новая инструкция полностью заменяет предыдущие дополнительные правила.
     </p>
     <OfficeState v-if="!data" :status="status" :pending="pending" @retry="refresh" />
     <div v-else class="workspace">
       <section class="card stack-sm">
-        <h2>{{ tradingOnly ? 'Торговый менеджер · Paper' : 'Настройка роли' }}</h2>
+        <h2>{{ tradingOnly ? 'Инструкции для трейдеров и менеджера' : 'Настройка роли' }}</h2>
         <template v-if="!tradingOnly">
           <label for="model-role">Роль</label
-          ><select id="model-role" class="select" :value="selected" @change="choose">
+          ><select
+            id="model-role"
+            class="select"
+            :value="selected"
+            :disabled="!!busy"
+            @change="choose"
+          >
             <option v-for="r in data.roles" :key="r.id" :value="r.id">{{ r.name }}</option>
           </select>
           <p class="small muted">
@@ -177,12 +243,18 @@ function download() {
           </p>
         </template>
         <form v-if="active" class="stack-sm" @submit.prevent="save">
+          <OfficeState
+            v-if="managesTrading && !appliedInstructions"
+            :status="instructionsStatus"
+            :pending="instructionsPending"
+            @retry="refreshInstructions"
+          />
           <label for="role-model">Модель</label>
           <select
             id="role-model"
             v-model="model"
             class="select"
-            :disabled="!data.switchAvailable"
+            :disabled="!!busy || !data.switchAvailable"
             @change="dirty = true"
           >
             <option value="">Серверная по умолчанию · {{ data.defaultModel }}</option>
@@ -222,21 +294,110 @@ function download() {
             class="textarea"
             rows="8"
             maxlength="6000"
+            :disabled="!!busy"
             @input="dirty = true"
             :placeholder="
-              tradingOnly
-                ? 'Например: сначала оцени комиссии и просадку; проверяй по одной гипотезе; избегай частых сделок без объяснимого преимущества.'
+              managesTrading
+                ? 'Например: не покупать BTC; покупка не больше 7 USDT; стоп-лосс 1%.'
                 : 'На какой аудитории сосредоточиться, какой результат проверить, чего избегать'
             "
           />
-          <p class="small muted">
+          <p v-if="!managesTrading" class="small muted">
             Эти уточнения дополняют обязательные правила. Модель не получает право менять бюджет,
             включать Live или обходить закон. Начатый запуск завершится со своим набором инструкций.
           </p>
-          <button class="btn btn-primary" :disabled="!!busy || !dirty">
-            Сохранить настройки роли
+          <p v-else class="small muted">
+            Правила не запускают остановленную торговлю и не меняют капитал или допуск к Live.
+            Защитные выходы сохраняются. Отправленную на биржу заявку отменить задним числом нельзя.
+            Свободную формулировку разбирает настроенная модель в пределах общего бюджета; точные
+            команды из примеров применяются без вызова модели.
+          </p>
+          <div v-if="instructionIssues.length" class="note note-wait" role="alert">
+            <strong>Не применено. Прежние правила продолжают действовать.</strong>
+            <ul>
+              <li v-for="issue in instructionIssues" :key="issue">{{ issue }}</li>
+            </ul>
+          </div>
+          <p v-if="error" class="error" role="alert">{{ error }}</p>
+          <button
+            class="btn btn-primary"
+            :disabled="
+              !!busy ||
+              (managesTrading
+                ? !appliedInstructions ||
+                  (!dirty && appliedInstructions.synchronized && !!appliedInstructions.appliedAt)
+                : !dirty)
+            "
+          >
+            {{
+              managesTrading
+                ? busy === 'profile'
+                  ? 'Разбираем и применяем…'
+                  : 'Сохранить и применить'
+                : 'Сохранить настройки роли'
+            }}
           </button>
         </form>
+        <section
+          v-if="managesTrading && appliedInstructions"
+          class="stack-sm"
+          aria-label="Применённые торговые инструкции"
+          aria-live="polite"
+        >
+          <h3>
+            {{
+              appliedInstructions.appliedAt
+                ? `Действует версия ${appliedInstructions.revision}`
+                : 'Дополнительные торговые правила пока не применены'
+            }}
+          </h3>
+          <p v-if="!appliedInstructions.synchronized" class="note note-wait">
+            Сохранённый текст ещё не применён к трейдерам. Нажмите «Сохранить и применить».
+          </p>
+          <p v-if="appliedInstructions.appliedAt" class="small muted">
+            Применено {{ when(appliedInstructions.appliedAt) }}. Действуют и обязательные
+            ограничения сервера.
+          </p>
+          <ul v-if="describeTradingRules(appliedInstructions.rules).length">
+            <li v-for="rule in describeTradingRules(appliedInstructions.rules)" :key="rule">
+              {{ rule }}
+            </li>
+          </ul>
+          <p v-else-if="appliedInstructions.appliedAt" class="small">
+            Дополнительных ограничений для сделок нет.
+          </p>
+          <template v-if="appliedInstructions.managerNotes.length">
+            <p class="small">Рекомендации для анализа Paper-менеджером:</p>
+            <ul>
+              <li v-for="note in appliedInstructions.managerNotes" :key="note">{{ note }}</li>
+            </ul>
+          </template>
+          <p class="small muted">
+            Изменение инструкции и материалов запрашивает новый разбор у включённого менеджера. Он
+            начнётся при доступном бюджете и с соблюдением лимитов частоты; устаревшие предложения
+            больше не применяются.
+          </p>
+          <details>
+            <summary>Примеры и доступные правила</summary>
+            <p>
+              Монеты, семейства стратегий, сумма покупки 5–10 USDT, доля капитала в позициях до 50%,
+              число заявок до 40 в сутки, пауза между покупками, стоп до 3%, фиксация прибыли
+              0,5–6%, срок удержания до 24 часов. Фильтр стратегий выбирает из уже работающих
+              агентов; сетка и DCA доступны только в Paper.
+            </p>
+            <pre>
+Не покупать BTC
+Покупка не больше 7 USDT
+Стоп-лосс 1%
+Тейк-профит 2%
+Пауза между покупками 60 минут</pre>
+            <p class="small muted">
+              Неизвестные, неоднозначные или противоречивые условия не применяются. Чтобы снять
+              дополнительные правила, очистите поле и сохраните. Материалы ниже используются
+              менеджером для анализа; торговые запреты указывайте в инструкции.
+            </p>
+          </details>
+        </section>
         <details v-if="active">
           <summary>Используемый системный промпт · {{ active.name }}</summary>
           <pre>{{ active.effectivePrompt }}</pre>

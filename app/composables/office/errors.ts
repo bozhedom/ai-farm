@@ -1,5 +1,19 @@
 /** Server error codes in owner words: what happened and what to do next. */
 const messages: Record<string, string> = {
+  TRADING_INSTRUCTIONS_USE_APPLY: 'Примените торговую инструкцию через «Сохранить и применить».',
+  TRADING_INSTRUCTIONS_BUSY:
+    'Предыдущая инструкция ещё разбирается. Дождитесь результата и повторите проверку.',
+  TRADING_INSTRUCTIONS_EXPIRED:
+    'Разбор не завершился. Отправьте инструкцию заново; прежние правила сохранены.',
+  TRADING_INSTRUCTIONS_DAILY_LIMIT:
+    'На сегодня исчерпан лимит 20 разборов инструкций. Прежние правила действуют.',
+  TRADING_INSTRUCTIONS_TOO_EXPENSIVE:
+    'Разбор не помещается в бюджет инструкции. Сократите текст; прежние правила сохранены.',
+  TRADING_INSTRUCTION_ORDER_LIMIT:
+    'Размер покупки должен быть от 5 до 10 USDT. Инструкция не применена.',
+  TRADING_INSTRUCTION_LIMIT: 'Инструкция выходит за серверные ограничения и не применена.',
+  TRADING_INSTRUCTION_CONFLICT:
+    'Одна и та же монета указана как разрешённая и запрещённая. Уточните инструкцию.',
   STOPPED: 'Включён аварийный стоп. Платные вызовы остановлены; доступна обычная справка.',
   ASSISTANT_BUSY: 'Помощник ещё готовит ответ. Подождите и проверьте его повторно.',
   ASSISTANT_DAILY_LIMIT:

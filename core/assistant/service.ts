@@ -9,6 +9,7 @@ import { directionReadiness } from '../earnings/readiness'
 import { workerLoops } from '../worker-loops'
 import { withAgentProfiles } from '../agent-profiles'
 import { decimal } from '../trading/decimal'
+import { tradingInstructions } from '../trading/owner-rules'
 import {
   assistantAnswerSchema,
   assistantQuestionSchema,
@@ -22,6 +23,7 @@ const safeCode = (value: unknown) =>
 
 /** A fixed projection: no customer text, arbitrary SQL, prompts, login records or secrets. */
 export async function assistantSnapshot() {
+  const instructionState = await tradingInstructions()
   const [[state], budget, focus, directions, loops, jobs, trading, [manager], [computer]] =
     await Promise.all([
       query(
@@ -60,6 +62,11 @@ export async function assistantSnapshot() {
         config().MODEL_PROVIDER === 'openai' ? budget.openaiSpentMicrousd : null,
     },
     focus,
+    tradingInstructions: {
+      revision: instructionState.revision,
+      rules: instructionState.rules,
+      appliedAt: instructionState.appliedAt,
+    },
     directions,
     loops: loops.map((loop) => ({ ...loop, error: safeCode(loop.error) })),
     jobs,

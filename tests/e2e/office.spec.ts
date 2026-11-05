@@ -2,6 +2,10 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { officeFixtures, type OfficeFixtures } from './fixtures/office'
+import {
+  defaultTradingRules,
+  type TradingInstructionsView,
+} from '../../core/contracts/trading-instructions'
 
 /**
  * Walks every owner office section at 1440 and 390 px with the office API stubbed by typed
@@ -15,6 +19,15 @@ type Posted = { url: string; body: unknown }
 
 async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: boolean } = {}) {
   const posted: Posted[] = []
+  const instructions: TradingInstructionsView = {
+    revision: 0,
+    profileRevision: 0,
+    rules: defaultTradingRules(),
+    managerNotes: [],
+    appliedAt: null,
+    source: null,
+    synchronized: true,
+  }
   const modelView = {
     defaultModel: 'openai/gpt-6-astra',
     switchAvailable: true,
@@ -63,12 +76,22 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
       posted.push({ url: path, body: request.postDataJSON() })
       if (path === '/api/office/models/context')
         modelView.contexts.push({ id: 'ctx-1', ...request.postDataJSON() })
-      if (path === '/api/office/models') {
+      if (path === '/api/office/models' || path === '/api/office/trading-instructions') {
         const body = request.postDataJSON()
         Object.assign(
           modelView.roles.find((r) => r.id === body.role)!,
           { ...body, revision: body.revision + 1 },
         )
+        if (path === '/api/office/trading-instructions') {
+          Object.assign(instructions, {
+            revision: instructions.revision + 1,
+            profileRevision: body.revision + 1,
+            appliedAt: new Date().toISOString(),
+            source: 'model',
+            managerNotes: ['Исследовать комиссии и частоту сделок.'],
+          })
+          return json(route, { applied: true, issues: [], current: instructions })
+        }
       }
       if (path === '/api/orders') return json(route, { id: fx.deliveredOrder.id })
       if (path.endsWith('/relink'))
@@ -87,6 +110,7 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
         revision: 0,
       })
     if (path === '/api/office/models') return json(route, modelView)
+    if (path === '/api/office/trading-instructions') return json(route, instructions)
     if (path === '/api/office/models/catalog')
       return json(route, [{ id: 'vendor/eligible', name: 'Доступная модель', browser: true }])
     if (path === '/api/office/directions')
@@ -607,10 +631,11 @@ test('owner changes a role model, uploads manager context and deletes it', async
   await page
     .getByLabel('Ваши инструкции для роли')
     .fill('Сначала исследовать комиссии и частоту сделок.')
-  await page.getByRole('button', { name: 'Сохранить настройки роли' }).click()
+  await page.getByRole('button', { name: 'Сохранить и применить' }).click()
   await expect
-    .poll(() => posted.find((p) => p.url === '/api/office/models')?.body)
+    .poll(() => posted.find((p) => p.url === '/api/office/trading-instructions')?.body)
     .toMatchObject({ role: 'manager', model: 'vendor/eligible' })
+  await expect(page.getByRole('heading', { name: 'Действует версия 1' })).toBeVisible()
   await page.getByLabel('Загрузить текстовый файл').setInputFiles({
     name: 'market.txt',
     mimeType: 'text/plain',
