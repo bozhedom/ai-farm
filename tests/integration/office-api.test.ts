@@ -1,3 +1,5 @@
+import focusGet from '../../server/api/office/focus.get'
+import focusPost from '../../server/api/office/focus.post'
 import profilesGet from '../../server/api/office/models/index.get'
 import profilesPost from '../../server/api/office/models/index.post'
 import contextPost from '../../server/api/office/models/context.post'
@@ -45,6 +47,7 @@ let server: Server
 let base = ''
 
 const gets: [string, EventHandler][] = [
+  ['/api/office/focus', focusGet],
   ['/api/office/models', profilesGet],
   ['/api/office/directions', directionGet],
   ['/api/trading', trading],
@@ -64,6 +67,7 @@ const gets: [string, EventHandler][] = [
   ['/api/public/catalog', catalog],
 ]
 const posts: [string, EventHandler][] = [
+  ['/api/office/focus', focusPost],
   ['/api/office/models', profilesPost],
   ['/api/office/models/context', contextPost],
   ['/api/office/ideas/:id/decision', decisionPost],

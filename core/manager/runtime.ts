@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import { withAgentProfiles, roleModel } from '../agent-profiles'
 import { randomUUID } from 'node:crypto'
 import { ZodError } from 'zod'
@@ -110,6 +111,7 @@ export async function controlManager(
   actor: 'owner' | 'autopilot' = 'owner',
 ) {
   if (actor === 'autopilot' && action !== 'enable') throw new Error('AUTOPILOT_CANNOT_DISABLE')
+  if (action !== 'pause') await assertDirectionAllowed('manager')
   await ensureManager()
   await transaction(async (db) => {
     const [row] = await query<ManagerRow>(
@@ -163,7 +165,7 @@ function safeError(error: unknown) {
   if (error instanceof ZodError) return 'MANAGER_PLAN_INVALID'
   if (
     error instanceof Error &&
-    /^(MANAGER_|BUDGET_|OPENAI_BUDGET_|OPENROUTER_|PROVIDER_|MODEL_|LOCAL_|OLLAMA_|UNCERTAIN_|CONTEXT_|STOPPED$|PAUSED$|RESERVATION_)[A-Z_0-9]*$/.test(
+    /^(WORK_FOCUS_|MANAGER_|BUDGET_|OPENAI_BUDGET_|OPENROUTER_|PROVIDER_|MODEL_|LOCAL_|OLLAMA_|UNCERTAIN_|CONTEXT_|STOPPED$|PAUSED$|RESERVATION_)[A-Z_0-9]*$/.test(
       error.message,
     )
   )
@@ -196,7 +198,13 @@ async function claimRun(providerReady: boolean, skip = '') {
         db,
       )
     }
-    if (!row.enabled || system?.mode !== 'running' || !providerReady) return null
+    if (
+      !row.enabled ||
+      system?.mode !== 'running' ||
+      !providerReady ||
+      !(await directionAllowed('manager', db))
+    )
+      return null
     const blocker = managerModelBlocker()
     if (blocker) {
       await query(
@@ -352,6 +360,7 @@ async function finishPlan(
   plan: ManagerPlan,
 ) {
   return transaction(async (db) => {
+    await assertDirectionAllowed('manager', db)
     const [owner] = await query<ManagerRow>(
       'SELECT * FROM trading_manager WHERE id=true FOR UPDATE',
       [],

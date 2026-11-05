@@ -1,5 +1,9 @@
 /** Server error codes in owner words: what happened and what to do next. */
 const messages: Record<string, string> = {
+  WORK_FOCUS_PAUSED:
+    'Направление отключено режимом «Только выбранные». Измените выбор в «Направлениях».',
+  WORK_FOCUS_CHANGED:
+    'Выбор направлений изменился в другой вкладке. Обновите страницу и повторите.',
   MODEL_CATALOG_UNAVAILABLE:
     'Каталог моделей сейчас недоступен. Повторите позже; текущая модель сохранена.',
   MODEL_UNSUPPORTED:

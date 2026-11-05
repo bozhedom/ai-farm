@@ -1,3 +1,4 @@
+import { directionAllowed } from '../work-focus'
 import { randomUUID } from 'node:crypto'
 import { query, type Connection } from '../db'
 import { MANAGER_POLICY as P, SCOUT_POLICY as S } from '../policy'
@@ -46,7 +47,7 @@ async function taskReason(task: TaskRow, reason: string, db: Connection, status 
 
 /** The caller holds the Paper scope lock and a transaction. No model or network call occurs here. */
 export async function applyManagerTask(s: TradingScope, db: Connection) {
-  if (s.mode !== 'paper') return
+  if (s.mode !== 'paper' || !(await directionAllowed('manager', db))) return
   const p = await portfolio(s, db, true)
   const [manager] = await query(
     'SELECT enabled FROM trading_manager WHERE id=true FOR SHARE',

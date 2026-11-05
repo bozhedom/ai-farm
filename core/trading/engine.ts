@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import { randomUUID } from 'node:crypto'
 import { query, transaction, type Connection } from '../db'
 import { config } from '../config'
@@ -249,6 +250,7 @@ async function submit(
   // The transaction reserves the only unresolved-order slot and fences concurrent owner stops.
   const row = await atomic(db, async () => {
     const current = await portfolio(p, db, true)
+    if (request.side === 'buy' && !(await directionAllowed('trading', db))) return null
     if (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell'))
       return null
     if (await pendingOrder(p, db)) return null
@@ -337,7 +339,10 @@ async function submit(
   }
   const dispatch = await atomic(db, async () => {
     const current = await portfolio(p, db, true)
-    if (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell')) {
+    if (
+      (request.side === 'buy' && !(await directionAllowed('trading', db))) ||
+      (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell'))
+    ) {
       await query(
         "UPDATE trading_orders SET status='canceled',reason='NOT_SENT',settled_at=now() WHERE id=$1",
         [row.id],
@@ -701,7 +706,8 @@ export async function tradingTick(
               (await agents(s, db)).map((a) => a.symbol),
               db,
             )
-            if (p.status === 'running') {
+            const workEnabled = await directionAllowed('trading', db)
+            if (p.status === 'running' && workEnabled) {
               if (mode !== 'live')
                 await atomic(db, async () => {
                   if ((await portfolio(s, db, true)).status === 'running') {
@@ -742,7 +748,8 @@ export async function tradingTick(
               )
             p = await portfolio(s, db)
             if (p.status !== 'running' && p.status !== 'paused') return
-            if (mode === 'live' && p.status === 'running') await promoteLive(exchange, db)
+            if (mode === 'live' && p.status === 'running' && workEnabled)
+              await promoteLive(exchange, db)
             const forceExit =
               ['DAILY_LOSS_LIMIT', 'DRAWDOWN_LIMIT', 'OWNER_EXIT'].includes(p.reason) ||
               p.demo_probe
@@ -830,7 +837,8 @@ export async function tradingTick(
                   db,
                 )
             }
-            if (mode === 'paper' && p.status === 'running') await evolve(exchange, db)
+            if (mode === 'paper' && p.status === 'running' && workEnabled)
+              await evolve(exchange, db)
           })
         } catch (error) {
           const reason = safeTradingError(error)
@@ -932,6 +940,7 @@ export async function startTrading(
   demoProbe = false,
   factory: VenueFactory = venues,
 ) {
+  await assertDirectionAllowed('trading')
   const { mode, exchange } = s
   await ensurePortfolios()
   return withTradingLock(s, async (db) => {

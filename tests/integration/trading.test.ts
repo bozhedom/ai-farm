@@ -1,3 +1,4 @@
+import { saveWorkFocus } from '../../core/work-focus'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { pool, query } from '../../core/db'
@@ -1316,4 +1317,24 @@ describe('classic strategy rollout and complete active balances', () => {
     expect(after.last_signal).toBe('SCOUT_TIME_EXIT')
     expect(classicState(after).tranches).toHaveLength(0)
   })
+})
+
+it('blocks new spot entries outside focus while still closing existing positions', async () => {
+  await startTrading(scope('okx', 'paper'), '', false, factory)
+  await tick()
+  const initial = await query("SELECT id FROM trading_orders WHERE side='buy'")
+  expect(initial.length).toBeGreaterThan(0)
+  await saveWorkFocus({ enabled: true, selected: ['studio'], duration: 'manual', revision: 0 })
+  await expect(startTrading(scope('okx', 'demo'), '', false, factory)).rejects.toThrow(
+    'WORK_FOCUS_PAUSED',
+  )
+  await noCooldown()
+  await tick()
+  expect(await query("SELECT id FROM trading_orders WHERE side='buy'")).toHaveLength(initial.length)
+  exchange.price = '103'
+  exchange.reference = '103'
+  await noCooldown()
+  await tick()
+  expect((await query("SELECT id FROM trading_orders WHERE side='sell'")).length).toBeGreaterThan(0)
+  expect(await query("SELECT id FROM trading_orders WHERE side='buy'")).toHaveLength(initial.length)
 })

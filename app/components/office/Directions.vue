@@ -8,6 +8,7 @@ const { data, pending, status, refresh } = useOfficeResource<DirectionReadiness[
 )
 </script>
 <template>
+  <OfficeWorkFocus />
   <section class="card readiness" aria-labelledby="direction-state">
     <h2 id="direction-state">Что подключено сейчас</h2>
     <p class="small muted">

@@ -1,3 +1,5 @@
+import { workFocus, workAllowed } from '../work-focus'
+import type { WorkDirection } from '../contracts/work-focus'
 import { config } from '../config'
 import { COMPUTER_USE_POLICY } from '../computer-use/policy'
 import { query } from '../db'
@@ -159,5 +161,22 @@ export async function directionReadiness(): Promise<DirectionReadiness[]> {
       link: '/office/products',
     },
   )
-  return result
+  const focus = await workFocus()
+  return result.map((item) => {
+    const direction: WorkDirection =
+      item.id.startsWith('spot-') || item.id === 'bots'
+        ? 'trading'
+        : item.id === 'ideas'
+          ? 'studio'
+          : item.id === 'polymarket'
+            ? 'monitor'
+            : (item.id as WorkDirection)
+    if (workAllowed(focus, direction)) return item
+    return {
+      ...item,
+      active: false,
+      detail:
+        'Новые запуски отключены режимом выбранных направлений. Настройки и история сохранены; принятые обязательства, сверка заявок и защита открытых позиций продолжаются.',
+    }
+  })
 }

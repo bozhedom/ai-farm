@@ -1,3 +1,4 @@
+import { assertDirectionAllowed } from './work-focus'
 import { randomUUID } from 'node:crypto'
 import { config } from './config'
 import { audit, pool, query, transaction, type Connection } from './db'
@@ -208,6 +209,9 @@ export async function meteredCall<T>(args: {
       db,
     )
     const farm = farmCategories.includes(reservation?.category)
+    if (farm) await assertDirectionAllowed('studio', db)
+    if (reservation?.category === 'trading_manager') await assertDirectionAllowed('manager', db)
+    if (reservation?.category === 'computer_use') await assertDirectionAllowed('computer', db)
     if (!state.research_enabled && farm) return { error: new Error('RESEARCH_WINDOW_CLOSED') }
     if (state.mode === 'emergency_stop') throw new Error('STOPPED')
     if (!reservation || reservation.status !== 'open') throw new Error('RESERVATION_CLOSED')

@@ -1,3 +1,4 @@
+import { assertDirectionAllowed, directionAllowed } from './work-focus'
 import { applyIdeaDecisions } from './ideas'
 import { scheduleIdeaResearch } from './jobs/report'
 import { randomUUID } from 'node:crypto'
@@ -54,6 +55,7 @@ export function nextDailyRun(now: Date, hourUtc: number, ranToday: boolean) {
 export const beforeDailyHour = (now: Date, hourUtc: number) => now.getUTCHours() < (hourUtc || 0)
 
 export async function setSchedule(enabled: boolean, actor: 'owner' | 'autopilot' = 'owner') {
+  if (enabled) await assertDirectionAllowed('studio')
   if (enabled && !config().AUTONOMY_ENABLED) throw new Error('SCHEDULE_DISABLED_ON_SERVER')
   // The autopilot only turns the schedule on; turning it off stays the owner's decision.
   if (actor === 'autopilot' && !enabled) throw new Error('AUTOPILOT_CANNOT_DISABLE')
@@ -96,6 +98,7 @@ export async function scheduleWork(now = new Date()) {
     if (!(await query('SELECT id FROM jobs WHERE dedupe_key=$1', [week], db)).length)
       await enqueue('evaluate', week, {}, db)
     if (
+      !(await directionAllowed('studio', db)) ||
       !config().AUTONOMY_ENABLED ||
       !state?.schedule_enabled ||
       state.mode !== 'running' ||

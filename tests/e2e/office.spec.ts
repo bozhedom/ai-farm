@@ -78,6 +78,14 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (options.offline && path.startsWith('/api/office/'))
       return json(route, { statusMessage: 'DOWN' }, 503)
     const offset = Number(url.searchParams.get('offset') || 0)
+    if (path === '/api/office/focus')
+      return json(route, {
+        enabled: false,
+        active: false,
+        selected: ['trading', 'manager'],
+        until: null,
+        revision: 0,
+      })
     if (path === '/api/office/models') return json(route, modelView)
     if (path === '/api/office/models/catalog')
       return json(route, [{ id: 'vendor/eligible', name: 'Доступная модель', browser: true }])
