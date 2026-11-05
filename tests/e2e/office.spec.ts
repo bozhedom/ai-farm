@@ -622,6 +622,50 @@ for (const width of [1440, 390]) {
   })
 }
 
+test('logout clears assistant history without a render error and the next login starts empty', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const errors = watchConsole(page)
+  await stubOffice(page, fx)
+  await page.route('**/api/office/assistant', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        text: 'Выберите группы агентов в разделе «Направления».',
+        sections: ['earnings'],
+        at: new Date().toISOString(),
+        source: 'guide',
+        reason: '',
+      }),
+    }),
+  )
+  await page.goto('/office')
+  await expect(
+    page.getByRole('heading', { name: 'Источники заработка', exact: true }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Помощник', exact: true }).click()
+  await page.getByLabel('Ваш вопрос', { exact: true }).fill('Как оставить только криптоторговлю?')
+  await page.getByRole('button', { name: 'Отправить вопрос' }).click()
+  await expect(page.getByRole('log')).toContainText('Выберите группы агентов')
+  await page.getByRole('button', { name: 'Закрыть помощника' }).click()
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click()
+  await expect(page).toHaveURL(/\/office\/login$/)
+  expect(errors).toEqual([])
+  await page.getByLabel('Пароль', { exact: true }).fill('test-only-owner-password')
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await expect(page).toHaveURL(/\/office$/)
+  await expect(
+    page.getByRole('heading', { name: 'Источники заработка', exact: true }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Помощник', exact: true }).click()
+  await expect(page.getByRole('log')).toContainText('Помогу разобраться в настройках')
+  await expect(page.getByRole('log')).not.toContainText('Как оставить только криптоторговлю?')
+  await expect(page.getByRole('log')).not.toContainText('Выберите группы агентов')
+  expect(errors).toEqual([])
+})
+
 test('owner changes a role model, uploads manager context and deletes it', async ({ page }) => {
   const posted = await stubOffice(page, fx)
   await page.goto('/office/models?role=manager')

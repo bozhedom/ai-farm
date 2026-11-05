@@ -8,7 +8,12 @@ import { officeFetch } from '~/composables/office/resource'
 import { describeError } from '~/composables/office/errors'
 import { when } from '~/composables/office/format'
 type Message = { role: 'user' | 'assistant'; text: string; reply?: AssistantReply }
-const messages = useState<Message[]>('office-assistant-history', () => [])
+const history = useState<Message[]>('office-assistant-history', () => [])
+// Logout and expired sessions clear Nuxt state before the mounted dialog is removed.
+const messages = computed({
+  get: () => history.value ?? [],
+  set: (value: Message[]) => (history.value = value),
+})
 const route = useRoute()
 const section = computed(
   () =>
