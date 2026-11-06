@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The server reads its configuration once per process: set the wallet before any import.
 const saved = vi.hoisted(() => {
@@ -44,7 +44,14 @@ beforeAll(async () => {
   if (!address || typeof address === 'string') throw new Error('NO_ADDRESS')
   base = `http://127.0.0.1:${address.port}`
 })
-beforeEach(() => resetDatabase())
+beforeEach(async () => {
+  // The fixtures represent today's deposits, including one an hour ago. Keep them in the
+  // same UTC day even when the suite runs shortly after midnight; network timers stay real.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(now)
+  await resetDatabase()
+})
+afterEach(() => vi.useRealTimers())
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()))
   await pool.end()
@@ -53,7 +60,7 @@ afterAll(async () => {
     else process.env[key] = value
 })
 
-const now = Date.now()
+const now = new Date().setUTCHours(12, 0, 0, 0)
 const onchain = (txID: string, amount: string, status: number, minutesAgo = 10) => ({
   id: `id-${txID}`,
   coin: 'USDT',
@@ -183,11 +190,13 @@ describe('Bybit wallet deposits', () => {
     expect(await auditCount('wallet_deposit')).toBe(3)
 
     // The same answer again: no new rows, no new feed lines.
+    vi.setSystemTime(now + 1000)
     expect(await walletTick({ transport })).toMatchObject({ seen: 5, changed: 0 })
     expect(await query('SELECT count(*)::int AS n FROM wallet_deposits')).toEqual([{ n: 5 }])
     expect(await auditCount('wallet_deposit')).toBe(3)
 
     // The pending deposit is credited: one update, one feed line.
+    vi.setSystemTime(now + 2000)
     state.pages[0]![1] = onchain('tx-pending', '40', 3, 1)
     expect(await walletTick({ transport })).toMatchObject({ changed: 1 })
     expect(await auditCount('wallet_deposit')).toBe(4)
@@ -258,6 +267,7 @@ describe('Bybit wallet deposits', () => {
     ).toBe(true)
 
     // A later sync keeps the owner's decisions.
+    vi.setSystemTime(now + 3000)
     await walletTick({ transport })
     expect(
       (await query("SELECT classification FROM wallet_deposits WHERE external_id='tx-paid:0'"))[0],
