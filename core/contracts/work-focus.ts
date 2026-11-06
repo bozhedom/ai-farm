@@ -1,16 +1,20 @@
 import { z } from 'zod'
 
 export const workDirections = [
-  { id: 'trading', name: 'Спотовые трейдеры', detail: 'Биржевые стратегии, сетка и DCA' },
+  {
+    id: 'trading',
+    name: 'Спотовая торговля',
+    detail: 'Подключённые биржи; сетка и DCA — только Paper',
+  },
   {
     id: 'manager',
     name: 'ИИ-менеджер торговли',
     detail: 'Разбор и предложения Paper-экспериментов',
   },
-  { id: 'arbitrage', name: 'Арбитраж', detail: 'Исполнение межбиржевых операций' },
-  { id: 'funding', name: 'Фандинг', detail: 'Хедж спот / perpetual' },
-  { id: 'defi', name: 'DeFi', detail: 'Aave USDC' },
-  { id: 'prediction', name: 'Рынки прогнозов', detail: 'Контракты Kalshi' },
+  { id: 'arbitrage', name: 'Арбитраж', detail: 'Симуляция; Live требует отдельных счетов' },
+  { id: 'funding', name: 'Фандинг', detail: 'Симуляция; Live требует отдельного подключения' },
+  { id: 'defi', name: 'DeFi', detail: 'Симуляция Aave; Live требует кошелька и допуска' },
+  { id: 'prediction', name: 'Рынки прогнозов', detail: 'Kalshi — только после подключения счёта' },
   { id: 'monitor', name: 'Монитор рынков', detail: 'Публичные цены и данные, без сделок' },
   {
     id: 'studio',

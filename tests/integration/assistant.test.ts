@@ -49,6 +49,74 @@ it('keeps useful read-only help during an emergency stop without calling the mod
   expect((await query('SELECT mode FROM system_state'))[0]!.mode).toBe('emergency_stop')
 })
 
+it('fallback reports current test modes, budget blockers and filtered live entries without claiming real execution', async () => {
+  const { ensurePortfolios } = await import('../../core/trading/store')
+  const { directionReadiness } = await import('../../core/earnings/readiness')
+  await ensurePortfolios()
+  await query("UPDATE system_state SET worker_heartbeat=now(),mode='emergency_stop'")
+  await query(
+    "INSERT INTO trading_manager(id,enabled,last_error) VALUES(true,true,'OPENAI_BUDGET_BLOCKED')",
+  )
+  await saveWorkFocus({
+    enabled: true,
+    selected: ['manager', 'monitor'],
+    duration: 'day',
+    revision: 0,
+  })
+  const before = await query(
+    'SELECT exchange,mode,status,capital FROM trading_portfolios ORDER BY exchange,mode',
+  )
+  const reply = await askAssistant(question())
+  expect(reply.source).toBe('guide')
+  expect(reply.text).toContain('Спот · BYBIT: Новые запуски выключены фильтром')
+  expect(reply.text).toContain('Торговый менеджер: Ожидает бюджета')
+  expect(reply.text).toContain('Тестовый режим, реальных операций нет')
+  expect(reply.text.length).toBeLessThanOrEqual(4000)
+  expect(reply.sections).toContain('earnings')
+  expect((await directionReadiness()).find((d) => d.id === 'manager')).toMatchObject({
+    active: false,
+    group: 'test',
+  })
+  expect(
+    await query(
+      'SELECT exchange,mode,status,capital FROM trading_portfolios ORDER BY exchange,mode',
+    ),
+  ).toEqual(before)
+  expect(await query('SELECT id FROM tool_calls')).toHaveLength(0)
+})
+
+it('does not describe old or disabled market data as a working monitor', async () => {
+  const { directionReadiness } = await import('../../core/earnings/readiness')
+  await query('UPDATE system_state SET worker_heartbeat=now()')
+  await query(
+    "INSERT INTO earnings_monitor(id,enabled,finished_at) VALUES(true,true,now()-interval '2 days')",
+  )
+  expect((await directionReadiness()).find((d) => d.id === 'monitor')).toMatchObject({
+    active: false,
+    status: 'на паузе',
+  })
+  await query('UPDATE earnings_monitor SET finished_at=now()')
+  expect((await directionReadiness()).find((d) => d.id === 'monitor')).toMatchObject({
+    active: true,
+    group: 'real',
+  })
+  await query('UPDATE earnings_monitor SET enabled=false')
+  expect((await directionReadiness()).find((d) => d.id === 'monitor')!.active).toBe(false)
+})
+
+it('explains the current section when asked how it works instead of replacing help with a status list', async () => {
+  await query("UPDATE system_state SET mode='emergency_stop'")
+  const reply = await askAssistant({
+    ...question(),
+    question: 'Как работает этот раздел?',
+    section: 'trading-instructions',
+  })
+  expect(reply.source).toBe('guide')
+  expect(reply.text).toContain('Сохранить и применить')
+  expect(reply.text).not.toContain('По текущему состоянию:')
+  expect(reply.sections).toEqual(['trading-instructions'])
+})
+
 it('does not spend past the budget and labels provider failures as a fallback', async () => {
   vi.spyOn(settings, 'config').mockReturnValue({
     ...settings.config(),

@@ -246,7 +246,8 @@ it('shows a budget-blocked browser as inactive without treating it as a technica
   )
   expect((await directionReadiness()).find((r) => r.id === 'computer')).toMatchObject({
     active: false,
-    status: 'работает',
+    status: 'подключено',
+    activity: 'Ожидает бюджета или обновления лимита',
   })
   await query("UPDATE computer_use SET last_error='' WHERE id=true")
   expect((await directionReadiness()).find((r) => r.id === 'computer')!.active).toBe(true)

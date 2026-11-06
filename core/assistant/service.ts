@@ -98,12 +98,22 @@ function guideReply(input: Question, snapshot: Snapshot, reason = ''): Assistant
           : 'режим неизвестен'
   const summary = `Состояние на ${snapshot.at}: ${state}. ${snapshot.workerAlive ? 'Обработчик недавно отвечал.' : 'Свежего подтверждения работы обработчика нет.'} ${snapshot.focus.active ? 'Новые запуски ограничены выбранными направлениями.' : 'Общий фильтр направлений выключен.'}`
   const codeRequest = /код|программ|исходник/i.test(input.question)
+  const asksForState =
+    /сейчас|происходит|запущен/i.test(input.question) ||
+    (!/^как\s/i.test(input.question) && /работает|работают/i.test(input.question))
+  const directionFacts = snapshot.directions
+    .map((item) =>
+      `${item.title}: ${item.activity}. ${item.group === 'test' ? 'Тестовый режим, реальных операций нет.' : item.status === 'требует подключения' ? 'Нужно подключение.' : ''}`.trim(),
+    )
+    .join('\n')
   const text = codeRequest
     ? 'Помощник не изменяет код. Технически отдельный агент разработки может подготовить правки в изолированной копии, но доступ к рабочему серверу и ключам ему не нужен. Правки требуют тестов, проверки человеком и отдельной публикации. Здесь можно сформулировать задачу для разработчика.'
-    : assistantGuide[section]
+    : asksForState
+      ? `По текущему состоянию:\n${directionFacts}\n\nТестовые операции и рыночные наблюдения не являются доходом.`
+      : assistantGuide[section]
   return {
     text: `${text}\n\n${summary}`,
-    sections: [section],
+    sections: asksForState && !codeRequest ? ['earnings', 'trading', 'money'] : [section],
     at: snapshot.at,
     source: 'guide',
     reason,

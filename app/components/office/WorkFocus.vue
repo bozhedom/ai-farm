@@ -52,12 +52,12 @@ function crypto() {
 }
 </script>
 <template>
-  <section id="work-focus" class="card stack-sm focus-card" aria-labelledby="focus-title">
+  <section id="work-focus" class="card focus-card" aria-labelledby="focus-title">
     <div class="focus-heading">
       <div>
-        <h2 id="focus-title">Кто работает сейчас</h2>
+        <h2 id="focus-title">Выбор направлений</h2>
         <p class="small muted">
-          Выберите группы агентов и одним переключателем приостановите остальные направления.
+          Разрешите новые запуски выбранным группам. Их фактическое состояние показано выше.
         </p>
       </div>
       <button
@@ -76,15 +76,17 @@ function crypto() {
         Ограничение действует {{ data.until ? `до ${when(data.until)}` : 'до ручного выключения' }}.
         Затем снова действуют прежние настройки направлений.
       </p>
-      <div class="row focus-actions">
+      <div class="focus-actions">
         <button class="btn btn-sm" :disabled="!!busy" @click="crypto">
           Выбрать криптоторговлю на день
         </button>
-        <label for="focus-duration">Срок</label>
-        <select id="focus-duration" v-model="duration" class="select" @change="dirty = true">
-          <option value="day">24 часа с момента включения</option>
-          <option value="manual">До ручного выключения</option>
-        </select>
+        <div class="field focus-duration">
+          <label for="focus-duration">Срок ограничения</label>
+          <select id="focus-duration" v-model="duration" class="select" @change="dirty = true">
+            <option value="day">24 часа с момента включения</option>
+            <option value="manual">До ручного выключения</option>
+          </select>
+        </div>
       </div>
       <fieldset class="focus-grid" :disabled="!!busy">
         <legend class="sr-only">Разрешённые направления</legend>
@@ -104,10 +106,9 @@ function crypto() {
       >
         Применить выбор и включить
       </button>
-      <p class="small muted">
-        Выбор разрешает работу по действующим настройкам; сам по себе он не запускает остановленных
-        агентов и Live. Уже отправленный запрос может завершиться. Принятые заказы, сверка заявок,
-        закрытие позиций и защитные действия продолжаются. История и бюджеты сохраняются.
+      <p class="small muted focus-help">
+        Галочка разрешает запуск, но не подключает счёт и не снимает остановки. Принятые заказы и
+        защита открытых позиций продолжаются.
       </p>
     </template>
   </section>
@@ -115,6 +116,9 @@ function crypto() {
 <style scoped>
 .focus-card {
   margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 .focus-heading {
   display: flex;
@@ -128,10 +132,17 @@ function crypto() {
   max-width: 620px;
 }
 .focus-actions {
+  display: flex;
+  align-items: end;
+  gap: 16px 24px;
   flex-wrap: wrap;
 }
+.focus-duration {
+  flex: 1 1 260px;
+  max-width: 360px;
+}
 .focus-actions select {
-  width: auto;
+  width: 100%;
   max-width: 100%;
 }
 .focus-grid {
@@ -140,13 +151,13 @@ function crypto() {
   margin: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 12px;
 }
 .focus-choice {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 12px;
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   cursor: pointer;
@@ -156,15 +167,43 @@ function crypto() {
   border-color: var(--ink-2);
 }
 .focus-choice input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
   margin-top: 4px;
+  accent-color: var(--brand);
+}
+.focus-choice span {
+  min-width: 0;
+}
+.focus-choice strong {
+  font-size: 14px;
 }
 .focus-choice small {
   display: block;
   margin-top: 4px;
 }
+.focus-help {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.focus-card > .btn {
+  align-self: flex-start;
+}
+.focus-card .btn {
+  white-space: normal;
+  text-align: center;
+  padding: 10px 16px;
+}
 @media (max-width: 640px) {
   .focus-grid {
     grid-template-columns: 1fr;
+  }
+  .focus-heading > .btn,
+  .focus-actions > .btn,
+  .focus-duration {
+    width: 100%;
+    max-width: none;
   }
 }
 </style>

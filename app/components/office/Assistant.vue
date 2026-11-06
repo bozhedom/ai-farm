@@ -41,6 +41,7 @@ function open() {
   dialog.value?.showModal()
   nextTick(() => input.value?.focus())
 }
+defineExpose({ open })
 async function scroll(reply = false) {
   await nextTick()
   const area = transcript.value
@@ -105,14 +106,6 @@ function hint(text: string) {
 }
 </script>
 <template>
-  <button
-    class="btn btn-primary assistant-launch"
-    aria-haspopup="dialog"
-    aria-controls="office-assistant"
-    @click="open"
-  >
-    <OfficeIcon name="spark" />Помощник
-  </button>
   <dialog
     id="office-assistant"
     ref="dialog"
@@ -231,22 +224,20 @@ function hint(text: string) {
           </button>
         </div>
         <p class="small muted">
-          Вопрос, последние сообщения и сводка состояния передаются настроенной модели в пределах
-          общего бюджета. Не отправляйте секреты. Помощник объясняет работу; настройки, сделки и код
-          он не меняет. Ответ может содержать ошибку; сверяйте важные детали в разделе.
+          Помощник объясняет работу и показывает состояние. Настройки и сделки он не меняет.
         </p>
+        <details class="assistant-privacy small muted">
+          <summary>О данных и расходах</summary>
+          <p>
+            Вопрос, последние сообщения и сводка состояния передаются модели в пределах общего
+            бюджета. Не отправляйте секреты. При недоступной модели показывается справка без ИИ.
+          </p>
+        </details>
       </form>
     </div>
   </dialog>
 </template>
 <style scoped>
-.assistant-launch {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 40;
-  box-shadow: var(--shadow-lg);
-}
 .assistant-dialog {
   position: fixed;
   inset: auto 20px 20px auto;
@@ -322,6 +313,31 @@ function hint(text: string) {
   min-height: 80px;
   max-height: 160px;
 }
+.assistant-form > label {
+  display: block;
+  font-weight: 600;
+}
+.assistant-privacy summary {
+  cursor: pointer;
+}
+.assistant-privacy p {
+  margin-top: 8px;
+}
+.assistant-panel .btn {
+  white-space: normal;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.assistant-welcome {
+  display: grid;
+  gap: 12px;
+}
+.assistant-welcome > * + * {
+  margin-top: 0;
+}
+.assistant-welcome > p {
+  margin-bottom: 8px;
+}
 .assistant-controls {
   display: flex;
   flex-wrap: wrap;
@@ -335,12 +351,6 @@ function hint(text: string) {
 .assistant-welcome > button {
   text-align: left;
   justify-content: flex-start;
-}
-@media (max-width: 1023px) {
-  .assistant-launch {
-    right: 16px;
-    bottom: calc(84px + env(safe-area-inset-bottom));
-  }
 }
 @media (max-width: 600px) {
   .assistant-dialog {

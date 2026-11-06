@@ -200,7 +200,7 @@ function download() {
 }
 </script>
 <template>
-  <div>
+  <div class="agent-workspace">
     <div class="page-head">
       <div>
         <h1>{{ tradingOnly ? 'Инструкции для торговли' : 'Модели и контекст' }}</h1>
@@ -223,8 +223,8 @@ function download() {
     </p>
     <OfficeState v-if="!data" :status="status" :pending="pending" @retry="refresh" />
     <div v-else class="workspace">
-      <section class="card stack-sm">
-        <h2>{{ tradingOnly ? 'Инструкции для трейдеров и менеджера' : 'Настройка роли' }}</h2>
+      <section class="card instruction-card">
+        <h2>{{ tradingOnly ? 'Правила торговли' : 'Настройка роли' }}</h2>
         <template v-if="!tradingOnly">
           <label for="model-role">Роль</label
           ><select
@@ -242,49 +242,56 @@ function download() {
             отдельными моделями.
           </p>
         </template>
-        <form v-if="active" class="stack-sm" @submit.prevent="save">
+        <form v-if="active" class="workspace-form" @submit.prevent="save">
           <OfficeState
             v-if="managesTrading && !appliedInstructions"
             :status="instructionsStatus"
             :pending="instructionsPending"
             @retry="refreshInstructions"
           />
-          <label for="role-model">Модель</label>
-          <select
-            id="role-model"
-            v-model="model"
-            class="select"
-            :disabled="!!busy || !data.switchAvailable"
-            @change="dirty = true"
-          >
-            <option value="">Серверная по умолчанию · {{ data.defaultModel }}</option>
-            <option v-if="model && !models.some((m) => m.id === model)" :value="model">
-              {{ model }}
-            </option>
-            <option
-              v-for="m in models.filter((m) => selected !== 'browser' || m.browser)"
-              :key="m.id"
-              :value="m.id"
-            >
-              {{ m.name }} · {{ m.id }}
-            </option>
-          </select>
-          <button
-            v-if="data.switchAvailable"
-            type="button"
-            class="btn btn-sm"
-            :disabled="!!busy"
-            @click="catalog"
-          >
-            {{ catalogLoaded ? 'Обновить каталог моделей' : 'Загрузить доступные модели' }}
-          </button>
-          <p class="small muted">
-            {{
-              data.switchAvailable
-                ? 'Список содержит модели с нужным форматом ответа и в пределах тарифа сервера. Браузеру дополнительно нужны изображения и вызов функций. Доступность конкретного маршрута проверяется провайдером при запросе.'
-                : 'Выбор модели доступен при подключении платного OpenRouter на сервере.'
-            }}
-          </p>
+          <details class="model-settings" :open="!tradingOnly">
+            <summary>
+              {{ tradingOnly ? 'Модель для разбора и анализа' : 'Модель для роли' }}
+            </summary>
+            <div class="workspace-form">
+              <label for="role-model">Модель</label>
+              <select
+                id="role-model"
+                v-model="model"
+                class="select"
+                :disabled="!!busy || !data.switchAvailable"
+                @change="dirty = true"
+              >
+                <option value="">Серверная по умолчанию · {{ data.defaultModel }}</option>
+                <option v-if="model && !models.some((m) => m.id === model)" :value="model">
+                  {{ model }}
+                </option>
+                <option
+                  v-for="m in models.filter((m) => selected !== 'browser' || m.browser)"
+                  :key="m.id"
+                  :value="m.id"
+                >
+                  {{ m.name }} · {{ m.id }}
+                </option>
+              </select>
+              <button
+                v-if="data.switchAvailable"
+                type="button"
+                class="btn btn-sm"
+                :disabled="!!busy"
+                @click="catalog"
+              >
+                {{ catalogLoaded ? 'Обновить каталог моделей' : 'Загрузить доступные модели' }}
+              </button>
+              <p class="small muted">
+                {{
+                  data.switchAvailable
+                    ? 'Список содержит модели с нужным форматом ответа и в пределах тарифа сервера. Браузеру дополнительно нужны изображения и вызов функций. Доступность конкретного маршрута проверяется провайдером при запросе.'
+                    : 'Выбор модели доступен при подключении платного OpenRouter на сервере.'
+                }}
+              </p>
+            </div>
+          </details>
           <label for="role-instruction">{{
             tradingOnly ? 'Правила торговли, ограничения и подход' : 'Ваши инструкции для роли'
           }}</label
@@ -340,7 +347,7 @@ function download() {
         </form>
         <section
           v-if="managesTrading && appliedInstructions"
-          class="stack-sm"
+          class="applied-rules"
           aria-label="Применённые торговые инструкции"
           aria-live="polite"
         >
@@ -407,7 +414,7 @@ function download() {
           </p>
         </details>
       </section>
-      <section id="context" class="card stack-sm">
+      <section id="context" class="card context-card">
         <h2>{{ tradingOnly ? 'Материалы для торговли' : 'Контекст для агента' }}</h2>
         <p class="small muted">
           {{
@@ -418,7 +425,7 @@ function download() {
           Материалы передаются выбранному провайдеру модели. Не загружайте пароли и ключи. До 20
           записей и 16 000 символов суммарно.
         </p>
-        <form class="stack-sm" @submit.prevent="add">
+        <form class="workspace-form" @submit.prevent="add">
           <template v-if="!tradingOnly">
             <label for="context-target">Кому передать</label
             ><select id="context-target" v-model="target" class="select">
@@ -426,8 +433,14 @@ function download() {
               <option v-for="r in data.roles" :key="r.id" :value="r.id">{{ r.name }}</option>
             </select>
           </template>
-          <label for="context-file">Загрузить текстовый файл</label
-          ><input id="context-file" type="file" accept=".txt,.md,.csv" @change="upload" />
+          <label for="context-file" class="file-upload">
+            <OfficeIcon name="report" />
+            <span
+              ><strong>Загрузить текстовый файл</strong
+              ><small>TXT, Markdown или CSV · до 12 КБ</small></span
+            >
+            <input id="context-file" type="file" accept=".txt,.md,.csv" @change="upload" />
+          </label>
           <p v-if="fileError" class="error" role="alert">{{ fileError }}</p>
           <label for="context-title">Название</label
           ><input id="context-title" v-model="title" class="input" maxlength="120" required />
@@ -459,7 +472,7 @@ function download() {
             Удалить контекст
           </button>
         </article>
-        <p v-if="!visibleContexts.length" class="muted">Контекста пока нет.</p>
+        <p v-if="!visibleContexts.length" class="context-empty">Материалы пока не добавлены.</p>
         <p class="small muted">
           Удалённый материал больше не добавляется в новые запуски. Уже начатая задача, результаты и
           резервные копии могут сохранять ранее полученные данные.
@@ -469,12 +482,146 @@ function download() {
   </div>
 </template>
 <style scoped>
+.agent-workspace {
+  max-width: 1160px;
+}
+.workspace > .card {
+  min-width: 0;
+  padding: 28px;
+}
+.workspace h2 {
+  margin-bottom: 20px;
+}
+.instruction-card > label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.instruction-card > .small {
+  margin: 12px 0 24px;
+}
+.workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.workspace-form > label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+.workspace-form > .btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.workspace-form > .small {
+  line-height: 1.6;
+}
+.model-settings {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--canvas);
+}
+.model-settings[open] > summary {
+  margin-bottom: 16px;
+}
+.workspace details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.workspace details > p,
+.workspace details > pre {
+  margin-top: 14px;
+}
+.workspace details > pre {
+  background: var(--canvas);
+  padding: 16px;
+  border-radius: var(--r-sm);
+}
+.applied-rules {
+  margin-top: 28px;
+  padding: 20px;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.applied-rules > * + * {
+  margin-top: 16px;
+}
+.applied-rules h3 {
+  font-size: 16px;
+  line-height: 1.5;
+}
+.applied-rules li + li {
+  margin-top: 8px;
+}
+.instruction-card > details {
+  margin-top: 24px;
+}
+.context-card > .small {
+  margin-bottom: 24px;
+}
+.context-card > p:last-child {
+  margin-top: 16px;
+}
+.file-upload {
+  position: relative;
+  display: flex !important;
+  align-items: center;
+  gap: 14px;
+  padding: 20px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--canvas);
+  cursor: pointer;
+}
+.file-upload:focus-within {
+  box-shadow: var(--ring);
+}
+.file-upload small {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.file-upload .icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.file-upload input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.context-empty {
+  margin-top: 24px;
+  padding: 16px;
+  text-align: center;
+  border-radius: var(--r-md);
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: 14px;
+}
+.agent-workspace .btn {
+  white-space: normal;
+  text-align: center;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
 .guidance-note {
   margin-bottom: 24px;
 }
 .workspace {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 24px;
   align-items: start;
 }
@@ -488,13 +635,28 @@ pre {
 .context-item {
   border-top: 1px solid var(--line);
   padding-top: 16px;
+  margin-top: 24px;
 }
 input[type='file'] {
   max-width: 100%;
 }
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .workspace {
     grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .workspace > .card {
+    padding: 20px;
+  }
+  .applied-rules {
+    padding: 16px;
+  }
+  .agent-workspace .page-head > .btn {
+    width: 100%;
+  }
+  .workspace-form > .btn {
+    width: 100%;
   }
 }
 </style>
