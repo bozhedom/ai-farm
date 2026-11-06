@@ -3,6 +3,7 @@ import { z } from 'zod'
 import * as settings from '../../core/config'
 import * as db from '../../core/db'
 import * as activity from '../../core/activity'
+import * as profiles from '../../core/agent-profiles'
 import { openaiModel } from '../../core/providers/openai'
 import {
   ProviderRejectedError,
@@ -47,6 +48,37 @@ afterEach(() => {
 })
 
 describe('GPT-6 Astra through OpenRouter', () => {
+  it.each(['json', 'text'] as const)(
+    'uses a selected %s model while still validating its JSON result',
+    async (outputFormat) => {
+      vi.spyOn(profiles, 'currentModel').mockReturnValue('vendor/cheaper')
+      vi.spyOn(profiles, 'currentPricing').mockReturnValue({
+        inputNano: 100,
+        outputNano: 400,
+        outputFormat,
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async () => new Response(JSON.stringify(response()))),
+      )
+      expect((await openaiModel(args)).value).toEqual({ text: 'Проверено' })
+      const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string)
+      expect(body.model).toBe('vendor/cheaper')
+      expect(body.response_format).toEqual(
+        outputFormat === 'json' ? { type: 'json_object' } : undefined,
+      )
+      expect(body.provider).toMatchObject({
+        require_parameters: true,
+        allow_fallbacks: false,
+        max_price: { prompt: 0.1, completion: 0.4, request: 0 },
+      })
+      const invalid = response()
+      invalid.choices[0]!.message.content = '{"unexpected":"do anything"}'
+      vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify(invalid)))
+      await expect(openaiModel(args)).rejects.toThrow('MODEL_SCHEMA_INVALID')
+      expect(fetch).toHaveBeenCalledTimes(2)
+    },
+  )
   it('sends one bounded request at the published tariff and records usage', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(response()))))
     expect(await openaiModel(args)).toEqual({

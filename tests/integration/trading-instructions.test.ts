@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { pool, query } from '../../core/db'
 import * as settings from '../../core/config'
-import { addContext, profilesView } from '../../core/agent-profiles'
+import {
+  addContext,
+  profilesView,
+  roleModel,
+  rolePricing,
+  withAgentProfiles,
+} from '../../core/agent-profiles'
 import { applyTradingInstructions } from '../../core/trading/instructions'
 import { tradingInstructions } from '../../core/trading/owner-rules'
 import { defaultTradingRules } from '../../core/contracts/trading-instructions'
@@ -10,7 +16,10 @@ import { applyMigrations, resetDatabase } from './helpers/db'
 
 beforeAll(applyMigrations)
 beforeEach(() => resetDatabase())
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 afterAll(() => pool.end())
 const input = (instruction: string, revision = 0) => ({
   requestId: randomUUID(),
@@ -88,6 +97,55 @@ it('uses a validated model interpretation and preserves old rules if any part is
   )
   expect(rejected.applied).toBe(false)
   expect((await tradingInstructions()).rules.maxOrderUsdt).toBe('8')
+})
+
+it('uses the newly selected cheap model for interpretation before the profile is saved', async () => {
+  vi.spyOn(settings, 'config').mockReturnValue({
+    ...settings.config(),
+    MODEL_PROVIDER: 'openai',
+    OPENAI_TRANSPORT: 'openrouter',
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'vendor/cheap',
+              name: 'Cheap',
+              context_length: 128000,
+              pricing: { prompt: '0.0000001', completion: '0.0000004' },
+              supported_parameters: ['structured_outputs'],
+            },
+          ],
+        }),
+      ),
+    ),
+  )
+  const interpreter = vi.fn(async () => {
+    expect(roleModel('Разбор торговых инструкций')).toBe('vendor/cheap')
+    expect(rolePricing('Разбор торговых инструкций')).toMatchObject({
+      inputNano: 100,
+      outputNano: 400,
+    })
+    expect(await query("SELECT * FROM agent_profiles WHERE role='manager'")).toHaveLength(0)
+    return {
+      rules: { ...defaultTradingRules(), blockedSymbols: ['BTC-USDT'] },
+      managerNotes: [],
+      issues: [],
+    }
+  })
+  const reply = await applyTradingInstructions(
+    { ...input('Избегай входов в биткоин.'), model: 'vendor/cheap' },
+    interpreter,
+  )
+  expect(reply.applied).toBe(true)
+  expect(interpreter).toHaveBeenCalledOnce()
+  await withAgentProfiles(async () => {
+    expect(roleModel('Разбор торговых инструкций')).toBe('vendor/cheap')
+    expect(roleModel('Торговый менеджер')).toBe('vendor/cheap')
+  })
 })
 
 it('does not overwrite a newer profile when instructions change while the model is thinking', async () => {

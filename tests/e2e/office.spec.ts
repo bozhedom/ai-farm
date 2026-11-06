@@ -74,6 +74,13 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     }
     if (request.method() === 'POST') {
       posted.push({ url: path, body: request.postDataJSON() })
+      if (path === '/api/office/models/model') {
+        const body = request.postDataJSON()
+        const role = modelView.roles.find((r) => r.id === body.role)!
+        Object.assign(role, { model: body.model, revision: body.revision + 1 })
+        if (body.role === 'manager') instructions.profileRevision = role.revision
+        return json(route, { revision: role.revision })
+      }
       if (path === '/api/office/models/context')
         modelView.contexts.push({ id: 'ctx-1', ...request.postDataJSON() })
       if (path === '/api/office/models' || path === '/api/office/trading-instructions') {
@@ -112,7 +119,20 @@ async function stubOffice(page: Page, fx: OfficeFixtures, options: { offline?: b
     if (path === '/api/office/models') return json(route, modelView)
     if (path === '/api/office/trading-instructions') return json(route, instructions)
     if (path === '/api/office/models/catalog')
-      return json(route, [{ id: 'vendor/eligible', name: 'Доступная модель', browser: true }])
+      return json(route, [
+        {
+          id: 'vendor/eligible',
+          name: 'Доступная модель',
+          browser: true,
+          pricing: { inputNano: 100, outputNano: 400, contextLength: 128000 },
+        },
+        {
+          id: 'vendor/small:free',
+          name: 'Бесплатная модель',
+          browser: false,
+          pricing: { inputNano: 0, outputNano: 0, contextLength: 32000 },
+        },
+      ])
     if (path === '/api/office/directions')
       return json(route, [
         {
@@ -677,7 +697,7 @@ test('owner changes a role model, uploads manager context and deletes it', async
   const posted = await stubOffice(page, fx)
   await page.goto('/office/models?role=manager')
   await expect(page.getByLabel('Роль', { exact: true })).toHaveValue('manager')
-  await page.getByRole('button', { name: 'Загрузить доступные модели' }).click()
+  await expect(page.locator('#role-model option[value="vendor/eligible"]')).toHaveCount(1)
   await page.getByLabel('Модель', { exact: true }).selectOption('vendor/eligible')
   await page
     .getByLabel('Ваши инструкции для роли')
@@ -699,6 +719,33 @@ test('owner changes a role model, uploads manager context and deletes it', async
     .toMatchObject({ role: 'manager', content: 'Наблюдаем комиссии на бумажном портфеле.' })
   await page.getByRole('button', { name: 'Удалить контекст' }).click()
   await expect(page.locator('.context-item')).toHaveCount(0)
+})
+
+test('trading model catalog loads automatically and changing a model preserves unapplied text and rules', async ({
+  page,
+}) => {
+  const errors = watchConsole(page)
+  const posted = await stubOffice(page, fx)
+  await page.goto('/office/trading-instructions')
+  await expect(page.locator('#role-model option[value="vendor/small:free"]')).toHaveCount(1)
+  const instruction = page.getByLabel('Правила торговли, ограничения и подход')
+  await instruction.fill('Не покупать BTC')
+  await page.getByLabel('Поиск модели OpenRouter').fill('small:free')
+  await expect(page.locator('#role-model option[value="vendor/eligible"]')).toHaveCount(0)
+  await page.getByLabel('Модель', { exact: true }).selectOption('vendor/small:free')
+  await page.getByRole('button', { name: 'Сохранить модель', exact: true }).click()
+  await expect
+    .poll(() => posted.find((p) => p.url === '/api/office/models/model')?.body)
+    .toEqual({ role: 'manager', model: 'vendor/small:free', revision: 0 })
+  await expect(instruction).toHaveValue('Не покупать BTC')
+  expect(posted.filter((p) => p.url === '/api/office/trading-instructions')).toHaveLength(0)
+  await page.reload()
+  await expect(page.getByLabel('Модель', { exact: true })).toHaveValue('vendor/small:free')
+  await expect(instruction).toHaveValue('')
+  await expect(
+    page.getByRole('heading', { name: 'Дополнительные торговые правила пока не применены' }),
+  ).toBeVisible()
+  expect(errors).toEqual([])
 })
 
 test('waiting idea exposes revision and a human decision', async ({ page }) => {

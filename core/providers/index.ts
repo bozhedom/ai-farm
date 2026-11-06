@@ -248,8 +248,13 @@ export function prepareModelRequest<T>(args: ModelArgs<T>) {
       'utf8',
     ) + 2048
   if (upperInput > 100000) throw new Error('CONTEXT_TOO_LARGE')
+  const selectedPricing = rolePricing(args.role)
+  if (selectedPricing?.contextLength && upperInput + maxTokens > selectedPricing.contextLength)
+    throw new Error('MODEL_CONTEXT_TOO_SMALL')
+  if (selectedPricing?.maxOutputTokens && maxTokens > selectedPricing.maxOutputTokens)
+    throw new Error('MODEL_OUTPUT_TOO_SMALL')
   const maximumMicrousd =
-    c.MODEL_PROVIDER === 'openai' ? openaiMaximum(upperInput, maxTokens, rolePricing(args.role)) : 0
+    c.MODEL_PROVIDER === 'openai' ? openaiMaximum(upperInput, maxTokens, selectedPricing) : 0
   const maximum =
     c.MODEL_PROVIDER === 'openai'
       ? usdToKopecks(maximumMicrousd, c.OPENAI_USD_KOPECKS)

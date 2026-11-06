@@ -7,7 +7,7 @@ import {
   prepareProfile,
   profileSchema,
   savePreparedProfile,
-  withAgentProfiles,
+  withPreparedProfile,
 } from '../agent-profiles'
 import { model, prepareModelRequest } from '../providers'
 import { TRADING_INSTRUCTION_POLICY as P } from '../policy'
@@ -178,7 +178,7 @@ export async function applyTradingInstructions(
       if (config().MODEL_PROVIDER === 'demo')
         parsed = interpretationArgs(input.instruction, requestId, '').demoValue
       else
-        parsed = await withAgentProfiles(async () => {
+        parsed = await withPreparedProfile(prepared, async () => {
           const [state] = await query('SELECT mode FROM system_state WHERE id=true')
           if (state?.mode === 'emergency_stop') throw new Error('STOPPED')
           if (
@@ -193,7 +193,7 @@ export async function applyTradingInstructions(
           return instructionInterpretationSchema.parse(
             await interpreter(input.instruction, requestId, reservationId),
           )
-        }, true)
+        })
     }
     const rules = validateTradingRules(parsed.rules)
     if (

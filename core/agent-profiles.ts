@@ -19,7 +19,14 @@ export const modelRoles = [
   { id: 'platform-writer', name: 'Исполнитель заданий площадки' },
 ] as const
 export const roleId = z.enum(modelRoles.map((r) => r.id))
-export type ModelPricing = { inputNano: number; outputNano: number }
+export type ModelPricing = {
+  inputNano: number
+  outputNano: number
+  cacheWriteNano?: number
+  contextLength?: number
+  maxOutputTokens?: number | null
+  outputFormat?: 'schema' | 'json' | 'text'
+}
 type Profile = {
   role: string
   instruction: string
@@ -32,6 +39,8 @@ type Snapshot = { profiles: Profile[]; contexts: Context[] }
 const runtime = new AsyncLocalStorage<Snapshot>()
 const roleRuntime = new AsyncLocalStorage<string>()
 const definition = (role: string) => modelRoles.find((r) => r.id === role || r.name === role)
+const modelRole = (role: string) =>
+  role === 'Разбор торговых инструкций' ? 'manager' : definition(role)?.id
 export const masterPrompt = () => readFileSync('prompts/master.md', 'utf8')
 export function roleInstruction(role: string) {
   if (role === 'Разбор торговых инструкций')
@@ -56,13 +65,11 @@ export function roleContext(role: string) {
 export function roleModel(role: string) {
   const c = config()
   if (c.MODEL_PROVIDER !== 'openai' || c.OPENAI_TRANSPORT !== 'openrouter') return ''
-  return runtime.getStore()?.profiles.find((p) => p.role === definition(role)?.id)?.model || ''
+  return runtime.getStore()?.profiles.find((p) => p.role === modelRole(role))?.model || ''
 }
 export function rolePricing(role: string) {
   if (!roleModel(role)) return undefined
-  return (
-    runtime.getStore()?.profiles.find((p) => p.role === definition(role)?.id)?.pricing ?? undefined
-  )
+  return runtime.getStore()?.profiles.find((p) => p.role === modelRole(role))?.pricing ?? undefined
 }
 export function currentPricing() {
   return rolePricing(roleRuntime.getStore() ?? '')
@@ -87,10 +94,11 @@ export const profileSchema = z
       .string()
       .trim()
       .max(160)
-      .regex(/^(?:[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:/-]+)?$/),
+      .regex(/^(?:~?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:/-]+)?$/),
     revision: z.number().int().nonnegative(),
   })
   .strict()
+export const modelSelectionSchema = profileSchema.pick({ role: true, model: true, revision: true })
 export const contextSchema = z
   .object({
     role: z.union([roleId, z.literal('all')]),
@@ -106,7 +114,7 @@ export const contextSchema = z
 
 /** Dollars per token to integer nanodollars, rounded upward. No floating point accounting. */
 export function priceNano(value: string): number | null {
-  if (!/^\d{1,6}(?:\.\d{1,18})?$/.test(value)) return null
+  if (!/^\d{1,6}(?:\.\d{1,64})?$/.test(value)) return null
   const [whole, fraction = ''] = value.split('.')
   const exact = BigInt(whole!) * 1000000000n + BigInt(fraction.padEnd(9, '0').slice(0, 9))
   const rounded = exact + (/[1-9]/.test(fraction.slice(9)) ? 1n : 0n)
@@ -133,37 +141,104 @@ export async function availableModels() {
             prompt: z.string(),
             completion: z.string(),
             request: z.string().optional(),
+            input_cache_write: z.string().optional(),
           }),
           supported_parameters: z.array(z.string()).optional(),
-          architecture: z.object({ input_modalities: z.array(z.string()) }).optional(),
+          architecture: z
+            .object({
+              input_modalities: z.array(z.string()),
+              output_modalities: z.array(z.string()).optional(),
+            })
+            .optional(),
+          top_provider: z
+            .object({ max_completion_tokens: z.number().int().positive().nullable().optional() })
+            .optional(),
         }),
       ),
     })
     .parse(JSON.parse(raw))
   return data.data.flatMap((m) => {
     const inputNano = priceNano(m.pricing.prompt),
-      outputNano = priceNano(m.pricing.completion)
+      outputNano = priceNano(m.pricing.completion),
+      cacheWriteNano = priceNano(m.pricing.input_cache_write ?? m.pricing.prompt)
     if (
       inputNano === null ||
       outputNano === null ||
-      inputNano > 10000 ||
-      outputNano > 50000 ||
+      cacheWriteNano === null ||
       priceNano(m.pricing.request ?? '0') !== 0 ||
-      m.context_length < 100000 ||
-      !m.supported_parameters?.includes('structured_outputs') ||
-      m.id.includes(':free')
+      !Number.isSafeInteger(m.context_length) ||
+      m.context_length <= 0 ||
+      !profileSchema.shape.model.safeParse(m.id).success ||
+      (m.architecture && !m.architecture.input_modalities.includes('text')) ||
+      (m.architecture?.output_modalities && !m.architecture.output_modalities.includes('text'))
     )
       return []
     return [
       {
         id: m.id,
         name: m.name,
-        pricing: { inputNano, outputNano },
+        pricing: {
+          inputNano,
+          outputNano,
+          cacheWriteNano,
+          contextLength: m.context_length,
+          maxOutputTokens: m.top_provider?.max_completion_tokens ?? null,
+          outputFormat: m.supported_parameters?.includes('structured_outputs')
+            ? ('schema' as const)
+            : m.supported_parameters?.includes('response_format')
+              ? ('json' as const)
+              : ('text' as const),
+        },
         browser:
           !!m.architecture?.input_modalities.includes('image') &&
           !!m.supported_parameters?.includes('tools'),
       },
     ]
+  })
+}
+
+/** Use the pending choice for interpretation before atomically saving the validated rules. */
+export async function withPreparedProfile<T>(
+  prepared: Awaited<ReturnType<typeof prepareProfile>>,
+  work: () => Promise<T>,
+) {
+  return withAgentProfiles(() => {
+    const snapshot = runtime.getStore()!
+    return runtime.run(
+      {
+        ...snapshot,
+        profiles: [
+          ...snapshot.profiles.filter((p) => p.role !== prepared.input.role),
+          { ...prepared.input, pricing: prepared.pricing },
+        ],
+      },
+      work,
+    )
+  }, true)
+}
+
+/** Changing a model must not recompile text or change already applied trading rules. */
+export async function saveModelSelection(value: unknown) {
+  const input = modelSelectionSchema.parse(value)
+  const prepared = await prepareProfile({ ...input, instruction: '' })
+  return transaction(async (db) => {
+    await query('SELECT pg_advisory_xact_lock(735097)', [], db)
+    const [old] = await query(
+      'SELECT instruction,revision FROM agent_profiles WHERE role=$1',
+      [input.role],
+      db,
+    )
+    await savePreparedProfile(
+      { ...prepared, input: { ...prepared.input, instruction: old?.instruction ?? '' } },
+      db,
+    )
+    if (input.role === 'manager')
+      await query(
+        'UPDATE trading_instructions SET profile_revision=$1 WHERE id=true AND profile_revision=$2',
+        [input.revision + 1, input.revision],
+        db,
+      )
+    return { revision: input.revision + 1 }
   })
 }
 export async function prepareProfile(value: unknown) {

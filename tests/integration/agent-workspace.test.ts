@@ -13,7 +13,10 @@ import {
   withModelRole,
   currentModel,
   roleContext,
+  saveModelSelection,
 } from '../../core/agent-profiles'
+import { applyTradingInstructions } from '../../core/trading/instructions'
+import { tradingInstructions } from '../../core/trading/owner-rules'
 import { prepareModelRequest } from '../../core/providers'
 import { paidRequestEnvelope } from '../../core/providers/openrouter-paid'
 import { reviewSchema } from '../../core/policy'
@@ -26,7 +29,10 @@ import * as settings from '../../core/config'
 
 beforeAll(applyMigrations)
 beforeEach(() => resetDatabase())
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 afterAll(() => pool.end())
 
 it('passes role instructions and scoped context into the actual costed request, and deletes future context', async () => {
@@ -132,6 +138,95 @@ it('changes the real OpenRouter envelope per role without relaxing its price or 
   } finally {
     vi.unstubAllGlobals()
   }
+})
+
+it('changes a trading model with an exhausted budget without applying text or altering trading rules', async () => {
+  await applyTradingInstructions({
+    role: 'manager',
+    instruction: 'Не покупать BTC',
+    model: '',
+    revision: 0,
+    instructionsRevision: 0,
+    requestId: randomUUID(),
+  })
+  const rules = await tradingInstructions()
+  vi.spyOn(settings, 'config').mockReturnValue({
+    ...settings.config(),
+    MODEL_PROVIDER: 'openai',
+    OPENAI_TRANSPORT: 'openrouter',
+    OPENAI_TOTAL_BUDGET_MICROUSD: 0,
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'vendor/cheap',
+              name: 'Cheap',
+              context_length: 32000,
+              pricing: { prompt: '0.0000001', completion: '0.0000004' },
+              supported_parameters: ['structured_outputs'],
+            },
+          ],
+        }),
+      ),
+    ),
+  )
+  const changed = await saveModelSelection({ role: 'manager', model: 'vendor/cheap', revision: 1 })
+  expect(changed.revision).toBe(2)
+  expect(await tradingInstructions()).toEqual({ ...rules, profileRevision: 2 })
+  expect((await profilesView()).roles.find((r) => r.id === 'manager')).toMatchObject({
+    instruction: 'Не покупать BTC',
+    model: 'vendor/cheap',
+    revision: 2,
+  })
+  expect(await query('SELECT * FROM tool_calls')).toHaveLength(0)
+  await expect(saveModelSelection({ role: 'manager', model: '', revision: 1 })).rejects.toThrow(
+    'PROFILE_CHANGED',
+  )
+  expect((await tradingInstructions()).rules).toEqual(rules.rules)
+})
+
+it('admits a small-context model but refuses an oversized request before making a paid call', async () => {
+  vi.spyOn(settings, 'config').mockReturnValue({
+    ...settings.config(),
+    MODEL_PROVIDER: 'openai',
+    OPENAI_TRANSPORT: 'openrouter',
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'vendor/tiny',
+              name: 'Tiny',
+              context_length: 2048,
+              pricing: { prompt: '0', completion: '0' },
+            },
+          ],
+        }),
+      ),
+    ),
+  )
+  await saveModelSelection({ role: 'critic', model: 'vendor/tiny', revision: 0 })
+  await withAgentProfiles(async () => {
+    expect(() =>
+      prepareModelRequest({
+        role: 'Критик',
+        key: 'tiny',
+        reservationId: '',
+        context: {},
+        schema: reviewSchema,
+        demoValue: { verdict: 'PASS', reason: '' },
+      }),
+    ).toThrow('MODEL_CONTEXT_TOO_SMALL')
+  })
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(await query('SELECT * FROM tool_calls')).toHaveLength(0)
 })
 
 it('enforces owner money ceilings in the ledger and keeps server maxima', async () => {

@@ -62,8 +62,38 @@ const instruction = ref('')
 const model = ref('')
 const revision = ref(0)
 const dirty = ref(false)
-const models = ref<{ id: string; name: string; browser: boolean }[]>([])
+type CatalogModel = {
+  id: string
+  name: string
+  browser: boolean
+  pricing: { inputNano: number; outputNano: number; contextLength: number }
+}
+const models = ref<CatalogModel[]>([])
 const catalogLoaded = ref(false)
+const catalogLoading = ref(false)
+const catalogError = ref('')
+const modelSearch = ref('')
+const filteredModels = computed(() => {
+  const search = modelSearch.value.trim().toLocaleLowerCase()
+  return models.value
+    .filter(
+      (m) =>
+        (selected.value !== 'browser' || m.browser) &&
+        (!search || `${m.id} ${m.name}`.toLocaleLowerCase().includes(search)),
+    )
+    .slice()
+    .sort(
+      (a, b) =>
+        a.pricing.inputNano + a.pricing.outputNano - (b.pricing.inputNano + b.pricing.outputNano) ||
+        a.name.localeCompare(b.name),
+    )
+})
+const selectedModel = computed(() => models.value.find((m) => m.id === model.value))
+const modelChanged = computed(() => model.value !== (active.value?.model ?? ''))
+const modelPrice = (nano: number) =>
+  new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(nano / 1000)
+const modelLabel = (m: CatalogModel) =>
+  `${m.name} · ${m.id} · $${modelPrice(m.pricing.inputNano)} / $${modelPrice(m.pricing.outputNano)}`
 watch(
   active,
   (value) => {
@@ -79,13 +109,41 @@ function choose(event: Event) {
   selected.value = (event.target as HTMLSelectElement).value
 }
 async function catalog() {
+  if (catalogLoading.value) return
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    models.value = await officeFetch('/api/office/models/catalog', { timeout: 20000 })
+    catalogLoaded.value = true
+  } catch (error) {
+    catalogError.value = describeError(error).text
+  } finally {
+    catalogLoading.value = false
+  }
+}
+watch(
+  () => data.value?.switchAvailable,
+  (available) => {
+    if (available && !catalogLoaded.value) void catalog()
+  },
+  { immediate: true },
+)
+async function saveModel() {
   await run(
-    'catalog',
+    'model',
     async () => {
-      models.value = await officeFetch('/api/office/models/catalog')
-      catalogLoaded.value = true
+      const result = await officeFetch<{ revision: number }>('/api/office/models/model', {
+        method: 'POST',
+        body: { role: selected.value, model: model.value, revision: revision.value },
+        timeout: 20000,
+      })
+      revision.value = result.revision
+      pendingApply = null
+      dirty.value = instruction.value !== (active.value?.instruction ?? '')
+      await refresh()
+      if (managesTrading.value) await refreshInstructions()
     },
-    'Каталог обновлён.',
+    'Модель сохранена. Следующие запросы используют её; действующие торговые правила сохранены.',
   )
 }
 async function save() {
@@ -249,11 +307,20 @@ function download() {
             :pending="instructionsPending"
             @retry="refreshInstructions"
           />
-          <details class="model-settings" :open="!tradingOnly">
+          <details class="model-settings" open>
             <summary>
               {{ tradingOnly ? 'Модель для разбора и анализа' : 'Модель для роли' }}
             </summary>
             <div class="workspace-form">
+              <label v-if="data.switchAvailable" for="model-search">Поиск модели OpenRouter</label>
+              <input
+                v-if="data.switchAvailable"
+                id="model-search"
+                v-model="modelSearch"
+                type="search"
+                class="input"
+                placeholder="Например: Gemini, Qwen, Claude или ID модели"
+              />
               <label for="role-model">Модель</label>
               <select
                 id="role-model"
@@ -263,30 +330,52 @@ function download() {
                 @change="dirty = true"
               >
                 <option value="">Серверная по умолчанию · {{ data.defaultModel }}</option>
-                <option v-if="model && !models.some((m) => m.id === model)" :value="model">
-                  {{ model }}
+                <option v-if="model && !filteredModels.some((m) => m.id === model)" :value="model">
+                  {{ selectedModel ? modelLabel(selectedModel) : model }}
                 </option>
-                <option
-                  v-for="m in models.filter((m) => selected !== 'browser' || m.browser)"
-                  :key="m.id"
-                  :value="m.id"
-                >
-                  {{ m.name }} · {{ m.id }}
+                <option v-for="m in filteredModels" :key="m.id" :value="m.id">
+                  {{ modelLabel(m) }}
                 </option>
               </select>
               <button
                 v-if="data.switchAvailable"
                 type="button"
                 class="btn btn-sm"
-                :disabled="!!busy"
+                :disabled="!!busy || catalogLoading"
                 @click="catalog"
               >
-                {{ catalogLoaded ? 'Обновить каталог моделей' : 'Загрузить доступные модели' }}
+                {{
+                  catalogLoading
+                    ? 'Загрузка каталога…'
+                    : catalogLoaded
+                      ? 'Обновить каталог моделей'
+                      : 'Загрузить доступные модели'
+                }}
+              </button>
+              <p v-if="catalogError" class="note note-error" role="alert">{{ catalogError }}</p>
+              <p v-if="catalogLoaded" class="small muted">
+                Найдено: {{ filteredModels.length }}. Цены в USD за миллион токенов входа / выхода;
+                сначала показаны самые дешёвые модели.
+              </p>
+              <p v-if="selectedModel" class="small muted">
+                Выбрана {{ selectedModel.name }}. Вход: ${{
+                  modelPrice(selectedModel.pricing.inputNano)
+                }}, выход: ${{ modelPrice(selectedModel.pricing.outputNano) }} за миллион токенов.
+                Контекст: {{ selectedModel.pricing.contextLength.toLocaleString('ru-RU') }} токенов.
+              </p>
+              <button
+                v-if="data.switchAvailable"
+                type="button"
+                class="btn btn-primary"
+                :disabled="!!busy || !modelChanged"
+                @click="saveModel"
+              >
+                Сохранить модель
               </button>
               <p class="small muted">
                 {{
                   data.switchAvailable
-                    ? 'Список содержит модели с нужным форматом ответа и в пределах тарифа сервера. Браузеру дополнительно нужны изображения и вызов функций. Доступность конкретного маршрута проверяется провайдером при запросе.'
+                    ? 'Все текстовые модели OpenRouter с известным тарифом, включая бесплатные. Браузеру дополнительно нужны изображения и вызов функций. Ответы проверяются сервером; доступность модели зависит от провайдера, размера запроса и действующих бюджетов. Сохранение модели не применяет и не меняет текстовые правила.'
                     : 'Выбор модели доступен при подключении платного OpenRouter на сервере.'
                 }}
               </p>

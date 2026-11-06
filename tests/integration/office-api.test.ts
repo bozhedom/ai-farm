@@ -5,6 +5,7 @@ import focusPost from '../../server/api/office/focus.post'
 import assistantPost from '../../server/api/office/assistant.post'
 import profilesGet from '../../server/api/office/models/index.get'
 import profilesPost from '../../server/api/office/models/index.post'
+import modelSelectionPost from '../../server/api/office/models/model.post'
 import contextPost from '../../server/api/office/models/context.post'
 import contextDelete from '../../server/api/office/models/context/[id].delete'
 import directionGet from '../../server/api/office/directions.get'
@@ -75,6 +76,7 @@ const posts: [string, EventHandler][] = [
   ['/api/office/focus', focusPost],
   ['/api/office/assistant', assistantPost],
   ['/api/office/models', profilesPost],
+  ['/api/office/models/model', modelSelectionPost],
   ['/api/office/models/context', contextPost],
   ['/api/office/ideas/:id/decision', decisionPost],
   ['/api/trading/control', tradingControl],

@@ -139,8 +139,7 @@ export async function openrouterPaidRequest(args: {
 }
 
 /**
- * GPT-6 Astra through OpenRouter. The caller reserves the same dollar maximum as for the direct
- * OpenAI API; the charge is the larger of the OpenRouter bill and the project's own tariff.
+ * A selected OpenRouter model. The charge is the larger of its bill and the stored tariff.
  */
 export async function openrouterPaidModel<T>(args: {
   key: string
@@ -150,6 +149,7 @@ export async function openrouterPaidModel<T>(args: {
   maxTokens: number
 }) {
   const schema = modelJsonSchema(args.schema)
+  const outputFormat = currentPricing()?.outputFormat ?? 'schema'
   // One upstream route at the published tariff: no fallbacks, tools, plugins or retries.
   const { choice, microusd, cost } = await openrouterPaidRequest({
     key: args.key,
@@ -159,10 +159,16 @@ export async function openrouterPaidModel<T>(args: {
         { role: 'system', content: args.system },
         { role: 'user', content: args.context },
       ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: 'farm_result', strict: true, schema },
-      },
+      ...(outputFormat === 'schema'
+        ? {
+            response_format: {
+              type: 'json_schema',
+              json_schema: { name: 'farm_result', strict: true, schema },
+            },
+          }
+        : outputFormat === 'json'
+          ? { response_format: { type: 'json_object' } }
+          : {}),
     },
   })
   if (choice?.finish_reason !== 'stop') throw new Error('MODEL_OUTPUT_INCOMPLETE')

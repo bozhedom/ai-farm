@@ -15,11 +15,17 @@ export function openaiCost(
     throw new Error('OPENAI_USAGE_INVALID')
   if (pricing) {
     // No cache discount assumed; cache writes retain the conservative 1.25x envelope.
+    const writeNano4 =
+      BigInt(pricing.cacheWriteNano ?? 0) * 4n > BigInt(pricing.inputNano) * 5n
+        ? BigInt(pricing.cacheWriteNano!) * 4n
+        : BigInt(pricing.inputNano) * 5n
     const nanos4 =
       BigInt(input - writes) * BigInt(pricing.inputNano) * 4n +
-      BigInt(writes) * BigInt(pricing.inputNano) * 5n +
+      BigInt(writes) * writeNano4 +
       BigInt(output) * BigInt(pricing.outputNano) * 4n
-    return Number((nanos4 + 3999n) / 4000n)
+    const result = (nanos4 + 3999n) / 4000n
+    if (result > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('MODEL_PRICE_TOO_HIGH')
+    return Number(result)
   }
   const tenths =
     BigInt(input - cached - writes) * 100n +
