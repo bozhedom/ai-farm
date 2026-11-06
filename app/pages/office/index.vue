@@ -253,7 +253,7 @@ const priceText = (kopecks: number) => rub(kopecks)
             >Расходы на модели <small>{{ periodWord }}</small></span
           >
           <span class="num">{{ rub(t.spendKopecks) }}</span>
-          <span class="stat-note">GPT-6 Astra и поиск</span>
+          <span class="stat-note">Модели и поиск</span>
         </div>
         <div class="stat rise" :class="{ 'is-loss': t.netKopecks < 0 }">
           <span class="stat-label"

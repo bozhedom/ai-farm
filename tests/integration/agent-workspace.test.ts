@@ -12,6 +12,8 @@ import {
   withAgentProfiles,
   withModelRole,
   currentModel,
+  modelRoles,
+  rolePricing,
   roleContext,
   saveModelSelection,
 } from '../../core/agent-profiles'
@@ -19,6 +21,7 @@ import { applyTradingInstructions } from '../../core/trading/instructions'
 import { tradingInstructions } from '../../core/trading/owner-rules'
 import { prepareModelRequest } from '../../core/providers'
 import { paidRequestEnvelope } from '../../core/providers/openrouter-paid'
+import { openaiMaximum } from '../../core/providers/openai-cost'
 import { reviewSchema } from '../../core/policy'
 import { updateFarmSettings, requestScout } from '../../core/autonomy'
 import { budgetSummary, reserveBudget } from '../../core/budget'
@@ -34,6 +37,45 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 afterAll(() => pool.end())
+
+it('uses the global mini model and budget tariff for every role, including assistant and instruction parsing', async () => {
+  vi.spyOn(settings, 'config').mockReturnValue({
+    ...settings.config(),
+    MODEL_PROVIDER: 'openai',
+    OPENAI_TRANSPORT: 'openrouter',
+    OPENROUTER_PAID_MODEL: 'openai/gpt-4.1-mini',
+  })
+  const roles = [
+    ...modelRoles.map((r) => r.name),
+    'Помощник кабинета',
+    'Разбор торговых инструкций',
+  ]
+  await withAgentProfiles(async () => {
+    for (const role of roles)
+      withModelRole(role, () => {
+        expect(currentModel()).toBe('openai/gpt-4.1-mini')
+        expect(paidRequestEnvelope(100).provider.max_price).toEqual({
+          prompt: 0.4,
+          completion: 1.6,
+          request: 0,
+        })
+        expect(openaiMaximum(1000, 100, rolePricing(role))).toBe(660)
+      })
+  })
+  await query('INSERT INTO agent_profiles(role,model,pricing) VALUES($1,$2,$3)', [
+    'critic',
+    'openai/gpt-6-astra',
+    { inputNano: 10000, outputNano: 50000 },
+  ])
+  await withAgentProfiles(async () => {
+    withModelRole('Критик', () => {
+      expect(currentModel()).toBe('openai/gpt-6-astra')
+      expect(paidRequestEnvelope(100).reasoning).toEqual({ effort: 'low', exclude: true })
+      expect(openaiMaximum(1000, 100, rolePricing('Критик'))).toBe(17500)
+    })
+    withModelRole('Помощник кабинета', () => expect(currentModel()).toBe('openai/gpt-4.1-mini'))
+  })
+})
 
 it('passes role instructions and scoped context into the actual costed request, and deletes future context', async () => {
   await saveProfile({

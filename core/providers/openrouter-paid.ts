@@ -1,6 +1,6 @@
 import { currentModel, currentPricing } from '../agent-profiles'
 import { z } from 'zod'
-import { config, paidModelId } from '../config'
+import { config } from '../config'
 import { query } from '../db'
 import { reportProgress } from '../activity'
 import { modelJsonSchema } from './json-schema'
@@ -25,7 +25,7 @@ export function paidRequestEnvelope(maxTokens: number) {
   return {
     model: currentModel(),
     max_tokens: maxTokens,
-    ...(currentModel() === paidModelId(config())
+    ...(currentModel() === 'openai/gpt-6-astra'
       ? { reasoning: { effort: 'low', exclude: true } }
       : {}),
     stream: false,

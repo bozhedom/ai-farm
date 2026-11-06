@@ -34,8 +34,9 @@ const schema = z.object({
   SEARCH_PROVIDER: z.enum(['demo', 'yandex', 'searxng']).default('demo'),
   OPENAI_API_KEY: z.string().default(''),
   OPENAI_MODEL: z.literal('gpt-6-astra').default('gpt-6-astra'),
-  // The same paid model and dollar limits, sent through OpenRouter with OPENROUTER_API_KEY.
+  // Paid OpenRouter default; role profiles may override its model and tariff.
   OPENAI_TRANSPORT: z.enum(['openai', 'openrouter']).default('openai'),
+  OPENROUTER_PAID_MODEL: z.enum(['openai/gpt-6-astra', 'openai/gpt-4.1-mini']).optional(),
   OPENAI_TOTAL_BUDGET_MICROUSD: z.coerce.number().int().min(0).max(1000000000).default(1000000),
   OPENAI_USD_KOPECKS: positive(12000).refine((n) => n <= 1000000),
   OPENROUTER_API_KEY: z.string().default(''),
@@ -251,7 +252,7 @@ export function config(): Config {
   return c
 }
 
-/** The chosen model provider has its key: free OpenRouter models, paid Astra over OpenRouter or the direct OpenAI key. */
+/** The chosen model provider has its key: free/paid OpenRouter or the direct OpenAI key. */
 export function modelConfigured(c: Config) {
   return c.MODEL_PROVIDER === 'openrouter'
     ? !!c.OPENROUTER_API_KEY
@@ -289,8 +290,12 @@ export function usesSourcePosts(provider: string) {
   return provider === 'ollama' || provider === 'openrouter'
 }
 /** Recorded model of the paid provider; a transport change mid-job is then refused. */
-export function paidModelId(c: Pick<Config, 'OPENAI_MODEL' | 'OPENAI_TRANSPORT'>) {
-  return c.OPENAI_TRANSPORT === 'openrouter' ? `openai/${c.OPENAI_MODEL}` : c.OPENAI_MODEL
+export function paidModelId(
+  c: Pick<Config, 'OPENAI_MODEL' | 'OPENAI_TRANSPORT' | 'OPENROUTER_PAID_MODEL'>,
+) {
+  return c.OPENAI_TRANSPORT === 'openrouter'
+    ? (c.OPENROUTER_PAID_MODEL ?? `openai/${c.OPENAI_MODEL}`)
+    : c.OPENAI_MODEL
 }
 export function isFreeOpenrouterModel(model: string) {
   return (

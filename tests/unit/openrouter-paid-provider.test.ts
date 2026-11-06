@@ -48,6 +48,31 @@ afterEach(() => {
 })
 
 describe('GPT-6 Astra through OpenRouter', () => {
+  it('uses the global mini tariff for unconfigured roles and omits unsupported reasoning settings', async () => {
+    vi.spyOn(settings, 'config').mockReturnValue({
+      ...settings.config(),
+      OPENROUTER_PAID_MODEL: 'openai/gpt-4.1-mini',
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify(response(0.00059)))),
+    )
+    expect(await openaiModel(args)).toEqual({
+      value: { text: 'Проверено' },
+      cost: 8,
+      microusd: 590,
+    })
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string)
+    expect(body.model).toBe('openai/gpt-4.1-mini')
+    expect(body.reasoning).toBeUndefined()
+    expect(body.provider).toMatchObject({
+      require_parameters: true,
+      allow_fallbacks: false,
+      data_collection: 'deny',
+      max_price: { prompt: 0.4, completion: 1.6, request: 0 },
+    })
+  })
+
   it.each(['json', 'text'] as const)(
     'uses a selected %s model while still validating its JSON result',
     async (outputFormat) => {

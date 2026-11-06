@@ -8,6 +8,25 @@ async function load(env: Record<string, string>) {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('public and farm configuration', () => {
+  it('selects a bounded paid OpenRouter default without changing the direct OpenAI model', async () => {
+    const c = (
+      await load({
+        MODEL_PROVIDER: 'openai',
+        SEARCH_PROVIDER: 'searxng',
+        OPENAI_TRANSPORT: 'openrouter',
+        OPENROUTER_API_KEY: 'test-only-key',
+        OPENROUTER_PAID_MODEL: 'openai/gpt-4.1-mini',
+      })
+    )()
+    const { paidModelId } = await import('../../core/config')
+    expect(paidModelId(c)).toBe('openai/gpt-4.1-mini')
+    expect(paidModelId({ ...c, OPENAI_TRANSPORT: 'openai' })).toBe('gpt-6-astra')
+    expect(paidModelId({ ...c, OPENROUTER_PAID_MODEL: undefined })).toBe('openai/gpt-6-astra')
+    await expect(
+      load({ OPENROUTER_PAID_MODEL: 'unknown/unpriced' }).then((c) => c()),
+    ).rejects.toThrow()
+  })
+
   it('starts with safe defaults: private site, sandbox, conditional test rate', async () => {
     const c = (await load({}))()
     expect(c).toMatchObject({

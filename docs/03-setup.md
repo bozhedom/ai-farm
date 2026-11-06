@@ -16,7 +16,9 @@
 
 Приватный репозиторий: [bozhedom/ai-farm](https://github.com/bozhedom/ai-farm). На локальном стенде выбраны бесплатный OpenRouter и SearXNG; ключ уже настроен. Бесплатная альтернатива без облачных ключей — Ollama. Сервис исследует 12 типов услуг, готовит до 12 продуктов, собирает потенциальные открытые запросы заказчиков и выполняет тестовые заказы. Все роли входят в приложение.
 
-**Открыть после запуска: http://localhost:3210.** Для новой установки с Ollama: `npm ci`, затем `npm run local:setup`. Эта команда переключает существующий OpenRouter на Ollama; для уже настроенного OpenRouter используйте [его инструкцию](13-openrouter.md). На продакшене студия включена (`WORKSPACE_MODE=studio`) с платной GPT-6 Astra через OpenRouter.
+**Открыть после запуска: http://localhost:3210.** Для новой установки с Ollama: `npm ci`, затем `npm run local:setup`. Эта команда переключает существующий OpenRouter на Ollama; для уже настроенного OpenRouter используйте [его инструкцию](13-openrouter.md). На продакшене студия включена (`WORKSPACE_MODE=studio`) с платными моделями через OpenRouter; текущий выбор указан в [STATUS.md](STATUS.md).
+
+Общую модель платного OpenRouter задаёт `OPENROUTER_PAID_MODEL`: доступны `openai/gpt-4.1-mini` и прежняя `openai/gpt-6-astra`. Она используется помощником кабинета и всеми ролями без отдельного выбора; настройки ролей в «Модели и контекст» имеют приоритет. Для единой модели нужно также переключить существующие профили. Тариф и параметры запроса соответствуют выбранной модели; общий бюджет сохраняется. Без новой переменной действует прежнее значение `OPENAI_MODEL`. Прямой OpenAI и бесплатный адаптер этой настройкой не переключаются.
 
 Состав служб продакшена — [34-launch-timeweb.md](34-launch-timeweb.md), текущее состояние — [STATUS.md](STATUS.md). Локальная база и база сервера независимы; не заменяйте одну другой.
 
@@ -141,7 +143,7 @@ docker compose -f compose.yaml -f compose.local.yaml --profile app up -d --force
 
 ## Облачная альтернатива: Yandex
 
-Yandex — уже реализованный адаптер, а не обещание максимального качества. Рабочий платный маршрут — GPT-6 Astra через OpenRouter ([13-openrouter.md](13-openrouter.md)); Claude пока требует адаптера.
+Yandex — уже реализованный адаптер, а не обещание максимального качества. Рабочий платный маршрут — OpenRouter ([13-openrouter.md](13-openrouter.md)); модель можно выбрать в кабинете из его каталога.
 
 1. Откройте [консоль Yandex Cloud](https://console.yandex.cloud/), создайте облако / каталог и платёжный аккаунт. Сохраните ID каталога.
 2. Создайте отдельный сервисный аккаунт проекта. Назначьте на каталог `ai.languageModels.user` для Text Generation API и `search-api.webSearch.user` для поиска. Подтверждённые инструкции: [аутентификация модели](https://aistudio.yandex.ru/ru/docs/ai-studio/api-ref/authentication), [аутентификация поиска](https://aistudio.yandex.ru/ru/docs/search-api/api-ref/authentication).

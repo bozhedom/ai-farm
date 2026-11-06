@@ -27,6 +27,15 @@ export type ModelPricing = {
   maxOutputTokens?: number | null
   outputFormat?: 'schema' | 'json' | 'text'
 }
+// Known tariff for the server-wide OpenRouter default; role overrides use the live catalog.
+const miniPricing: ModelPricing = Object.freeze({
+  inputNano: 400,
+  outputNano: 1600,
+  cacheWriteNano: 400,
+  contextLength: 1047576,
+  maxOutputTokens: 32768,
+  outputFormat: 'schema',
+})
 type Profile = {
   role: string
   instruction: string
@@ -68,8 +77,11 @@ export function roleModel(role: string) {
   return runtime.getStore()?.profiles.find((p) => p.role === modelRole(role))?.model || ''
 }
 export function rolePricing(role: string) {
-  if (!roleModel(role)) return undefined
-  return runtime.getStore()?.profiles.find((p) => p.role === modelRole(role))?.pricing ?? undefined
+  const c = config()
+  if (c.MODEL_PROVIDER !== 'openai' || c.OPENAI_TRANSPORT !== 'openrouter') return undefined
+  const profile = runtime.getStore()?.profiles.find((p) => p.role === modelRole(role))
+  if (profile?.model) return profile.pricing ?? undefined
+  return paidModelId(c) === 'openai/gpt-4.1-mini' ? miniPricing : undefined
 }
 export function currentPricing() {
   return rolePricing(roleRuntime.getStore() ?? '')
