@@ -40,6 +40,7 @@ const {
 const busy = ref('')
 const stopping = ref(false)
 const preparing = ref(false)
+let stopRevision = 0
 const error = ref('')
 const notice = ref('')
 const help = useTemplateRef<HTMLDialogElement>('helpDialog')
@@ -178,6 +179,7 @@ async function act(action: string) {
 }
 async function stopAll() {
   if (stopping.value) return
+  stopRevision += 1
   stopping.value = true
   error.value = ''
   notice.value = ''
@@ -226,6 +228,7 @@ async function startAllPaper() {
 }
 async function prepareStart(value: TradingExchange) {
   if (busy.value || stopping.value || preparing.value) return
+  const revision = stopRevision
   preparing.value = true
   exchange.value = value
   section.value = 'overview'
@@ -233,7 +236,7 @@ async function prepareStart(value: TradingExchange) {
   try {
     await refresh()
     preparing.value = false
-    if (stopping.value) return
+    if (stopping.value || revision !== stopRevision) return
     if (startReady.value) ask('start')
     else if (!v.value?.readiness.keys || !v.value?.readiness.allocated) section.value = 'connection'
   } finally {

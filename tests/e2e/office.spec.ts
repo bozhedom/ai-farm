@@ -907,3 +907,39 @@ for (const width of [1440, 390]) {
     expect(errors).toEqual([])
   })
 }
+
+test('stop all cancels a restart while the exchange details are still loading', async ({
+  page,
+}) => {
+  await stubOffice(page, officeFixtures())
+  const { tradingFixtures } = await import('./fixtures/trading')
+  const { view, overview } = tradingFixtures('paper')
+  view.status = 'stopped'
+  view.reason = 'OWNER_STOP'
+  overview.connections[1]!.status = 'stopped'
+  overview.connections[1]!.error = 'OWNER_STOP'
+  const controls: string[] = []
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/office/autonomy', (route) =>
+    route.fulfill({ json: { autopilotEnabled: true } }),
+  )
+  await page.route('**/api/trading**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/trading/control') {
+      controls.push(route.request().postDataJSON().action)
+      release()
+      return route.fulfill({ json: { ok: true } })
+    }
+    if (url.pathname.endsWith('/overview')) return route.fulfill({ json: overview })
+    await pending
+    return route.fulfill({ json: view })
+  })
+  await page.goto('/office/trading')
+  await page.getByRole('button', { name: 'Продолжить Bybit', exact: true }).click()
+  await page.getByRole('button', { name: 'Остановить всё', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Продолжить', exact: true })).toBeEnabled()
+  expect(controls).toEqual(['stop_all'])
+})
