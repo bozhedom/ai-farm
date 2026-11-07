@@ -1198,6 +1198,36 @@ describe('dynamic coin selection', () => {
     expect(await agents(paper)).toHaveLength(4)
   })
 
+  it('re-enters a 20 USDT live portfolio after a loss and dust exit within the existing exposure cap', async () => {
+    const before = config().TRADING_LIVE_ENABLED
+    config().TRADING_LIVE_ENABLED = true
+    try {
+      await allocateLive({ okx: 20, bybit: 0, binance: 0, bitget: 0 })
+      exchange.balances.USDT = { total: units('20'), available: units('20') }
+      const live = scope('okx', 'live')
+      await startTrading(live, 'ТОРГОВАТЬ 20 USDT НА OKX', false, factory)
+      const [a] = await agents(live)
+      const dust = units('0.000001'),
+        cash = units('19.72')
+      await query(
+        "UPDATE trading_agents SET cash=$2,base=$3,basis=$4,position_opened_at=now()-interval '3 days' WHERE id=$1",
+        [a!.id, cash.toString(), dust.toString(), units('0.0001').toString()],
+      )
+      exchange.balances.USDT = { total: cash, available: cash }
+      exchange.balances[a!.symbol.slice(0, -5)] = { total: dust, available: dust }
+      await tick()
+      expect(exchange.placed).toHaveLength(1)
+      const order = exchange.placed[0]!
+      expect(order.side).toBe('buy')
+      const invested = (dust * (await exchange.market(a!.symbol)).book.bids[0]![0]) / units('1')
+      expect(cost(order.qty, order.price) + invested).toBeLessThanOrEqual((cash + invested) / 2n)
+      expect(cost(order.qty, order.price)).toBeGreaterThanOrEqual(units('5'))
+      expect((await portfolio(live)).capital).toBe(units('20').toString())
+    } finally {
+      config().TRADING_LIVE_ENABLED = before
+    }
+  })
+
   it('allows a fresh signal after a dust exit without erasing residual accounting or bypassing pause', async () => {
     exchange.price = '102'
     await startTrading(paper, '', false, factory)

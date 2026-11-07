@@ -1,6 +1,6 @@
 import { TRADING_POLICY as P } from '../policy'
 import { BPS, SCALE, abs, cost, fee, floorStep, max, min, proceeds } from './decimal'
-import type { AgentRow, Book, OrderRequest, OrderResult } from './types'
+import type { AgentRow, Book, Market, OrderRequest, OrderResult } from './types'
 
 /** Conservative paper execution: walk current depth, then add adverse slippage and a fee. */
 export function paperFill(order: OrderRequest, book: Book, lot: bigint): OrderResult {
@@ -85,4 +85,24 @@ export function markAgent(agent: AgentRow, bid: bigint) {
   // Reserve an exit commission in the marked equity, including still-held positions.
   const exposure = max(0n, value - fee(value, P.maxFeeBps))
   return { equity: BigInt(agent.cash) + exposure, exposure }
+}
+
+/** Cash available for a new entry under the unchanged portfolio exposure ceiling. */
+export function remainingEntryBudget(
+  capital: bigint,
+  team: AgentRow[],
+  markets: Record<string, Market | undefined>,
+  exposureBps: number = P.maxExposureBps,
+) {
+  let invested = 0n,
+    cash = 0n
+  for (const a of team) {
+    cash += BigInt(a.cash)
+    if (!BigInt(a.base)) continue
+    const bid = markets[a.symbol]?.book.bids[0]?.[0]
+    if (!bid) throw new Error('TRADING_POSITION_UNPRICED')
+    invested += proceeds(BigInt(a.base), bid)
+  }
+  const ceiling = min(capital, cash + invested)
+  return max(0n, (ceiling * BigInt(Math.min(P.maxExposureBps, exposureBps))) / BPS - invested)
 }

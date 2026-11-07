@@ -12,8 +12,8 @@ import { TRADING_POLICY as P, SCOUT_POLICY as S } from '../policy'
 import { admitted, refreshScout, scoutFresh, scoutState } from './scout'
 import { baseAsset } from './universe'
 import { rotateAgents, recordAssignment, pickSymbol } from './rotation'
-import { BPS, abs, cost, decimal, fee, max, proceeds, ratioBps, units } from './decimal'
-import { applyFill, markAgent, paperFill, riskReason } from './accounting'
+import { BPS, abs, cost, decimal, fee, max, min, proceeds, ratioBps, units } from './decimal'
+import { applyFill, markAgent, paperFill, remainingEntryBudget, riskReason } from './accounting'
 import { eligible, fitness, mutate, signal, sizeOrder, validateMarket } from './strategy'
 import { classicPlan, isClassic, settleClassic } from './classic'
 import { OrderRejected, hasKeys } from './wire'
@@ -897,15 +897,27 @@ export async function tradingTick(
                 Date.now() - agent.last_order_at.getTime() < P.cooldownMs
               )
                 continue
+              let buyBudget =
+                instructions.rules.maxOrderUsdt === null
+                  ? units(String(P.orderUsdt))
+                  : units(instructions.rules.maxOrderUsdt)
+              if (decision.side === 'buy')
+                buyBudget = min(
+                  buyBudget,
+                  remainingEntryBudget(
+                    BigInt(p.capital),
+                    await agents(s, db),
+                    markets,
+                    instructions.rules.maxExposureBps ?? P.maxExposureBps,
+                  ),
+                )
               const request = sizeOrder(
                 agent,
                 market,
                 decision.side,
                 randomUUID().replaceAll('-', ''),
                 decision.maxQty,
-                instructions.rules.maxOrderUsdt === null
-                  ? undefined
-                  : units(instructions.rules.maxOrderUsdt),
+                buyBudget,
               )
               if (request)
                 await submit(

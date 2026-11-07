@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { TRADING_POLICY as P } from '../../core/policy'
 import { decimal, units, cost } from '../../core/trading/decimal'
-import { applyFill, paperFill, riskReason } from '../../core/trading/accounting'
+import {
+  applyFill,
+  paperFill,
+  remainingEntryBudget,
+  riskReason,
+} from '../../core/trading/accounting'
 import { eligible, signal, sizeOrder, validateMarket } from '../../core/trading/strategy'
 import { agent, market } from '../fixtures/trading'
 
@@ -189,4 +194,26 @@ describe('spot hypotheses', () => {
     expect(eligible({ ...a, realized: '-1' })).toBe(false)
     expect(eligible({ ...a, max_drawdown_bps: 801 })).toBe(false)
   })
+})
+
+it('sizes entries from remaining exposure including dust, losses and tighter owner limits', () => {
+  const m = market('BTC-USDT', '100')
+  const a = agent({ cash: units('19.72').toString(), base: units('0.0006').toString() })
+  const markets = { 'BTC-USDT': m }
+  const invested = units('0.059994')
+  const budget = remainingEntryBudget(units('20'), [a], markets)
+  expect(budget).toBe((units('19.72') + invested) / 2n - invested)
+  const order = sizeOrder(a, m, 'buy', 'exposure', undefined, budget)!
+  expect(order).not.toBeNull()
+  expect(cost(order.qty, order.price)).toBeLessThanOrEqual(budget)
+  expect(remainingEntryBudget(units('20'), [a], markets, 2500)).toBeLessThan(budget)
+  expect(remainingEntryBudget(units('20'), [a], markets, 10000)).toBe(budget)
+  expect(() => remainingEntryBudget(units('20'), [a], {})).toThrow('TRADING_POSITION_UNPRICED')
+  expect(
+    remainingEntryBudget(
+      units('20'),
+      [agent({ base: units('0.2').toString(), cash: '0' })],
+      markets,
+    ),
+  ).toBe(0n)
 })
