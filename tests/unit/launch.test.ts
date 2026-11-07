@@ -427,3 +427,14 @@ it('shows a current reserve rejection even with positive balance and zero techni
   expect(steps.find((s) => s.id === 'computer-on')!.state).toContain('Ожидает')
   expect(view.done).toBeLessThan(view.total)
 })
+
+it('distinguishes the farm spending cap from a provider top-up', () => {
+  const input = production()
+  input.model.paidSpentMicrousd = 89_970_000
+  input.model.paidTotalMicrousd = 90_000_000
+  const budget = launchSteps(input)
+    .groups.flatMap((g) => g.steps)
+    .find((s) => s.id === 'budgets')!
+  expect(budget.why).toContain('а не баланс OpenRouter')
+  expect(budget.why).toContain('не увеличивает их автоматически')
+})

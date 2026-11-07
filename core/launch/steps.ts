@@ -272,16 +272,16 @@ export function launchSteps(input: LaunchInput): LaunchView {
     id: 'budgets',
     group: 'required',
     status: budgetsOk ? 'done' : 'needed',
-    title: 'Бюджет модели и остаток средств',
-    why: 'Ферма тратит на модель только в этих пределах; суточный лимит обновляется на следующие UTC-сутки, месячный — в новом месяце. Общий долларовый лимит сам не обновляется. Для нового вызова должен помещаться весь резерв.',
+    title: 'Лимиты расходов модели в ферме',
+    why: 'Это внутренние лимиты фермы, а не баланс OpenRouter. Пополнение OpenRouter не увеличивает их автоматически. Ферма тратит на модель только в этих пределах; суточный лимит обновляется на следующие UTC-сутки, месячный — в новом месяце. Общий долларовый лимит сам не обновляется. Для нового вызова должен помещаться весь резерв.',
     actions: [
-      'Проверьте расходы в «Деньгах» и лимиты в «Настройках». Владелец меняет дневной и месячный лимит в пределах серверного потолка. Общий долларовый предел провайдера меняется отдельно на сервере.',
+      'Проверьте расходы в «Деньгах» и лимиты в «Настройках». Владелец меняет дневной и месячный лимит в пределах серверного потолка. Общий долларовый лимит фермы меняется отдельно на сервере по согласованной сумме пополнения; баланс провайдера смотрите в OpenRouter.',
     ],
     link: '/office/money',
     linkLabel: 'Деньги',
     state: budgetsOk
       ? `В сутки ${rub(model.dailyKopecks)}, в месяц ${rub(model.monthlyKopecks)}${model.paid ? `, всего на платную модель ${usd(model.paidTotalMicrousd)}` : ''}. Потрачено сегодня ${rub(model.daySpentKopecks)}, за месяц ${rub(model.monthSpentKopecks)}${model.paid ? `, по платной модели ${usd(model.paidSpentMicrousd)}` : ''}.`
-      : `Доступный бюджет закончился, равен нулю или не вмещает резерв следующего вызова. За сутки ${rub(model.daySpentKopecks)} из ${rub(model.dailyKopecks)}, за месяц ${rub(model.monthSpentKopecks)} из ${rub(model.monthlyKopecks)}${model.paid ? `; платная модель ${usd(model.paidSpentMicrousd)} из ${usd(model.paidTotalMicrousd)}` : ''}. Новые платные вызовы ждут.`,
+      : `Доступный бюджет закончился, равен нулю или не вмещает резерв следующего вызова. За сутки ${rub(model.daySpentKopecks)} из ${rub(model.dailyKopecks)}, за месяц ${rub(model.monthSpentKopecks)} из ${rub(model.monthlyKopecks)}${model.paid ? `; учтено за всю историю ${usd(model.paidSpentMicrousd)} из лимита ${usd(model.paidTotalMicrousd)}, осталось ${usd(Math.max(0, model.paidTotalMicrousd - model.paidSpentMicrousd))}` : ''}. Новые платные вызовы ждут.`,
   })
 
   const scheduleOn = system.autonomyAllowed && system.scheduleEnabled

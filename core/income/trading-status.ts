@@ -13,6 +13,7 @@ export type TradingStatusInput = {
   workerAlive?: boolean
   fresh?: boolean
   /** The server autopilot is on: it restarts training after the daily loss pause. */
+  entriesAllowed?: boolean
   autoResume?: boolean
 }
 
@@ -116,6 +117,13 @@ export function tradingStatus(input: TradingStatusInput): TradingStatus {
       }
     return { label: 'На паузе', next: '', tone: 'muted', problem: false }
   }
+  if (input.entriesAllowed === false)
+    return {
+      label: 'Покупки выключены выбором направлений',
+      next: 'защита открытых позиций сохраняется',
+      tone: 'muted',
+      problem: false,
+    }
   if (input.workerAlive === false)
     return { label: 'Бот не на связи', next: '', tone: 'warning', problem: true }
   if (input.fresh === false)

@@ -1285,3 +1285,18 @@
     white-space: nowrap;
   }
 }
+
+.trading-workspace .exchange-item + .exchange-item {
+  border-top: 1px solid var(--t-line);
+}
+.trading-workspace .exchange-item .exchange-row {
+  border-bottom: 0;
+}
+.trading-workspace .exchange-controls {
+  padding: 0 24px 20px;
+}
+.trading-workspace .confirmation-phrase {
+  display: block;
+  user-select: all;
+  margin: 8px 0;
+}

@@ -39,6 +39,7 @@ const {
 )
 const busy = ref('')
 const stopping = ref(false)
+const preparing = ref(false)
 const error = ref('')
 const notice = ref('')
 const help = useTemplateRef<HTMLDialogElement>('helpDialog')
@@ -50,6 +51,14 @@ const runningCount = computed(
   () => overview.value?.connections.filter((c) => c.status === 'running').length || 0,
 )
 const allRunning = computed(() => runningCount.value === exchanges.length)
+const { data: focus } = useOfficeResource<{ active: boolean; selected: string[] }>(
+  () => 'office-focus',
+  () => officeFetch('/api/office/focus'),
+  { interval: 5000 },
+)
+const entriesAllowed = computed(
+  () => !focus.value?.active || focus.value.selected.includes('trading'),
+)
 const offline = computed(
   () => overviewStatus.value.offline || (!!exchange.value && status.value.offline),
 )
@@ -60,7 +69,11 @@ const { data: autonomy } = useOfficeResource<{ autopilotEnabled: boolean }>(
   { interval: 60_000 },
 )
 const stateOf = (c: TradingOverview['connections'][number]) =>
-  connectionState(c, mode.value, autonomy.value?.autopilotEnabled)
+  connectionState(
+    { ...c, entriesAllowed: entriesAllowed.value },
+    mode.value,
+    autonomy.value?.autopilotEnabled,
+  )
 const state = computed(() => (currentConnection.value ? stateOf(currentConnection.value) : null))
 const statusSummary = computed(() => {
   const groups = new Map<string, number>()
@@ -81,6 +94,8 @@ const activity = computed(() => {
     return mode.value === 'paper'
       ? 'Можно начинать. Бот сам выберет момент для покупки.'
       : 'Подключите счёт и пройдите проверку перед запуском.'
+  if (!entriesAllowed.value)
+    return 'Новые покупки запрещены выбором направлений. Защита открытых позиций сохраняется.'
   if (!v.value.workerAlive)
     return 'Бот не на связи. Если связь не восстановится, обратитесь к администратору.'
   if (state.value?.tone === 'warning')
@@ -93,6 +108,7 @@ const startReady = computed(
   () =>
     !!v.value &&
     !status.value.offline &&
+    entriesAllowed.value &&
     v.value.status !== 'running' &&
     !v.value.unresolvedClientId &&
     (mode.value === 'paper' || v.value.readiness.keys) &&
@@ -115,7 +131,11 @@ watch([exchange, mode, section], () => {
   confirmation.value = ''
 })
 async function act(action: string) {
-  if (busy.value || stopping.value) return
+  if (busy.value || stopping.value || preparing.value) return
+  if (dialog.value?.open && confirmPhrase.value && confirmation.value !== confirmPhrase.value) {
+    error.value = `Фраза не совпадает. Введите точно: ${confirmPhrase.value}`
+    return
+  }
   const selectedExchange = exchange.value || 'okx'
   const selectedMode = mode.value
   busy.value = action
@@ -204,6 +224,30 @@ async function startAllPaper() {
   await Promise.all([refresh(), refreshOverview()])
   busy.value = ''
 }
+async function prepareStart(value: TradingExchange) {
+  if (busy.value || stopping.value || preparing.value) return
+  preparing.value = true
+  exchange.value = value
+  section.value = 'overview'
+  await nextTick()
+  try {
+    await refresh()
+    preparing.value = false
+    if (stopping.value) return
+    if (startReady.value) ask('start')
+    else if (!v.value?.readiness.keys || !v.value?.readiness.allocated) section.value = 'connection'
+  } finally {
+    preparing.value = false
+  }
+}
+async function copyPhrase() {
+  try {
+    await navigator.clipboard.writeText(confirmPhrase.value)
+    notice.value = 'Фраза скопирована. Вставьте её в поле подтверждения.'
+  } catch {
+    notice.value = 'Выделите и скопируйте фразу над полем.'
+  }
+}
 function ask(action: 'start' | 'flatten' | 'resolve') {
   if (action === 'start' && mode.value !== 'live') {
     void act('start')
@@ -230,7 +274,7 @@ async function allocationSaved() {
         <button
           v-if="exchange"
           class="t-link back-link"
-          :disabled="!!busy"
+          :disabled="!!busy || preparing || stopping"
           @click="exchange = null"
         >
           <OfficeIcon name="back" />Все биржи
@@ -238,7 +282,11 @@ async function allocationSaved() {
         <span v-else class="t-muted">OKX, Bybit, Binance и Bitget</span>
         <label class="mode-select"
           >Режим
-          <select v-model="mode" :disabled="!!busy" aria-label="Режим торговли">
+          <select
+            v-model="mode"
+            :disabled="!!busy || preparing || stopping"
+            aria-label="Режим торговли"
+          >
             <option v-for="m in tradingModes" :key="m.id" :value="m.id">{{ m.label }}</option>
           </select>
         </label>
@@ -257,7 +305,7 @@ async function allocationSaved() {
           <button
             v-if="!exchange && mode === 'paper' && !allRunning && overview"
             class="t-button t-primary"
-            :disabled="!!busy || offline"
+            :disabled="!!busy || preparing || stopping || offline || !entriesAllowed"
             @click="startAllPaper"
           >
             <OfficeIcon name="play" />{{
@@ -279,6 +327,10 @@ async function allocationSaved() {
         Нет связи с приложением. Ниже последние полученные данные, они могут устареть. Пробуем
         подключиться снова.
       </p>
+      <p v-if="!entriesAllowed" class="t-notice t-warning" role="status">
+        Спотовая торговля исключена в выборе направлений: новые покупки и запуски приостановлены.
+        <NuxtLink to="/office/earnings">Изменить выбор направлений</NuxtLink>
+      </p>
       <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
       <p v-if="notice" class="t-notice" role="status">{{ notice }}</p>
       <details v-if="exchange && v?.ownerInstructions?.appliedAt" class="t-notice">
@@ -299,7 +351,7 @@ async function allocationSaved() {
         <template v-else>
           <dl class="home-totals">
             <div>
-              <dt>{{ mode === 'live' ? 'Всего в работе' : 'Виртуальный баланс' }}</dt>
+              <dt>{{ mode === 'live' ? 'Баланс портфелей' : 'Виртуальный баланс' }}</dt>
               <dd>{{ usdt(overview.equity) }} <small>USDT</small></dd>
             </div>
             <div>
@@ -313,41 +365,73 @@ async function allocationSaved() {
               </dd>
             </div>
           </dl>
+          <p class="t-notice" role="status">
+            <strong>{{
+              runningCount
+                ? `Торговля включена: ${runningCount} из ${exchanges.length} бирж.`
+                : 'Торговля в этом режиме не запущена.'
+            }}</strong>
+            {{ statusSummary }}. Баланс сохраняется и после остановки.
+          </p>
           <section class="exchange-list" aria-label="Биржи">
             <div class="exchange-list-head">
               <span>Биржа</span><span>Баланс, USDT</span><span>Результат, USDT</span><span />
             </div>
-            <button
-              v-for="c in overview.connections"
-              :key="c.exchange"
-              class="exchange-row"
-              :disabled="!!busy"
-              :aria-label="`Открыть ${exchangeCatalog[c.exchange].name}`"
-              @click="openExchange(c.exchange, c.keys ? 'overview' : 'connection')"
-            >
-              <span class="exchange-name"
-                ><span class="venue-mark" :class="c.exchange" aria-hidden="true">{{
-                  exchangeCatalog[c.exchange].name.slice(0, 1)
-                }}</span
-                ><span
-                  ><strong>{{ exchangeCatalog[c.exchange].name }}</strong
-                  ><span class="connection-state" :class="`state-${stateOf(c).tone}`"
-                    ><i />{{ stateOf(c).label }}</span
-                  ><small v-if="stateOf(c).next" class="state-next">{{
-                    stateOf(c).next
-                  }}</small></span
-                ></span
-              >
-              <span class="exchange-money"><small>Баланс</small>{{ usdt(c.equity) }}</span>
-              <span
-                class="exchange-money"
-                :class="
-                  Number(c.pnl) < 0 ? 't-negative' : Number(c.pnl) > 0 ? 't-positive' : 't-muted'
+            <div v-for="c in overview.connections" :key="c.exchange" class="exchange-item">
+              <button
+                class="exchange-row"
+                :disabled="!!busy || preparing || stopping"
+                :aria-label="`Открыть ${exchangeCatalog[c.exchange].name}`"
+                @click="
+                  openExchange(c.exchange, mode === 'paper' || c.keys ? 'overview' : 'connection')
                 "
-                ><small>Результат</small>{{ Number(c.pnl) > 0 ? '+' : '' }}{{ usdt(c.pnl) }}</span
               >
-              <OfficeIcon name="back" class="forward-icon" />
-            </button>
+                <span class="exchange-name"
+                  ><span class="venue-mark" :class="c.exchange" aria-hidden="true">{{
+                    exchangeCatalog[c.exchange].name.slice(0, 1)
+                  }}</span
+                  ><span
+                    ><strong>{{ exchangeCatalog[c.exchange].name }}</strong
+                    ><span class="connection-state" :class="`state-${stateOf(c).tone}`"
+                      ><i />{{ stateOf(c).label }}</span
+                    ><small v-if="stateOf(c).next" class="state-next">{{
+                      stateOf(c).next
+                    }}</small></span
+                  ></span
+                >
+                <span class="exchange-money"><small>Баланс</small>{{ usdt(c.equity) }}</span>
+                <span
+                  class="exchange-money"
+                  :class="
+                    Number(c.pnl) < 0 ? 't-negative' : Number(c.pnl) > 0 ? 't-positive' : 't-muted'
+                  "
+                  ><small>Результат</small>{{ Number(c.pnl) > 0 ? '+' : '' }}{{ usdt(c.pnl) }}</span
+                >
+                <OfficeIcon name="back" class="forward-icon" />
+              </button>
+              <div class="exchange-controls">
+                <button
+                  v-if="(mode === 'paper' || c.keys) && c.status !== 'running'"
+                  class="t-button t-primary"
+                  :disabled="!!busy || preparing || stopping || offline || !entriesAllowed"
+                  @click="prepareStart(c.exchange)"
+                >
+                  <OfficeIcon name="play" />{{ c.status === 'idle' ? 'Запустить' : 'Продолжить' }}
+                  {{ exchangeCatalog[c.exchange].name }}
+                </button>
+                <button
+                  v-else
+                  class="t-button"
+                  :disabled="!!busy || preparing || stopping"
+                  @click="
+                    openExchange(c.exchange, mode === 'paper' || c.keys ? 'overview' : 'connection')
+                  "
+                >
+                  {{ mode !== 'paper' && !c.keys ? 'Подключить' : 'Состояние торговли' }}
+                  {{ exchangeCatalog[c.exchange].name }}
+                </button>
+              </div>
+            </div>
           </section>
           <div class="list-caption">
             <p>
@@ -362,7 +446,7 @@ async function allocationSaved() {
           <TradingFunding
             v-if="mode === 'live'"
             :overview="overview"
-            :disabled="!!busy || offline"
+            :disabled="!!busy || preparing || stopping || offline"
             @busy="busy = $event ? 'allocation' : ''"
             @saved="allocationSaved"
             @error="error = $event"
@@ -401,7 +485,7 @@ async function allocationSaved() {
             v-for="tab in tabs"
             :key="tab.id"
             :aria-current="section === tab.id ? 'page' : undefined"
-            :disabled="!!busy"
+            :disabled="!!busy || preparing || stopping"
             @click="section = tab.id"
           >
             {{ tab.label
@@ -436,7 +520,7 @@ async function allocationSaved() {
               <button
                 v-if="v.status === 'running'"
                 class="t-button"
-                :disabled="!!busy || offline"
+                :disabled="!!busy || preparing || stopping || offline"
                 @click="act('pause')"
               >
                 <OfficeIcon name="pause" />Приостановить покупки
@@ -444,7 +528,7 @@ async function allocationSaved() {
               <button
                 v-else-if="startReady"
                 class="t-button t-primary"
-                :disabled="!!busy || offline"
+                :disabled="!!busy || preparing || stopping || offline"
                 @click="ask('start')"
               >
                 <OfficeIcon name="play" />{{
@@ -454,7 +538,7 @@ async function allocationSaved() {
               <button
                 v-else-if="mode !== 'paper'"
                 class="t-button"
-                :disabled="!!busy"
+                :disabled="!!busy || preparing || stopping"
                 @click="section = 'connection'"
               >
                 Подключить счёт
@@ -600,7 +684,7 @@ async function allocationSaved() {
           <TradingHistory
             v-else-if="section === 'orders'"
             :view="v"
-            :disabled="!!busy || offline"
+            :disabled="!!busy || preparing || stopping || offline"
             @resolve="ask('resolve')"
           />
           <TradingConnection
@@ -616,7 +700,7 @@ async function allocationSaved() {
             <TradingFunding
               v-if="mode === 'live' && overview"
               :overview="overview"
-              :disabled="!!busy || offline"
+              :disabled="!!busy || preparing || stopping || offline"
               @busy="busy = $event ? 'allocation' : ''"
               @saved="allocationSaved"
               @error="error = $event"
@@ -668,20 +752,41 @@ async function allocationSaved() {
           }}
         </p>
         <label v-if="confirmPhrase" class="confirm-field"
-          >Введите «{{ confirmPhrase }}»<input
+          >Введите точно: <strong class="confirmation-phrase">{{ confirmPhrase }}</strong
+          ><input
             v-model="confirmation"
             autocomplete="off"
             spellcheck="false"
-            :disabled="!!busy"
+            :aria-invalid="!!confirmation && confirmation !== confirmPhrase"
+            aria-describedby="confirmation-hint"
+            :disabled="!!busy || preparing || stopping"
         /></label>
+        <template v-if="confirmPhrase">
+          <p
+            id="confirmation-hint"
+            class="t-muted"
+            :class="{ 't-negative': confirmation && confirmation !== confirmPhrase }"
+            role="status"
+          >
+            {{
+              confirmation && confirmation !== confirmPhrase
+                ? 'Фраза не совпадает. Проверьте лишние слова, пробелы и раскладку; можно скопировать образец.'
+                : 'Подтверждение относится только к этой бирже и указанному бюджету.'
+            }}
+          </p>
+          <button type="button" class="t-link" @click="copyPhrase">Скопировать точную фразу</button>
+          <p v-if="notice" class="t-muted" role="status">{{ notice }}</p>
+        </template>
         <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
         <div class="t-actions dialog-actions">
-          <button class="t-button" type="button" :disabled="!!busy" @click="dialog?.close()">
-            Отмена</button
-          ><button
-            class="t-button t-primary"
-            :disabled="!!busy || (!!confirmPhrase && confirmation !== confirmPhrase)"
+          <button
+            class="t-button"
+            type="button"
+            :disabled="!!busy || preparing || stopping"
+            @click="dialog?.close()"
           >
+            Отмена</button
+          ><button class="t-button t-primary" :disabled="!!busy || preparing || stopping">
             {{ busy ? 'Проверяем…' : 'Подтвердить' }}
           </button>
         </div>
@@ -717,8 +822,8 @@ async function allocationSaved() {
           <strong>Реальная торговля: после проверок</strong>
           <p>
             Вы задаёте бюджет, вносите деньги на выбранные биржи и подтверждаете запуск каждой.
-            Нужны успешный тест и прибыльная тренировочная стратегия: от 7 дней и 20 завершённых
-            покупок с продажей.
+            Нужны проверенное подключение, доступные средства, разрешение реальной торговли и точная
+            фраза подтверждения. Прибыльная тренировка и тестовый цикл не обязательны.
           </p>
         </li>
       </ol>

@@ -40,3 +40,17 @@ describe('owner trading status', () => {
     expect(tradingReasonWords('DRAWDOWN_LIMIT')).toBe('лимит просадки')
   })
 })
+
+it('shows a direction filter without concealing a manual stop', () => {
+  const input = {
+    ...base,
+    mode: 'live' as const,
+    status: 'running',
+    reason: '',
+    entriesAllowed: false,
+  }
+  expect(tradingStatus(input).label).toBe('Покупки выключены выбором направлений')
+  expect(tradingStatus({ ...input, status: 'stopped', reason: 'OWNER_STOP' }).label).toBe(
+    'Остановлено вами',
+  )
+})

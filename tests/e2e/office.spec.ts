@@ -835,3 +835,75 @@ for (const width of [1440, 390])
       expect(errors).toEqual([])
     })
   }
+
+for (const width of [1440, 390]) {
+  test(`trading stop and restart stays visible and explains a wrong confirmation at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 950 })
+    await stubOffice(page, officeFixtures())
+    const { tradingFixtures } = await import('./fixtures/trading')
+    const { view, overview } = tradingFixtures()
+    const controls: Record<string, string>[] = []
+    await page.route('**/api/office/autonomy', (route) =>
+      route.fulfill({ json: { autopilotEnabled: true } }),
+    )
+    await page.route('**/api/trading**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname === '/api/trading/control') {
+        const body = route.request().postDataJSON()
+        controls.push(body)
+        if (body.action === 'stop_all') {
+          view.status = 'stopped'
+          view.reason = 'OWNER_STOP'
+          overview.connections.forEach((c) => {
+            c.status = 'stopped'
+            c.error = 'OWNER_STOP'
+          })
+        } else if (body.action === 'start') {
+          expect(body).toMatchObject({
+            exchange: 'bybit',
+            mode: 'live',
+            confirmation: view.liveConfirmation,
+          })
+          view.status = 'running'
+          view.reason = ''
+          Object.assign(overview.connections[1]!, { status: 'running', error: '' })
+        }
+        return route.fulfill({ json: { ok: true } })
+      }
+      return route.fulfill({ json: url.pathname.endsWith('/overview') ? overview : view })
+    })
+    const errors = watchConsole(page)
+    await page.goto('/office/trading')
+    await expect(page.getByRole('button', { name: 'Открыть Bybit', exact: true })).toBeVisible()
+    await page.getByLabel('Режим торговли').selectOption('live')
+    await expect(page.getByLabel('Режим торговли')).toHaveValue('live')
+    await expect(page.getByText('Торговля включена: 1 из 4 бирж.', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Остановить всё', exact: true }).click()
+    await expect(
+      page.getByText('Торговля в этом режиме не запущена.', { exact: true }),
+    ).toBeVisible()
+    await expect(page.getByText('Баланс портфелей', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Продолжить Bybit', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('textbox').fill('ТОРГОВАТЬ НА 20 USDT НА BYBIT')
+    await expect(dialog.getByText(/Фраза не совпадает. Проверьте/)).toBeVisible()
+    await dialog.getByRole('button', { name: 'Подтвердить', exact: true }).click()
+    await expect(dialog.getByRole('alert')).toContainText('Фраза не совпадает')
+    expect(controls.filter((c) => c.action === 'start')).toHaveLength(0)
+    await dialog.getByRole('textbox').fill(view.liveConfirmation)
+    await dialog.getByRole('button', { name: 'Подтвердить', exact: true }).click()
+    await expect(dialog).not.toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Приостановить покупки', exact: true }),
+    ).toBeVisible()
+    expect(controls.filter((c) => c.action === 'start')).toHaveLength(1)
+    await page.getByRole('button', { name: 'Все биржи', exact: true }).click()
+    await expect(page.getByText('Торговля включена: 1 из 4 бирж.', { exact: true })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+    await page.screenshot({ path: `${shots}/trading-restart-${width}.png`, fullPage: true })
+    expect(errors).toEqual([])
+  })
+}

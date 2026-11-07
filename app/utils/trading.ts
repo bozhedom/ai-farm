@@ -189,7 +189,14 @@ export const strategyDescription = {
 
 /** One status per exchange, the same words as on the overview. */
 export function connectionState(
-  c: { status: string; keys: boolean; error: string; workerAlive: boolean; fresh: boolean },
+  c: {
+    status: string
+    keys: boolean
+    error: string
+    workerAlive: boolean
+    fresh: boolean
+    entriesAllowed?: boolean
+  },
   mode: 'paper' | 'demo' | 'live',
   autoResume?: boolean,
 ) {
