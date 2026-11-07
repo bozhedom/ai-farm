@@ -169,7 +169,7 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
     if (!agent) throw new Error('TRADING_AGENT_NOT_FOUND')
     const fill = applyFill(agent, result, minQty)
     await query(
-      `UPDATE trading_agents SET cash=$2,base=$3,basis=$4,realized=$5,fees=$6,round_trips=$7,strategy_state=$8,position_opened_at=CASE WHEN $3::numeric=0 THEN NULL WHEN base=0 AND $3::numeric>0 THEN now() ELSE position_opened_at END WHERE id=$1`,
+      `UPDATE trading_agents SET cash=$2,base=$3,basis=$4,realized=$5,fees=$6,round_trips=$7,strategy_state=$8,position_opened_at=CASE WHEN $3::numeric=0 THEN NULL WHEN base<$9::numeric AND $3::numeric>=$9::numeric THEN now() ELSE position_opened_at END WHERE id=$1`,
       [
         agent.id,
         fill.cash.toString(),
@@ -179,6 +179,7 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
         fill.fees.toString(),
         fill.roundTrips,
         isClassic(agent.kind) ? settleClassic(agent, result) : agent.strategy_state || {},
+        minQty.toString(),
       ],
       db,
     )
@@ -829,7 +830,13 @@ export async function tradingTick(
                 market,
                 forceExit && BigInt(agent.base) >= market.instrument.minQty,
               )
-              if (BigInt(agent.base) && BigInt(agent.base) < market.instrument.minQty)
+              // Keep unsellable residuals in the ledger. They must not suppress a new,
+              // independently admitted entry in the same pair forever after a partial exit.
+              if (
+                BigInt(agent.base) &&
+                BigInt(agent.base) < market.instrument.minQty &&
+                (decision.side !== 'buy' || forceExit || !admitted(scout, agent.symbol))
+              )
                 decision = { side: null, reason: 'SCOUT_DUST_POSITION' }
               if (
                 BigInt(agent.base) >= market.instrument.minQty &&

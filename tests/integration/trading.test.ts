@@ -1198,6 +1198,34 @@ describe('dynamic coin selection', () => {
     expect(await agents(paper)).toHaveLength(4)
   })
 
+  it('allows a fresh signal after a dust exit without erasing residual accounting or bypassing pause', async () => {
+    exchange.price = '102'
+    await startTrading(paper, '', false, factory)
+    const a = (await agents(paper)).find((a) => a.kind === 'reversion')!
+    const dust = units('0.000001')
+    const basis = units('0.0001')
+    await query(
+      "UPDATE trading_agents SET base=$2,basis=$3,position_opened_at=now()-interval '3 days' WHERE id=$1",
+      [a.id, dust.toString(), basis.toString()],
+    )
+    await controlTrading(paper, 'pause')
+    exchange.price = '100'
+    await tick()
+    expect((await agents(paper)).find((row) => row.id === a.id)!.base).toBe(dust.toString())
+    expect(await query('SELECT id FROM trading_orders WHERE agent_id=$1', [a.id])).toHaveLength(0)
+    await startTrading(paper, '', false, factory)
+    await tick()
+    const [order] = await query("SELECT * FROM trading_orders WHERE agent_id=$1 AND side='buy'", [
+      a.id,
+    ])
+    expect(order).toBeDefined()
+    const after = (await agents(paper)).find((row) => row.id === a.id)!
+    expect(BigInt(after.base)).toBe(dust + BigInt(order!.filled_qty))
+    expect(BigInt(after.basis)).toBe(basis + BigInt(order!.quote) - BigInt(order!.quote_fee))
+    expect(after.symbol).toBe(a.symbol)
+    expect(after.position_opened_at!.getTime()).toBeGreaterThan(Date.now() - 60_000)
+  })
+
   it('does not rotate paused agents or erase dust that the exchange cannot sell', async () => {
     exchange.price = '102'
     await startTrading(paper, '', false, factory)
