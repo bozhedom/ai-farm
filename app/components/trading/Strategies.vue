@@ -118,18 +118,26 @@ const agents = computed(() =>
             <h3>
               {{ a.name }} <span>{{ a.symbol.split('-')[0] }}</span>
             </h3>
-            <p>{{ strategyName[a.kind] }}</p>
+            <p>{{ a.residualOnly ? 'Мелкий остаток · только продажа' : strategyName[a.kind] }}</p>
           </div>
-          <div class="strategy-profit" :class="Number(a.pnl) < 0 ? 't-negative' : 't-positive'">
+          <div
+            v-if="!a.residualOnly"
+            class="strategy-profit"
+            :class="Number(a.pnl) < 0 ? 't-negative' : 't-positive'"
+          >
             {{ Number(a.pnl) > 0 ? '+' : '' }}{{ usdt(a.pnl) }} <small>USDT</small
             ><span>после комиссий</span>
           </div>
         </div>
-        <p class="t-muted">{{ strategyDescription[a.kind] }}</p>
+        <p v-if="a.residualOnly" class="t-muted">
+          {{ a.base }} {{ a.symbol.split('-')[0] }} остаются в общем балансе. Новые покупки этой
+          записью запрещены; продажа возможна, когда объём проходит минимум биржи.
+        </p>
+        <p v-else class="t-muted">{{ strategyDescription[a.kind] }}</p>
         <p class="strategy-activity">
           {{ a.status === 'archived' ? 'В архиве, больше не торгует' : tradingReason(a.signal) }}
         </p>
-        <details class="strategy-details">
+        <details v-if="!a.residualOnly" class="strategy-details">
           <summary>Результаты и параметры</summary>
           <dl class="t-facts">
             <div>

@@ -1,3 +1,4 @@
+import { releaseResidualCash } from './residuals'
 import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import {
   orderWithinOwnerLimit,
@@ -275,6 +276,7 @@ async function submit(
     )
       return null
     if (request.side === 'buy') {
+      if (fresh.residual_only) throw new Error('TRADING_RESIDUAL_BUY_FORBIDDEN')
       const restricted = ownerEntryReason(instructions.rules, fresh)
       if (restricted || !orderWithinOwnerLimit(instructions.rules, request)) {
         await query(
@@ -664,7 +666,7 @@ async function promoteLive(exchange: TradingExchange, db: Connection) {
   const s = scope(exchange, 'live')
   const p = await portfolio(s, db)
   if (p.evolution_at && Date.now() - p.evolution_at.getTime() < 86_400_000) return
-  const [current] = await agents(s, db)
+  const [current] = (await agents(s, db)).filter((a) => !a.residual_only)
   const candidate = (await paperCandidates(exchange, db))[0]
   let reason = 'NO_PROVEN_EDGE'
   if (current && BigInt(current.base)) reason = 'POSITIONS_OPEN'
@@ -763,7 +765,7 @@ export async function tradingTick(
             const scout = await refreshScout(
               s,
               venue,
-              (await agents(s, db)).map((a) => a.symbol),
+              (await agents(s, db)).filter((a) => !a.residual_only).map((a) => a.symbol),
               db,
             )
             const workEnabled = await directionAllowed('trading', db)
@@ -776,7 +778,23 @@ export async function tradingTick(
                     await applyManagerTask(s, db)
                   }
                 })
-              await rotateAgents(s, scout, db)
+              const rotationMarkets =
+                mode === 'live'
+                  ? await loadMarkets(
+                      s,
+                      venue,
+                      (await agents(s, db))
+                        .filter((a) => !a.residual_only && BigInt(a.base) > 0n)
+                        .map((a) => a.symbol),
+                      db,
+                    )
+                  : {}
+              await atomic(db, async () => {
+                const current = await portfolio(s, db, true)
+                if (current.status === 'running' && !(await pendingOrder(s, db)))
+                  await releaseResidualCash(s, db)
+              })
+              await rotateAgents(s, scout, db, rotationMarkets)
             }
             let account: Account | undefined
             if (mode !== 'paper') {
@@ -870,6 +888,11 @@ export async function tradingTick(
                 )
                 await event(s, 'demo', 'DEMO_PROBE_COMPLETE', {}, db)
                 break
+              }
+              if (agent.residual_only) {
+                decision = sizeOrder(agent, market, 'sell', 'residualcheck')
+                  ? { side: 'sell', reason: 'SCOUT_RESIDUAL_EXIT' }
+                  : { side: null, reason: 'SCOUT_DUST_POSITION' }
               }
               decision = ownerSignal(instructions.rules, agent, market, decision)
               await query(
@@ -972,7 +995,7 @@ export async function checkTrading(
       const scout = await refreshScout(
         s,
         venue,
-        team.map((a) => a.symbol),
+        team.filter((a) => !a.residual_only).map((a) => a.symbol),
         db,
         true,
       )
@@ -1065,7 +1088,7 @@ export async function startTrading(
     const scout = await refreshScout(
       s,
       venue,
-      teamBefore.map((a) => a.symbol),
+      teamBefore.filter((a) => !a.residual_only).map((a) => a.symbol),
       db,
       true,
     )

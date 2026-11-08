@@ -94,6 +94,7 @@ export type PortfolioRow = {
   manager_revision: number
 }
 export type AgentRow = {
+  residual_only?: boolean
   exchange: TradingExchange
   id: string
   mode: TradingMode

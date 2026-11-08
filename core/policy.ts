@@ -154,6 +154,8 @@ export const SCOUT_POLICY = Object.freeze({
   maxPositionMs: 24 * 60 * 60_000,
   stagnantPositionMs: 6 * 60 * 60_000,
   maxAgentsPerSymbol: 2,
+  maxResidualSymbols: 12,
+  maxResidualValueUsdt: 1,
 })
 /** New strategy families are restricted to paper until a separate execution acceptance. */
 export const CLASSIC_POLICY = Object.freeze({

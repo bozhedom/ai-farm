@@ -908,6 +908,74 @@ for (const width of [1440, 390]) {
   })
 }
 
+for (const width of [1440, 390]) {
+  test(`live residuals remain visible without occupying a trading slot at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 950 })
+    await stubOffice(page, officeFixtures())
+    const { tradingFixtures } = await import('./fixtures/trading')
+    const { view, overview } = tradingFixtures()
+    const slot = {
+      id: 'slot',
+      name: 'Прилив',
+      symbol: 'BTC-USDT' as const,
+      kind: 'reversion' as const,
+      params: { lookback: 60, entryBps: 60, takeProfitBps: 100 },
+      status: 'active',
+      parentId: null,
+      generation: 1,
+      cash: '19.72',
+      base: '0',
+      equity: '19.72',
+      pnl: '-0.28',
+      realized: '-0.22',
+      fees: '0.03',
+      drawdownBps: 140,
+      roundTrips: 1,
+      signal: 'WAITING_SIGNAL',
+      eligible: false,
+      createdAt: new Date().toISOString(),
+    }
+    view.agents = [
+      slot,
+      {
+        ...slot,
+        id: 'residual',
+        name: 'Остаток HYPE',
+        symbol: 'HYPE-USDT',
+        residualOnly: true,
+        cash: '0',
+        base: '0.0008038',
+        equity: '0.06',
+        signal: 'SCOUT_DUST_POSITION',
+        parentId: slot.id,
+      },
+    ]
+    await page.route('**/api/office/autonomy', (route) =>
+      route.fulfill({ json: { autopilotEnabled: true } }),
+    )
+    await page.route('**/api/trading**', (route) =>
+      route.fulfill({
+        json: new URL(route.request().url()).pathname.endsWith('/overview') ? overview : view,
+      }),
+    )
+    const errors = watchConsole(page)
+    await page.goto('/office/trading')
+    await expect(page.getByRole('button', { name: 'Открыть Bybit', exact: true })).toBeVisible()
+    await page.getByLabel('Режим торговли').selectOption('live')
+    await page.getByRole('button', { name: 'Открыть Bybit', exact: true }).click()
+    await expect(page.getByText(/Бот следит за ценами. Купит/)).toBeVisible()
+    await expect(page.getByText(/Мелкие остатки учтены отдельно: HYPE/)).toBeVisible()
+    await page.getByRole('button', { name: 'Стратегии', exact: true }).click()
+    await expect(page.getByText('Мелкий остаток · только продажа', { exact: true })).toBeVisible()
+    await expect(page.getByText(/0.0008038 HYPE остаются в общем балансе/)).toBeVisible()
+    await noHorizontalScroll(page)
+    await page.screenshot({ path: `${shots}/trading-residual-${width}.png`, fullPage: true })
+    expect(errors).toEqual([])
+  })
+}
+
 test('stop all cancels a restart while the exchange details are still loading', async ({
   page,
 }) => {

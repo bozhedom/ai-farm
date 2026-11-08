@@ -139,6 +139,7 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
           ? markAgent(a, BigInt(bid)).equity
           : BigInt(a.cash) + BigInt(a.basis)
       return {
+        residualOnly: !!a.residual_only,
         id: a.id,
         name: a.name,
         symbol: a.symbol,

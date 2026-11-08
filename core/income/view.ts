@@ -210,7 +210,7 @@ export async function officeIncome(now = new Date()): Promise<OfficeIncome> {
       [since],
     ),
     query(
-      `SELECT exchange,mode,kind,count(*)::int AS n FROM trading_agents WHERE status='active'
+      `SELECT exchange,mode,kind,count(*)::int AS n FROM trading_agents WHERE status='active' AND NOT residual_only
        GROUP BY 1,2,3 ORDER BY 1,2,3`,
     ),
     query(

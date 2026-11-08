@@ -85,7 +85,12 @@ const statusSummary = computed(() => {
   const parts = [...groups].map(([label, n]) => `«${label}» — ${n}`)
   return `Из ${exchanges.length} бирж: ${parts.join(', ')}`
 })
-const activeAgents = computed(() => v.value?.agents.filter((a) => a.status === 'active') || [])
+const activeAgents = computed(
+  () => v.value?.agents.filter((a) => a.status === 'active' && !a.residualOnly) || [],
+)
+const residuals = computed(
+  () => v.value?.agents.filter((a) => a.status === 'active' && a.residualOnly) || [],
+)
 const positionCount = computed(() => activeAgents.value.filter((a) => Number(a.base) > 0).length)
 const activity = computed(() => {
   if (!v.value) return ''
@@ -516,6 +521,11 @@ async function allocationSaved() {
                   ><i />{{ state?.text || 'Проверяем состояние' }}</strong
                 >
                 <p>{{ activity }}</p>
+                <p v-if="residuals.length" class="t-muted">
+                  Мелкие остатки учтены отдельно:
+                  {{ residuals.map((a) => a.symbol.replace('-USDT', '')).join(', ') }}. Они входят в
+                  баланс и не занимают торговую стратегию.
+                </p>
                 <button class="market-shortcut" @click="section = 'market'">
                   Как выбираются монеты
                 </button>

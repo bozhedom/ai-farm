@@ -61,7 +61,7 @@ export async function tradingOverview(mode: TradingMode): Promise<TradingOvervie
         capital: decimal(BigInt(p.capital)),
         equity: decimal(equity),
         pnl: decimal(profit),
-        activeAgents: own.length,
+        activeAgents: own.filter((a) => !a.residual_only).length,
         allocationEditable: !live.started_at && !live.account_identity,
         liveAllocation: decimal(BigInt(live.capital)),
       }

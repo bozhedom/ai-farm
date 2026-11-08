@@ -1,3 +1,4 @@
+import { isResidual, parkResidual } from './residuals'
 import { randomUUID } from 'node:crypto'
 import { ownerEntryReason, tradingInstructions } from './owner-rules'
 import { query, type Connection } from '../db'
@@ -5,7 +6,7 @@ import { SCOUT_POLICY as S } from '../policy'
 import { agents, atomic, event, pendingOrder, portfolio } from './store'
 import { admitted, scoutFresh, type ScoutRow } from './scout'
 import { rankedFor, type ScoutCoin } from './universe'
-import type { StrategyKind, TradingScope, TradingSymbol } from './types'
+import type { Market, StrategyKind, TradingScope, TradingSymbol } from './types'
 
 export function pickSymbol(
   kind: StrategyKind,
@@ -34,16 +35,22 @@ export async function recordAssignment(
   await event(s, 'selection', reason, { agentId, from: previous, to: symbol }, db)
 }
 
-/** A coin changes only with zero holdings and no unresolved intent. P&L belongs to the strategy's whole basket. */
-export async function rotateAgents(s: TradingScope, scout: ScoutRow | undefined, db: Connection) {
+/** A coin changes only after holdings are sold or conserved in a separate residual row. P&L belongs to the strategy's whole basket. */
+export async function rotateAgents(
+  s: TradingScope,
+  scout: ScoutRow | undefined,
+  db: Connection,
+  markets: Partial<Record<TradingSymbol, Market>> = {},
+) {
   if (!scoutFresh(scout)) return
   await atomic(db, async () => {
     const p = await portfolio(s, db, true)
     if (p.status !== 'running' || (await pendingOrder(s, db))) return
-    const team = await agents(s, db)
+    const team = (await agents(s, db)).filter((a) => !a.residual_only)
     const { rules } = await tradingInstructions(db)
     for (const a of team) {
-      if (BigInt(a.base) || BigInt(a.basis)) continue
+      const held = !!(BigInt(a.base) || BigInt(a.basis))
+      if (held && !isResidual(a, markets[a.symbol])) continue
       const legacy = a.selector_version !== S.version
       // Existing funded strategies keep their authorization until a qualified successor is promoted.
       if (legacy && s.mode === 'live') continue
@@ -61,6 +68,7 @@ export async function rotateAgents(s: TradingScope, scout: ScoutRow | undefined,
         legacy ? undefined : a.symbol,
       )
       if (!symbol) continue
+      if (held && !(await parkResidual(s, a, markets[a.symbol], db))) continue
       const reason = legacy
         ? 'SCOUT_ADOPTED'
         : admitted(scout, a.symbol)

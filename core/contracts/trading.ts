@@ -90,6 +90,7 @@ export type TradingView = {
   }
   markets: { symbol: TradingSymbol; bid: string; ask: string; at: string }[]
   agents: {
+    residualOnly?: boolean
     id: string
     name: string
     symbol: TradingSymbol

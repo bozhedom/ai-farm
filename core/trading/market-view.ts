@@ -44,12 +44,14 @@ export async function tradingMarketView(
       reason: a.reason,
       at: a.created_at.toISOString(),
     })),
-    active: team.map((a) => ({
-      name: a.name,
-      symbol: a.symbol,
-      holding: BigInt(a.base) > 0n,
-      since: a.assigned_at.toISOString(),
-    })),
+    active: team
+      .filter((a) => !a.residual_only)
+      .map((a) => ({
+        name: a.name,
+        symbol: a.symbol,
+        holding: BigInt(a.base) > 0n,
+        since: a.assigned_at.toISOString(),
+      })),
     limits: {
       scanMinutes: S.scanMs / 60_000,
       idleHours: S.idleRotationMs / 3_600_000,

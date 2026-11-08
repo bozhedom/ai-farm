@@ -68,7 +68,7 @@ export function applyFill(agent: AgentRow, result: OrderResult, minQty: bigint) 
     base -= removed
     basis -= releasedBasis
     realized += quote + quoteFee - releasedBasis
-    if (BigInt(agent.base) >= minQty && base < minQty) roundTrips += 1
+    if (!agent.residual_only && BigInt(agent.base) >= minQty && base < minQty) roundTrips += 1
   }
   if (cash < 0n || base < 0n || basis < 0n) throw new Error('TRADING_BALANCE_NEGATIVE')
   return { cash, base, basis, realized, roundTrips, fees: BigInt(agent.fees) + feeValue }

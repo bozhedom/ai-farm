@@ -167,6 +167,7 @@ export function sizeOrder(
 
 export function eligible(agent: AgentRow, now = Date.now()) {
   return (
+    !agent.residual_only &&
     now - new Date(agent.created_at).getTime() >= P.minEvaluationDays * 86_400_000 &&
     agent.selector_version === S.version &&
     agent.round_trips >= P.minRoundTrips &&

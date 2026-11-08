@@ -1,3 +1,5 @@
+import { rotateAgents } from '../../core/trading/rotation'
+import { scoutState } from '../../core/trading/scout'
 import { saveWorkFocus } from '../../core/work-focus'
 import { applyTradingInstructions } from '../../core/trading/instructions'
 import { randomUUID } from 'node:crypto'
@@ -25,6 +27,7 @@ import {
   pendingOrder,
   portfolio,
   configurePaperStrategies,
+  withTradingLock,
 } from '../../core/trading/store'
 import { tradingOverview } from '../../core/trading/overview'
 import { exchanges, type TradingScope, type TradingExchange } from '../../core/trading/types'
@@ -1196,6 +1199,163 @@ describe('dynamic coin selection', () => {
     await expireScan()
     await tick()
     expect(await agents(paper)).toHaveLength(4)
+  })
+
+  it('preserves holdings on stops, unresolved orders, stale scans and the residual count ceiling', async () => {
+    const before = config().TRADING_LIVE_ENABLED
+    config().TRADING_LIVE_ENABLED = true
+    try {
+      await allocateLive({ okx: 20, bybit: 0, binance: 0, bitget: 0 })
+      const live = scope('okx', 'live')
+      exchange.price = '102'
+      await startTrading(live, 'ТОРГОВАТЬ 20 USDT НА OKX', false, factory)
+      const [a] = await agents(live)
+      await query(
+        "UPDATE trading_agents SET base=1,basis=1,assigned_at=now()-interval '8 hours' WHERE id=$1",
+        [a!.id],
+      )
+      const original = (await agents(live))[0]!
+      const rotate = () =>
+        withTradingLock(live, async (db) =>
+          rotateAgents(live, await scoutState(live, db), db, {
+            [original.symbol]: await exchange.market(original.symbol),
+          }),
+        )
+      const unchanged = async () =>
+        expect((await agents(live)).find((row) => row.id === a!.id)).toMatchObject({
+          symbol: original.symbol,
+          base: '1',
+          basis: '1',
+          cash: original.cash,
+        })
+      for (const action of ['pause', 'stop'] as const) {
+        await controlTrading(live, action)
+        await rotate()
+        await unchanged()
+      }
+      await query(
+        "UPDATE trading_portfolios SET status='running',reason='' WHERE exchange='okx' AND mode='live'",
+      )
+      const id = randomUUID()
+      await query(
+        `INSERT INTO trading_orders(id,mode,exchange,agent_id,client_id,symbol,side,qty,price,status,reason)
+        VALUES($1,'live','okx',$2,'residualpending',$3,'sell',1,1,'unknown','TEST')`,
+        [id, a!.id, a!.symbol],
+      )
+      await rotate()
+      await unchanged()
+      await query("UPDATE trading_orders SET status='rejected' WHERE id=$1", [id])
+      await query(
+        "UPDATE trading_scouts SET scanned_at=now()-interval '1 hour' WHERE exchange='okx' AND mode='live'",
+      )
+      await rotate()
+      await unchanged()
+      await query("UPDATE trading_scouts SET scanned_at=now() WHERE exchange='okx' AND mode='live'")
+      for (let i = 0; i < 12; i++)
+        await query(
+          `INSERT INTO trading_agents(id,exchange,mode,name,symbol,kind,params,generation,initial_cash,cash,base,basis,peak,residual_only)
+        VALUES($1,'okx','live','Residual',$2,'reversion',$3,1,1,0,1,1,1,true)`,
+          [randomUUID(), `DUST${i}-USDT`, a!.params],
+        )
+      await rotate()
+      await unchanged()
+      expect((await agents(live)).filter((row) => row.residual_only)).toHaveLength(12)
+      expect(exchange.placed).toHaveLength(0)
+    } finally {
+      config().TRADING_LIVE_ENABLED = before
+    }
+  })
+
+  it('rotates live cash around conserved dust, buys another admitted pair and only sells residuals', async () => {
+    const before = config().TRADING_LIVE_ENABLED
+    config().TRADING_LIVE_ENABLED = true
+    try {
+      await allocateLive({ okx: 20, bybit: 0, binance: 0, bitget: 0 })
+      exchange.price = '102'
+      exchange.balances.USDT = { total: units('20'), available: units('20') }
+      const live = scope('okx', 'live')
+      await startTrading(live, 'ТОРГОВАТЬ 20 USDT НА OKX', false, factory)
+      const [original] = await agents(live)
+      const dust = units('0.000001'),
+        basis = units('0.0001'),
+        cash = units('19.72')
+      await query(
+        "UPDATE trading_agents SET base=$2,basis=$3,cash=$4,assigned_at=now()-interval '8 hours' WHERE id=$1",
+        [original!.id, dust.toString(), basis.toString(), cash.toString()],
+      )
+      exchange.balances.USDT = { total: cash, available: cash }
+      exchange.balances[original!.symbol.slice(0, -5)] = { total: dust, available: dust }
+      const beforeMetrics = (await tradingView(live)).metrics
+      await tick()
+      const team = await agents(live)
+      const slot = team.find((a) => !a.residual_only)!,
+        residual = team.find((a) => a.residual_only)!
+      expect(slot.symbol).not.toBe(original!.symbol)
+      expect(slot.id).toBe(original!.id)
+      expect(residual).toMatchObject({
+        symbol: original!.symbol,
+        base: dust.toString(),
+        basis: basis.toString(),
+        cash: '0',
+      })
+      expect(slot).toMatchObject({ base: '0', basis: '0', cash: cash.toString() })
+      expect(exchange.placed).toHaveLength(0)
+      expect((await portfolio(live)).check_error).toBe('')
+      expect((await tradingView(live)).metrics.equity).toBe(beforeMetrics.equity)
+      expect(
+        (await tradingOverview('live')).connections.find((c) => c.exchange === 'okx')!.activeAgents,
+      ).toBe(1)
+      expect(await agents(scope('bybit', 'live'))).toHaveLength(0)
+      expect(await agents(scope('okx', 'paper'))).toHaveLength(0)
+      exchange.price = '100'
+      await tick()
+      expect(exchange.placed).toHaveLength(1)
+      expect(exchange.placed[0]).toMatchObject({ symbol: slot.symbol, side: 'buy' })
+      await expect(
+        query(
+          `INSERT INTO trading_orders(id,mode,exchange,agent_id,client_id,symbol,side,qty,price,status,reason)
+        VALUES($1,'live','okx',$2,'residualforbidden',$3,'buy',1,1,'prepared','TEST')`,
+          [randomUUID(), residual.id, residual.symbol],
+        ),
+      ).rejects.toThrow('TRADING_RESIDUAL_BUY_FORBIDDEN')
+      await tick()
+      expect((await agents(live)).filter((a) => a.residual_only)).toHaveLength(1)
+      expect(
+        await query("SELECT id FROM trading_events WHERE reason='SCOUT_RESIDUAL_PARKED'"),
+      ).toHaveLength(1)
+      expect((await portfolio(live)).check_error).toBe('')
+      // The exchange later admits the remaining quantity. It is sold, never topped up.
+      const originalMarket = exchange.market.bind(exchange)
+      exchange.market = async (symbol) => {
+        const m = await originalMarket(symbol)
+        if (symbol === residual.symbol) m.instrument.minQty = m.instrument.lot
+        return m
+      }
+      await tick()
+      expect(exchange.placed.filter((o) => o.symbol === residual.symbol)).toHaveLength(1)
+      expect(exchange.placed.find((o) => o.symbol === residual.symbol)!.side).toBe('sell')
+      const beforeRelease = (await agents(live)).find((a) => a.id === slot.id)!.cash
+      const [sold] = await query(
+        'SELECT cash,realized,base,basis FROM trading_agents WHERE id=$1',
+        [residual.id],
+      )
+      expect(sold!.base).toBe('0')
+      await tick()
+      expect((await agents(live)).find((a) => a.id === slot.id)!.cash).toBe(
+        (BigInt(beforeRelease) + BigInt(sold!.cash)).toString(),
+      )
+      expect(
+        (
+          await query('SELECT status,round_trips FROM trading_agents WHERE id=$1', [residual.id])
+        )[0],
+      ).toMatchObject({ status: 'archived', round_trips: 0 })
+      const afterRelease = (await agents(live)).find((a) => a.id === slot.id)!.cash
+      await tick()
+      expect((await agents(live)).find((a) => a.id === slot.id)!.cash).toBe(afterRelease)
+      expect((await portfolio(live)).check_error).toBe('')
+    } finally {
+      config().TRADING_LIVE_ENABLED = before
+    }
   })
 
   it('re-enters a 20 USDT live portfolio after a loss and dust exit within the existing exposure cap', async () => {
