@@ -15,6 +15,7 @@ export const modelRoles = [
   { id: 'director', name: 'Руководитель' },
   { id: 'proposal', name: 'Автор отклика' },
   { id: 'manager', name: 'Торговый менеджер' },
+  { id: 'bybit-analyst', name: 'Криптоаналитик Bybit' },
   { id: 'browser', name: 'Оператор браузера' },
   { id: 'platform-writer', name: 'Исполнитель заданий площадки' },
 ] as const
@@ -286,6 +287,11 @@ export async function refreshManagerInstructions(db: Connection) {
     [],
     db,
   )
+  await query(
+    "UPDATE trading_live_reviews SET status='rejected',reason='MANAGER_INSTRUCTIONS_CHANGED' WHERE status='queued'",
+    [],
+    db,
+  )
 }
 export async function savePreparedProfile(
   { input, pricing }: Awaited<ReturnType<typeof prepareProfile>>,
@@ -311,7 +317,8 @@ export async function savePreparedProfile(
     },
     db,
   )
-  if (input.role === 'manager') await refreshManagerInstructions(db)
+  if (input.role === 'manager' || input.role === 'bybit-analyst')
+    await refreshManagerInstructions(db)
 }
 export async function addContext(value: unknown) {
   const input = contextSchema.parse(value)
@@ -330,7 +337,8 @@ export async function addContext(value: unknown) {
       [id, input.role, input.title, input.content],
       db,
     )
-    if (input.role === 'manager' || input.role === 'all') await refreshManagerInstructions(db)
+    if (input.role === 'manager' || input.role === 'bybit-analyst' || input.role === 'all')
+      await refreshManagerInstructions(db)
     await audit(
       'agent_context_added',
       'Владелец добавил контекст для агентов.',
@@ -346,7 +354,8 @@ export async function deleteContext(id: string) {
     await query('SELECT pg_advisory_xact_lock(735097)', [], db)
     const rows = await query('DELETE FROM agent_context WHERE id=$1 RETURNING role', [id], db)
     if (!rows.length) throw new Error('CONTEXT_NOT_FOUND')
-    if (rows[0]!.role === 'manager' || rows[0]!.role === 'all') await refreshManagerInstructions(db)
+    if (rows[0]!.role === 'manager' || rows[0]!.role === 'bybit-analyst' || rows[0]!.role === 'all')
+      await refreshManagerInstructions(db)
     await audit(
       'agent_context_deleted',
       'Владелец удалил контекст из следующих запусков.',

@@ -1,3 +1,4 @@
+import { applyBybitReview } from '../manager/live'
 import { releaseResidualCash } from './residuals'
 import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import {
@@ -831,6 +832,7 @@ export async function tradingTick(
             const forceExit =
               ['DAILY_LOSS_LIMIT', 'DRAWDOWN_LIMIT', 'OWNER_EXIT'].includes(p.reason) ||
               p.demo_probe
+            await atomic(db, () => applyBybitReview(s, db))
             for (const agent of await agents(s, db)) {
               if (isStopping() || (await pendingOrder(s, db))) break
               const market = markets[agent.symbol]

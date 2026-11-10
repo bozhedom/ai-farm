@@ -1,3 +1,17 @@
+import {
+  bybitSnapshot,
+  pendingBybitReview,
+  maintainBybitReviews,
+  validateLivePlan,
+  type LiveSnapshot,
+} from './live'
+import {
+  liveModelBlocker,
+  livePlanSchema,
+  liveCritiqueSchema,
+  planBybitWithModel,
+  type LivePlanner,
+} from './live-plan'
 import { assertDirectionAllowed, directionAllowed } from '../work-focus'
 import { withAgentProfiles, roleModel } from '../agent-profiles'
 import { randomUUID } from 'node:crypto'
@@ -174,7 +188,7 @@ function safeError(error: unknown) {
   return 'MANAGER_PLAN_FAILED'
 }
 
-async function claimRun(providerReady: boolean, skip = '') {
+async function claimRun(providerReady: boolean, skip = '', live: LiveSnapshot | null = null) {
   return transaction(async (db) => {
     // The same first lock as meteredCall; no exchange lock is held across the model request.
     const [system] = await query('SELECT mode FROM system_state WHERE id=true FOR UPDATE', [], db)
@@ -206,7 +220,7 @@ async function claimRun(providerReady: boolean, skip = '') {
       !(await directionAllowed('manager', db))
     )
       return null
-    const blocker = managerModelBlocker()
+    const blocker = live ? liveModelBlocker(live) : managerModelBlocker()
     if (blocker) {
       await query(
         'UPDATE trading_manager SET last_error=$1 WHERE id=true AND last_error<>$1',
@@ -216,6 +230,8 @@ async function claimRun(providerReady: boolean, skip = '') {
       return null
     }
     if (
+      !live &&
+      skip !== 'MANAGER_LIVE_WATCHING' &&
       !(
         await query(
           "SELECT id FROM trading_agents WHERE mode='paper' AND status='active' LIMIT 1",
@@ -232,13 +248,14 @@ async function claimRun(providerReady: boolean, skip = '') {
       return null
     }
     if (
+      !live &&
       !row.requested_at &&
       row.attempted_at &&
       now - row.attempted_at.getTime() < managerLimits().intervalMs
     )
       return null
     if (
-      row.requested_at &&
+      (live || row.requested_at) &&
       row.attempted_at &&
       now - row.attempted_at.getTime() < P.manualCooldownMs
     )
@@ -277,6 +294,7 @@ async function claimRun(providerReady: boolean, skip = '') {
         )
       return null
     }
+    if (live && !(await pendingBybitReview(live, !!row.requested_at))) return null
     const id = randomUUID(),
       provider = managerProvider()
     let reservationId: string | null = null,
@@ -302,6 +320,22 @@ async function claimRun(providerReady: boolean, skip = '') {
       ],
       db,
     )
+    if (live)
+      await query(
+        `INSERT INTO trading_live_reviews(run_id,agent_id,trigger_key,source,instruction_revision,status,reason,expires_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,now()+$8*interval '1 millisecond')`,
+        [
+          id,
+          live.source.id,
+          live.triggerKey,
+          live,
+          row.instruction_revision,
+          error ? 'failed' : 'analyzing',
+          error,
+          P.liveProposalLifetimeMs,
+        ],
+        db,
+      )
     await query(
       `UPDATE trading_manager SET attempted_at=now(),requested_at=NULL,last_error=$4,
       lease_id=CASE WHEN $4='' THEN $1::uuid ELSE NULL END,
@@ -368,6 +402,7 @@ async function finishPlan(
   run: { id: string; reservationId: string; instructionRevision: number },
   snapshot: ManagerSnapshot,
   plan: ManagerPlan,
+  extra?: (db: Connection) => Promise<void>,
 ) {
   return transaction(async (db) => {
     await assertDirectionAllowed('manager', db)
@@ -414,6 +449,7 @@ async function finishPlan(
         db,
       )
     }
+    if (extra) await extra(db)
     const updated = await query(
       `UPDATE trading_manager SET lease_id=NULL,lease_until=NULL,last_error='' WHERE id=true AND lease_id=$1 AND lease_until>clock_timestamp() RETURNING id`,
       [run.id],
@@ -427,7 +463,7 @@ async function finishPlan(
     )
     await audit(
       'trading_manager_plan',
-      'Менеджер закончил разбор и сохранил бумажные задачи.',
+      'Менеджер закончил разбор и сохранил проверенные предложения.',
       { runId: run.id, tasks: plan.tasks.length },
       db,
     )
@@ -439,37 +475,73 @@ export async function managerTick(
   planner: ManagerPlanner = planWithModel,
   isStopping = () => false,
   providerReady = true,
+  livePlanner: LivePlanner = planBybitWithModel,
 ) {
-  return withAgentProfiles(() => managerTickWithProfiles(planner, isStopping, providerReady))
+  return withAgentProfiles(() =>
+    managerTickWithProfiles(planner, isStopping, providerReady, livePlanner),
+  )
 }
 async function managerTickWithProfiles(
   planner: ManagerPlanner,
   isStopping: () => boolean,
   providerReady: boolean,
+  livePlanner: LivePlanner,
 ) {
   await ensureManager()
   if (isStopping()) return false
   await releaseDemoTasks()
   await advanceManagerTasks()
+  await maintainBybitReviews()
   if (isStopping()) return false
-  const [state] = await query<ManagerRow>('SELECT enabled FROM trading_manager WHERE id=true')
-  const skip =
+  const [state] = await query<ManagerRow>(
+    'SELECT enabled,requested_at FROM trading_manager WHERE id=true',
+  )
+  const liveSnapshot = state?.enabled ? await bybitSnapshot() : null
+  const live = await pendingBybitReview(liveSnapshot, !!state?.requested_at)
+  let skip =
     state?.enabled && managerProvider().paid ? reviewSkipReason(await managerSnapshot()) : ''
-  const run = await claimRun(providerReady, skip)
+  if (skip && liveSnapshot && !live) skip = 'MANAGER_LIVE_WATCHING'
+  const run = await claimRun(providerReady, live ? '' : skip, live)
   if (!run) return false
   try {
-    const snapshot = await managerSnapshot()
+    const snapshot = live ? { bybit: live } : await managerSnapshot()
     const updated = await query(
       "UPDATE trading_manager_runs SET snapshot=$2 WHERE id=$1 AND status='running' RETURNING id",
       [run.id, snapshot],
     )
     if (!updated.length) return false
     if (isStopping()) throw new Error('MANAGER_INTERRUPTED')
+    if (live) {
+      const answer = await livePlanner(live, run)
+      const plan = validateLivePlan(livePlanSchema.parse(answer.plan), live)
+      const critique = liveCritiqueSchema.parse(answer.critique)
+      const accepted = await finishPlan(
+        run,
+        { at: live.at, portfolios: [], recentTasks: [] },
+        { summary: plan.summary, tasks: [] },
+        async (db) => {
+          await query(
+            `UPDATE trading_live_reviews SET proposal=$2,review=$3,analyst_model=$4,status=$5,reason=$6 WHERE run_id=$1 AND status='analyzing'`,
+            [
+              run.id,
+              plan,
+              critique,
+              answer.analystModel,
+              plan.proposal && critique.approved ? 'queued' : 'completed',
+              plan.proposal && critique.approved ? 'MANAGER_LIVE_QUEUED' : 'MANAGER_LIVE_NO_CHANGE',
+            ],
+            db,
+          )
+        },
+      )
+      return accepted
+    }
+    const paperSnapshot = snapshot as ManagerSnapshot
     const plan = validatePlanAgainstSnapshot(
-      managerPlanSchema.parse(await withAgentProfiles(() => planner(snapshot, run), true)),
-      snapshot,
+      managerPlanSchema.parse(await withAgentProfiles(() => planner(paperSnapshot, run), true)),
+      paperSnapshot,
     )
-    return await finishPlan(run, snapshot, plan)
+    return await finishPlan(run, paperSnapshot, plan)
   } catch (error) {
     const reason = safeError(error)
     await transaction(async (db) => {
@@ -488,5 +560,6 @@ async function managerTickWithProfiles(
     return false
   } finally {
     await closeReservation(run.reservationId)
+    await maintainBybitReviews()
   }
 }

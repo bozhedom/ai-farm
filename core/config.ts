@@ -128,6 +128,7 @@ const schema = z.object({
   COMPUTER_USE_PLATFORM_DOMAINS: z.string().trim().default(''),
   // Separate credentials: a demo request can never fall back to a real account.
   TRADING_LIVE_ENABLED: flag.default(false),
+  BYBIT_STRATEGY_REVIEW_ENABLED: flag.default(false),
   // The previous text-services experiment remains available with its preserved history.
   WORKSPACE_MODE: z.enum(['trading', 'studio']).default('trading'),
   OKX_API_HOST: z

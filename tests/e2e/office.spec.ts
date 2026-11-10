@@ -1011,3 +1011,78 @@ test('stop all cancels a restart while the exchange details are still loading', 
   await expect(page.getByRole('button', { name: 'Продолжить', exact: true })).toBeEnabled()
   expect(controls).toEqual(['stop_all'])
 })
+
+for (const width of [1440, 390]) {
+  test(`Bybit manager explains reactive reviews and preserved risk stops at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 })
+    await stubOffice(page, officeFixtures())
+    const now = new Date().toISOString()
+    const view = {
+      state: {
+        enabled: true,
+        thinking: false,
+        requested: false,
+        workerAlive: true,
+        nextReviewAt: now,
+        blocked: [],
+        lastError: '',
+        intervalHours: 6,
+        manualCooldownMinutes: 30,
+        minEvaluationHours: 24,
+        minRoundTrips: 5,
+        maxObservationDays: 7,
+        maxDailyRuns: 4,
+        runsToday: 1,
+        provider: 'openai',
+        model: 'anthropic/claude-opus-5.5',
+        demo: false,
+        spentKopecks: 25,
+        reservedKopecks: 0,
+        dailyLimitKopecks: 48000,
+      },
+      runs: [],
+      tasks: [],
+      bybit: {
+        enabled: true,
+        model: 'anthropic/claude-opus-5.5',
+        reviews: [
+          {
+            id: 'review',
+            status: 'queued',
+            reason: 'MANAGER_RISK_PAUSED',
+            summary: 'После комиссий есть убыток. Покупки приостановлены лимитом риска.',
+            hypothesis: 'Проверить более редкий вход после изменения цены.',
+            critique:
+              'Изменение обосновано наблюдениями; результат нужно проверить следующими сделками.',
+            analystModel: 'anthropic/claude-opus-5.5',
+            createdAt: now,
+            appliedAt: null,
+          },
+        ],
+      },
+    }
+    await page.route('**/api/trading/manager', (route) => route.fulfill({ json: view }))
+    const errors = watchConsole(page)
+    await page.goto('/office/manager')
+    await expect(
+      page.getByRole('heading', { name: 'Разбор Bybit Live', exact: true }),
+    ).toBeVisible()
+    await expect(page.getByText(/Один повод не вызывает повторных оплат/)).toBeVisible()
+    await expect(page.getByText(/Менеджер: anthropic\/claude-opus-5.5/)).toBeVisible()
+    await expect(
+      page.getByText('После комиссий есть убыток. Покупки приостановлены лимитом риска.', {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(page.getByText(/Сработал торговый лимит риска/)).toBeVisible()
+    await noHorizontalScroll(page)
+    await page.screenshot({
+      path: `${shots}/bybit-manager-${width}.png`,
+      fullPage: true,
+      animations: 'disabled',
+    })
+    expect(errors).toEqual([])
+  })
+}

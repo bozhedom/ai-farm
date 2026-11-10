@@ -28,6 +28,21 @@ export interface ManagerTaskView {
   outcome: ManagerOutcome | null
 }
 export interface ManagerView {
+  bybit?: {
+    enabled: boolean
+    model: string
+    reviews: {
+      id: string
+      status: string
+      reason: string
+      summary: string
+      hypothesis: string
+      critique: string
+      analystModel: string
+      createdAt: string
+      appliedAt: string | null
+    }[]
+  }
   state: {
     enabled: boolean
     thinking: boolean

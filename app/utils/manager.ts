@@ -2,6 +2,13 @@ import type { ManagerOutcome, ManagerTaskStatus } from '../../core/contracts/man
 import { tradingReason } from './trading'
 
 const reasons: Record<string, string> = {
+  MANAGER_LIVE_WATCHING: 'Bybit под наблюдением. Нового повода для платного разбора пока нет.',
+  MANAGER_LIVE_QUEUED:
+    'Изменение Bybit согласовано. Ждёт включённой торговли, свободной стратегии и свежего рынка.',
+  MANAGER_LIVE_APPLIED:
+    'Параметры Bybit изменены. Результат проверяется следующими сделками; прибыль пока не доказана.',
+  MANAGER_LIVE_NO_CHANGE: 'Разбор завершён без изменения стратегии.',
+  MANAGER_LIVE_REJECTED: 'Предложение не прошло независимую проверку Bybit.',
   MANAGER_DISABLED: 'Менеджер выключен. Включите его, чтобы он продолжил разбирать идеи.',
   MANAGER_PAUSED: 'Менеджер на паузе. Уже работающие торговые агенты продолжают свою работу.',
   MANAGER_BUSY: 'Разбор уже идёт. Его результат появится здесь.',

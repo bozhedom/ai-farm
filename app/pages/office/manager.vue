@@ -49,7 +49,7 @@ const stateLabel = computed(() => {
   if (state.thinking) return 'Разбирает результаты'
   if (state.requested) return 'Разбор запрошен'
   if (state.blocked.length || !state.workerAlive) return 'Ждёт условий для разбора'
-  return 'Работает по расписанию'
+  return data.value.bybit?.enabled ? 'Следит за результатами Bybit' : 'Работает по расписанию'
 })
 const canReview = computed(() => {
   const state = data.value?.state
@@ -113,7 +113,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
         <div>
           <h1>Менеджер торговли</h1>
           <p class="t-muted">
-            Подбирает стратегии, сравнивает результаты и ставит задачи в тренировке.
+            Разбирает результаты торговли, проверяет гипотезы и готовит изменения стратегий.
           </p>
         </div>
       </div>
@@ -132,8 +132,8 @@ async function control(action: 'enable' | 'pause' | 'review') {
             <div>
               <h2 id="manager-control-title">{{ stateLabel }}</h2>
               <p class="manager-caption">
-                Разбор раз в {{ data.state.intervalHours }} ч. Сегодня {{ data.state.runsToday }} из
-                {{ data.state.maxDailyRuns }}.
+                Плановый разбор раз в {{ data.state.intervalHours }} ч. Сегодня
+                {{ data.state.runsToday }} из {{ data.state.maxDailyRuns }}.
               </p>
             </div>
             <div class="manager-actions">
@@ -166,7 +166,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
             v-if="data.state.enabled && data.state.nextReviewAt && !working"
             class="manager-caption"
           >
-            Следующий разбор {{ shortTime(data.state.nextReviewAt) }}.
+            Плановый разбор не раньше {{ shortTime(data.state.nextReviewAt) }}.
           </p>
           <p v-if="data.state.demo" class="t-notice manager-demo">
             Демонстрационный режим: разборы по готовым примерам.
@@ -186,9 +186,47 @@ async function control(action: 'enable' | 'pause' | 'review') {
           <p v-if="notice" class="t-notice" role="status">{{ notice }}</p>
           <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
           <p class="manager-caption manager-scope">
-            Работает только с уже запущенной тренировкой и меняет свободных агентов. Выключение
-            менеджера не останавливает их торговлю.
+            Paper-эксперименты выполняются в уже запущенной тренировке. Для Bybit Live доступен
+            отдельный разбор ниже. Менеджер не запускает торговлю и не снимает остановки.
           </p>
+        </section>
+
+        <section
+          v-if="data.bybit?.enabled"
+          class="manager-summary"
+          aria-labelledby="bybit-review-title"
+        >
+          <h2 id="bybit-review-title">Разбор Bybit Live</h2>
+          <p class="manager-caption">
+            Новый убыток, риск-стоп или простой от 6 часов запрашивает разбор без ожидания
+            расписания. Один повод не вызывает повторных оплат. Между разборами минимум
+            {{ data.state.manualCooldownMinutes }} минут; общий предел:
+            {{ data.state.maxDailyRuns }} за сутки.
+          </p>
+          <p class="manager-caption">
+            Менеджер: {{ data.state.model }}. Аналитик Bybit: {{ data.bybit.model }}.
+          </p>
+          <p class="manager-caption">
+            Изменяются только семейство и параметры свободной стратегии после проверки аналитиком.
+            Капитал и ограничения сохраняются. При риск-стопе предложение ждёт решения владельца о
+            продолжении.
+          </p>
+          <p v-if="!data.bybit.reviews.length" class="t-muted">
+            Пока нет завершённых разборов Bybit.
+          </p>
+          <article
+            v-for="review in data.bybit.reviews.slice(0, 3)"
+            :key="review.id"
+            class="t-details-body"
+          >
+            <p class="manager-caption">
+              {{ shortTime(review.createdAt) }} · {{ managerReason(review.reason) }}
+            </p>
+            <p>{{ review.summary }}</p>
+            <p v-if="review.hypothesis">Гипотеза: {{ review.hypothesis }}</p>
+            <p v-if="review.critique">Проверка аналитика: {{ review.critique }}</p>
+            <p v-if="review.appliedAt">Применено {{ shortTime(review.appliedAt) }}.</p>
+          </article>
         </section>
 
         <section class="manager-summary" aria-labelledby="manager-summary-title">
@@ -209,7 +247,7 @@ async function control(action: 'enable' | 'pause' | 'review') {
               working
                 ? 'Менеджер готовит первый разбор. Дождитесь результата.'
                 : data.state.enabled
-                  ? 'Первый разбор появится после проверки работающей тренировки.'
+                  ? 'Первый разбор появится, когда будут данные для анализа.'
                   : 'Включите менеджера, чтобы он начал разбирать тренировку и предлагать эксперименты.'
             }}
           </p>
@@ -292,17 +330,17 @@ async function control(action: 'enable' | 'pause' | 'review') {
         <details class="manager-help manager-details">
           <summary>Как работает менеджер</summary>
           <p>
-            Менеджер предлагает новые настройки неприбыльным агентам с историей от 24 часов.
-            Изменения вступают в силу после закрытия позиций и завершения ордеров. Прибыльные агенты
-            продолжают работать со своими настройками.
+            В тренировке менеджер предлагает новые настройки неприбыльным агентам с историей от 24
+            часов. Изменения вступают в силу после закрытия позиций и завершения ордеров. Прибыльные
+            агенты продолжают работать со своими настройками.
           </p>
           <p>
-            Менеджер не запускает торговлю и не снимает её риск-паузу. Счета «Тест биржи» и
-            «Реальная торговля» он не меняет. Выключение менеджера не останавливает уже торгующих
-            агентов; ими управляют в разделе «Мои биржи».
+            Менеджер не запускает торговлю и не снимает её риск-паузу. Отдельное разрешение Bybit
+            Live позволяет менять только параметры после проверки аналитика. Деньги и лимиты
+            сохраняются. Выключение менеджера не останавливает уже торгующих агентов.
           </p>
           <p>
-            Автоматический разбор идёт раз в {{ data.state.intervalHours }} ч, не более
+            Плановый разбор идёт раз в {{ data.state.intervalHours }} ч, не более
             {{ data.state.maxDailyRuns }} разборов за сутки UTC. Ручной запрос доступен не чаще
             одного раза в {{ data.state.manualCooldownMinutes }} мин. и использует тот же лимит.
           </p>

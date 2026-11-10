@@ -110,7 +110,7 @@ it('passes role instructions and scoped context into the actual costed request, 
   })
   await deleteContext(added.id)
   await withAgentProfiles(async () => expect(roleContext('Критик')).toEqual([]))
-  expect((await profilesView()).roles).toHaveLength(11)
+  expect((await profilesView()).roles).toHaveLength(12)
   expect(await query("SELECT * FROM audit_events WHERE kind='agent_context_deleted'")).toHaveLength(
     1,
   )

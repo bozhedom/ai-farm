@@ -1,4 +1,5 @@
-import { withAgentProfiles } from '../agent-profiles'
+import { config, paidModelId } from '../config'
+import { roleModel, withAgentProfiles } from '../agent-profiles'
 import { query } from '../db'
 import { MANAGER_POLICY as P } from '../policy'
 import type { ManagerView } from '../contracts/manager'
@@ -17,7 +18,7 @@ export async function managerView(): Promise<ManagerView> {
 }
 async function managerViewWithProfiles(): Promise<ManagerView> {
   await ensureManager()
-  const [states, systems, budget, runs, tasks] = await Promise.all([
+  const [states, systems, budget, runs, tasks, liveReviews] = await Promise.all([
     query<ManagerRow>('SELECT * FROM trading_manager WHERE id=true'),
     query(
       "SELECT mode,worker_heartbeat,provider_readiness,EXISTS(SELECT 1 FROM trading_agents WHERE mode='paper' AND status='active') AS paper_ready FROM system_state WHERE id=true",
@@ -30,6 +31,8 @@ async function managerViewWithProfiles(): Promise<ManagerView> {
       TaskRow & { is_demo: boolean }
     >(`SELECT t.*,r.is_demo FROM trading_manager_tasks t JOIN trading_manager_runs r ON r.id=t.run_id
       ORDER BY CASE WHEN t.status IN ('queued','observing') THEN 0 ELSE 1 END,t.created_at DESC LIMIT 40`),
+    query(`SELECT run_id,status,reason,proposal->>'summary' AS summary,proposal->'proposal'->>'hypothesis' AS hypothesis,
+      review->>'reason' AS critique,analyst_model,created_at,applied_at FROM trading_live_reviews ORDER BY created_at DESC LIMIT 8`),
   ])
   const state = states[0]!,
     system = systems[0],
@@ -39,7 +42,8 @@ async function managerViewWithProfiles(): Promise<ManagerView> {
   const workerAlive = workerAge >= 0 && workerAge < 90_000
   const blocked: string[] = []
   if (!workerAlive) blocked.push('MANAGER_WORKER_UNAVAILABLE')
-  if (!system?.paper_ready) blocked.push('MANAGER_NO_PAPER')
+  if (!system?.paper_ready && !config().BYBIT_STRATEGY_REVIEW_ENABLED)
+    blocked.push('MANAGER_NO_PAPER')
   const modelBlocker = managerModelBlocker()
   if (modelBlocker) blocked.push(modelBlocker)
   if (system?.mode !== 'running') blocked.push('MANAGER_SYSTEM_PAUSED')
@@ -57,6 +61,21 @@ async function managerViewWithProfiles(): Promise<ManagerView> {
       : 0,
   )
   return {
+    bybit: {
+      enabled: config().BYBIT_STRATEGY_REVIEW_ENABLED,
+      model: roleModel('bybit-analyst') || paidModelId(config()),
+      reviews: liveReviews.map((r) => ({
+        id: r.run_id,
+        status: r.status,
+        reason: r.reason,
+        summary: r.summary || '',
+        hypothesis: r.hypothesis || '',
+        critique: r.critique || '',
+        analystModel: r.analyst_model,
+        createdAt: r.created_at.toISOString(),
+        appliedAt: r.applied_at?.toISOString() || null,
+      })),
+    },
     state: {
       enabled: state.enabled,
       thinking: !!state.lease_until && state.lease_until.getTime() > now,
