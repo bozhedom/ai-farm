@@ -1,3 +1,5 @@
+import { reviewManagerTruncation } from '../../core/manager/cost-review'
+import { managerBudget } from '../../core/manager/runtime'
 import { randomUUID } from 'node:crypto'
 import { beforeAll, beforeEach, afterAll, afterEach, expect, it, vi } from 'vitest'
 import { config } from '../../core/config'
@@ -322,4 +324,48 @@ it('does not pay for an improving result and reacts to a new period of inactivit
   await query("UPDATE trading_agents SET last_order_at=now()-interval '7 hours' WHERE id=$1", [id])
   expect(await tick(fn)).toBe(true)
   expect(fn).toHaveBeenCalledTimes(2)
+})
+
+it('reviews only a matching billed truncation receipt and preserves the charge and idempotency key', async () => {
+  const reservation = randomUUID(),
+    callId = randomUUID()
+  await query(
+    "INSERT INTO budget_reservations(id,dedupe_key,category,limit_kopecks,spent_kopecks,status) VALUES($1,$2,'trading_manager',5000,3000,'closed')",
+    [reservation, 'receipt:' + reservation],
+  )
+  await query(
+    `INSERT INTO tool_calls(id,call_key,reservation_id,role,status,reserved_kopecks,charged_kopecks,is_demo,provider,model,input_tokens,output_tokens,actual_microusd,charged_microusd,provider_response_id,error_code)
+    VALUES($1,'immutable-failed-call',$2,'Торговый менеджер','uncertain',3000,3000,false,'openai','anthropic/claude-opus-5.5',9850,1600,71400,216970,'gen-receipt','MODEL_OUTPUT_INCOMPLETE')`,
+    [callId, reservation],
+  )
+  const before = (await query('SELECT * FROM tool_calls WHERE id=$1', [callId]))[0]
+  const receipt = {
+    id: 'gen-receipt',
+    model: 'anthropic/claude-opus-5.5-20260921',
+    total_cost: '0.0714',
+    native_tokens_prompt: 9850,
+    native_tokens_completion: 1600,
+    finish_reason: 'length',
+  }
+  expect((await managerBudget()).uncertain).toBe(true)
+  await expect(
+    reviewManagerTruncation(callId, async () => ({ ...receipt, total_cost: '0.1' })),
+  ).rejects.toThrow('MANAGER_RECEIPT_MISMATCH')
+  await expect(
+    reviewManagerTruncation(callId, async () => ({ ...receipt, model: 'other/model' })),
+  ).rejects.toThrow('MANAGER_RECEIPT_MISMATCH')
+  await expect(
+    reviewManagerTruncation(callId, async () => ({ ...receipt, native_tokens_completion: 1599 })),
+  ).rejects.toThrow('MANAGER_RECEIPT_MISMATCH')
+  expect((await managerBudget()).uncertain).toBe(true)
+  expect((await reviewManagerTruncation(callId, async () => receipt)).recorded).toBe(true)
+  expect((await reviewManagerTruncation(callId, async () => receipt)).recorded).toBe(false)
+  expect((await managerBudget()).uncertain).toBe(false)
+  expect((await query('SELECT * FROM tool_calls WHERE id=$1', [callId]))[0]).toEqual(before)
+  await query("UPDATE tool_calls SET status='pending' WHERE id=$1", [callId])
+  expect((await managerBudget()).uncertain).toBe(true)
+  await query("UPDATE tool_calls SET status='uncertain' WHERE id=$1", [callId])
+  // The confirmation becomes inapplicable if a cost record changes afterwards.
+  await query('UPDATE tool_calls SET actual_microusd=71401 WHERE id=$1', [callId])
+  expect((await managerBudget()).uncertain).toBe(true)
 })

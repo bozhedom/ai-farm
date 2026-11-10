@@ -73,6 +73,22 @@ describe('GPT-6 Astra through OpenRouter', () => {
     })
   })
 
+  it('bounds Opus adaptive reasoning without changing other model routes', async () => {
+    vi.spyOn(profiles, 'currentModel').mockReturnValue('anthropic/claude-opus-5.5')
+    vi.spyOn(profiles, 'currentPricing').mockReturnValue({
+      inputNano: 4000,
+      outputNano: 20000,
+      cacheWriteNano: 5000,
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(response()))))
+    await openaiModel({ ...args, maxTokens: 2800 })
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string)
+    expect(body.model).toBe('anthropic/claude-opus-5.5')
+    expect(body.reasoning).toEqual({ effort: 'low', exclude: true })
+    expect(body.max_tokens).toBe(2800)
+    expect(body.provider.allow_fallbacks).toBe(false)
+  })
+
   it.each(['json', 'text'] as const)(
     'uses a selected %s model while still validating its JSON result',
     async (outputFormat) => {

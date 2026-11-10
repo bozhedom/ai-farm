@@ -25,7 +25,7 @@ export function paidRequestEnvelope(maxTokens: number) {
   return {
     model: currentModel(),
     max_tokens: maxTokens,
-    ...(currentModel() === 'openai/gpt-6-astra'
+    ...(['openai/gpt-6-astra', 'anthropic/claude-opus-5.5'].includes(currentModel())
       ? { reasoning: { effort: 'low', exclude: true } }
       : {}),
     stream: false,

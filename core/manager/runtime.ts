@@ -112,6 +112,10 @@ export async function managerBudget(db?: Connection) {
     (SELECT coalesce(sum(limit_kopecks-spent_kopecks),0)::int FROM budget_reservations WHERE category='trading_manager' AND status='open') AS reserved,
     EXISTS(SELECT 1 FROM tool_calls t JOIN budget_reservations r ON r.id=t.reservation_id WHERE r.category='trading_manager'
       AND t.status IN ('pending','uncertain') AND t.provider IN ('openai','yandex') AND NOT t.is_demo
+      AND NOT EXISTS(SELECT 1 FROM trading_manager_cost_reviews reviewed WHERE reviewed.call_id=t.id
+        AND t.status='uncertain' AND t.error_code='MODEL_OUTPUT_INCOMPLETE'
+        AND reviewed.provider_response_id=t.provider_response_id
+        AND reviewed.charged_microusd=t.charged_microusd AND reviewed.actual_microusd=t.actual_microusd)
       AND (t.status='uncertain' OR NOT EXISTS(
         SELECT 1 FROM trading_manager_runs run JOIN trading_manager m ON m.lease_id=run.id
         WHERE run.reservation_id=t.reservation_id AND run.status='running' AND m.lease_until>now()
