@@ -437,6 +437,51 @@ function accountTransport(exchange: keyof typeof adapters, problem = '') {
   })
 }
 describe('account admission', () => {
+  it('accepts empty Bybit interest only for explicit non-collateral coins with zero debt', async () => {
+    configure()
+    const transport = (change: Record<string, unknown> = {}) => {
+      const original = accountTransport('bybit')
+      return async (...args: Parameters<typeof fetch>) => {
+        const response = await original(...args)
+        if (!String(args[0]).includes('/wallet-balance')) return response
+        const json = await response.json()
+        Object.assign(json.result.list[0].coin[0], {
+          accruedInterest: '',
+          marginCollateral: false,
+          spotBorrow: '0',
+          ...change,
+        })
+        return new Response(JSON.stringify(json), {
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+    }
+    const account = await new BybitVenue('live', transport()).account(['BTC-USDT'])
+    expect(account.balances.USDT.available).toBe(units('100.000000000000000001'))
+    for (const change of [
+      { marginCollateral: true },
+      { marginCollateral: undefined },
+      { spotBorrow: undefined },
+      { spotBorrow: '' },
+      { spotBorrow: '1' },
+      { borrowAmount: '1' },
+      { borrowAmount: '' },
+      { accruedInterest: '0.00000001' },
+      { accruedInterest: 'unknown' },
+      { equity: '99' },
+      { totalPositionIM: '1' },
+    ])
+      await expect(
+        new BybitVenue('live', transport(change)).account(['BTC-USDT']),
+      ).rejects.toThrow()
+    await expect(
+      new BybitVenue('live', transport(), {
+        credentials: { key: 'execution-key', secret: 'execution-secret', passphrase: '' },
+        authorize: () => undefined,
+      }).account(['BTC-USDT']),
+    ).rejects.toThrow('TRADING_DECIMAL_INVALID')
+  })
+
   it('accepts the owner-authorized Bybit key without extending isolated execution permissions', async () => {
     configure()
     const transport = accountTransport('bybit', 'unified-permission')

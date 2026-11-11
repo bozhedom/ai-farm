@@ -253,6 +253,7 @@ export class BybitVenue implements TradingVenue {
             locked: str,
             borrowAmount: str,
             accruedInterest: str,
+            marginCollateral: z.boolean().optional(),
             spotBorrow: str.optional(),
             totalPositionIM: str,
             totalOrderIM: str,
@@ -273,11 +274,20 @@ export class BybitVenue implements TradingVenue {
       )
     const balances = emptyBalances()
     for (const coin of wallet.coin) {
-      if (
-        [coin.borrowAmount, coin.accruedInterest, coin.spotBorrow || '0'].some(
-          (v) => units(v) !== 0n,
-        )
-      )
+      // Live Bybit returns an empty interest field for non-collateral spot coins (PIEVERSE).
+      // Admit only the explicit no-borrow case; never turn arbitrary missing debt into zero.
+      // Isolated execution retains its original strict admission contract.
+      const interest =
+        !this.access &&
+        coin.accruedInterest === '' &&
+        coin.marginCollateral === false &&
+        units(coin.borrowAmount) === 0n &&
+        coin.spotBorrow !== undefined &&
+        coin.spotBorrow !== '' &&
+        units(coin.spotBorrow) === 0n
+          ? '0'
+          : coin.accruedInterest
+      if ([coin.borrowAmount, interest, coin.spotBorrow || '0'].some((v) => units(v) !== 0n))
         throw new Error('TRADING_DEBT_FORBIDDEN')
       if (
         [coin.totalPositionIM, coin.totalOrderIM, coin.spotHedgingQty || '0'].some(
