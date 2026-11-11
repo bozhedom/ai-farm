@@ -198,8 +198,13 @@ async function control(action: 'enable' | 'pause' | 'review') {
         >
           <h2 id="bybit-review-title">Разбор Bybit Live</h2>
           <p class="manager-caption">
-            Новый убыток, риск-стоп или простой от 6 часов запрашивает разбор без ожидания
-            расписания. Один повод не вызывает повторных оплат. Между разборами минимум
+            Новый убыток, риск-стоп или простой от
+            {{ data.bybit.shortCycle ? '30 минут' : '6 часов' }} запрашивает разбор без ожидания
+            расписания.
+            <template v-if="data.bybit.shortCycle"
+              >Также проверяется каждая новая серия из 10 закрытых позиций.</template
+            >
+            Один повод не вызывает повторных оплат. Между разборами минимум
             {{ data.state.manualCooldownMinutes }} минут; общий предел:
             {{ data.state.maxDailyRuns }} за сутки.
           </p>
@@ -210,6 +215,17 @@ async function control(action: 'enable' | 'pause' | 'review') {
             Изменяются только семейство и параметры свободной стратегии после проверки аналитиком.
             Капитал и ограничения сохраняются. При риск-стопе предложение ждёт решения владельца о
             продолжении.
+          </p>
+          <p v-if="data.bybit.executionStats" class="manager-caption">
+            За 24 часа с начала подробного учёта: закрытых позиций
+            {{ data.bybit.executionStats.closedPositions }}, прибыльных / убыточных выходов
+            {{ data.bybit.executionStats.profitableExits }} /
+            {{ data.bybit.executionStats.losingExits }}. Результат выходов
+            {{ data.bybit.executionStats.realizedUsdt }} USDT после комиссий; комиссии всех
+            исполнений {{ data.bybit.executionStats.feesUsdt }} USDT (повторно не вычитаются).
+            Среднее удержание до выхода:
+            {{ data.bybit.executionStats.averageHoldingSeconds ?? 'нет данных' }} сек. Частичные
+            продажи считаются отдельными выходами. Расходы моделей учитываются отдельно.
           </p>
           <p v-if="!data.bybit.reviews.length" class="t-muted">
             Пока нет завершённых разборов Bybit.

@@ -16,7 +16,7 @@ export function isResidual(a: AgentRow, market: Market | undefined) {
     !market
   )
     return false
-  validateMarket(market)
+  validateMarket(market, Date.now(), 'exit')
   return (
     market.instrument.symbol === a.symbol &&
     proceeds(BigInt(a.base), market.book.bids[0]![0]) <= units(String(S.maxResidualValueUsdt)) &&

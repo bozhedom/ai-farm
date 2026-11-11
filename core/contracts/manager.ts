@@ -30,6 +30,8 @@ export interface ManagerTaskView {
 export interface ManagerView {
   bybit?: {
     enabled: boolean
+    shortCycle?: boolean
+    executionStats?: Awaited<ReturnType<typeof import('../trading/execution-stats').executionStats>>
     model: string
     reviews: {
       id: string

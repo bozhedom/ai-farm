@@ -1,3 +1,4 @@
+import { shortCycleSignal, orderCooldown, orderLimit, shortCycle } from './short-cycle'
 import { applyBybitReview } from '../manager/live'
 import { releaseResidualCash } from './residuals'
 import { assertDirectionAllowed, directionAllowed } from '../work-focus'
@@ -88,7 +89,8 @@ async function loadMarkets(
   for (const symbol of new Set(symbols)) {
     try {
       const market = await venue.market(symbol)
-      validateMarket(market)
+      // Spread gates entries; it must not prevent marking or reducing existing risk.
+      validateMarket(market, Date.now(), 'exit')
       if (market.instrument.symbol !== symbol) throw new Error('TRADING_INSTRUMENT_INVALID')
       markets[symbol] = market
       await query(
@@ -208,6 +210,16 @@ async function settle(row: OrderRow, result: OrderResult, minQty: bigint, db: Co
         symbol: row.symbol,
         qty: decimal(result.filledQty),
         quote: decimal(result.quote),
+        agentId: agent.id,
+        kind: agent.kind,
+        params: agent.params,
+        realizedUsdt: decimal(fill.realized - BigInt(agent.realized)),
+        feeUsdt: decimal(fill.fees - BigInt(agent.fees)),
+        closedPosition: fill.roundTrips > agent.round_trips,
+        holdingMs:
+          row.side === 'sell' && agent.position_opened_at
+            ? Math.max(0, Date.now() - agent.position_opened_at.getTime())
+            : null,
       },
       db,
     )
@@ -255,7 +267,7 @@ async function submit(
   instructionsRevision: number,
 ) {
   const market = markets[request.symbol]
-  validateMarket(market)
+  validateMarket(market, Date.now(), request.side === 'sell' ? 'exit' : 'entry')
   const id = randomUUID()
   // The transaction reserves the only unresolved-order slot and fences concurrent owner stops.
   const row = await atomic(db, async () => {
@@ -266,7 +278,7 @@ async function submit(
     if (current.status !== 'running' && !(current.status === 'paused' && request.side === 'sell'))
       return null
     if (await pendingOrder(p, db)) return null
-    validateMarket(market)
+    validateMarket(market, Date.now(), request.side === 'sell' ? 'exit' : 'entry')
     const team = await agents(p, db)
     const fresh = team.find((a) => a.id === agent.id)
     if (
@@ -278,6 +290,12 @@ async function submit(
       return null
     if (request.side === 'buy') {
       if (fresh.residual_only) throw new Error('TRADING_RESIDUAL_BUY_FORBIDDEN')
+      if (
+        shortCycle(p) &&
+        fresh.last_order_at &&
+        Date.now() - fresh.last_order_at.getTime() < orderCooldown(fresh, 'buy')
+      )
+        return null
       const restricted = ownerEntryReason(instructions.rules, fresh)
       if (restricted || !orderWithinOwnerLimit(instructions.rules, request)) {
         await query(
@@ -325,16 +343,17 @@ async function submit(
         [p.mode, p.exchange],
         db,
       )
-      if (
-        today!.count >=
-        Math.min(P.maxOrdersPerDay, instructions.rules.maxOrdersPerDay ?? P.maxOrdersPerDay)
-      ) {
-        if (instructions.rules.maxOrdersPerDay !== null)
-          await query(
-            "UPDATE trading_agents SET last_signal='OWNER_ORDER_COUNT' WHERE id=$1",
-            [fresh.id],
-            db,
-          )
+      if (today!.count >= orderLimit(p, instructions.rules.maxOrdersPerDay)) {
+        await query(
+          'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
+          [
+            fresh.id,
+            instructions.rules.maxOrdersPerDay !== null
+              ? 'OWNER_ORDER_COUNT'
+              : 'TRADING_ORDER_COUNT',
+          ],
+          db,
+        )
         return null
       }
       let invested = 0n,
@@ -343,7 +362,7 @@ async function submit(
         let position = 0n
         if (BigInt(member.base)) {
           const held = markets[member.symbol]
-          validateMarket(held)
+          validateMarket(held, Date.now(), 'exit')
           position = proceeds(BigInt(member.base), held.book.bids[0]![0])
         }
         invested += position
@@ -415,7 +434,7 @@ async function submit(
     }
     if (p.mode === 'live' && !config().TRADING_LIVE_ENABLED)
       throw new Error('TRADING_LIVE_DISABLED')
-    validateMarket(market)
+    validateMarket(market, Date.now(), request.side === 'sell' ? 'exit' : 'entry')
     await query("UPDATE trading_orders SET status='submitted' WHERE id=$1", [row.id], db)
     return true
   })
@@ -896,6 +915,13 @@ export async function tradingTick(
                   ? { side: 'sell', reason: 'SCOUT_RESIDUAL_EXIT' }
                   : { side: null, reason: 'SCOUT_DUST_POSITION' }
               }
+              decision = shortCycleSignal(
+                agent,
+                market,
+                decision,
+                Date.now(),
+                instructions.rules.takeProfitBps,
+              )
               decision = ownerSignal(instructions.rules, agent, market, decision)
               await query(
                 'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
@@ -911,6 +937,18 @@ export async function tradingTick(
                   account!.feeBps[agent.symbol]! > P.maxFeeBps)
               )
                 throw new Error('TRADING_FEE_UNKNOWN')
+              if (decision.side === 'buy') {
+                try {
+                  validateMarket(market)
+                } catch (error) {
+                  await query(
+                    'UPDATE trading_agents SET last_signal=$2 WHERE id=$1',
+                    [agent.id, safeTradingError(error)],
+                    db,
+                  )
+                  continue
+                }
+              }
               const urgent =
                 decision.side === 'sell' &&
                 ['RISK_EXIT', 'POSITION_STOP', 'OWNER_POSITION_STOP', 'OWNER_TIME_EXIT'].includes(
@@ -919,7 +957,7 @@ export async function tradingTick(
               if (
                 !urgent &&
                 agent.last_order_at &&
-                Date.now() - agent.last_order_at.getTime() < P.cooldownMs
+                Date.now() - agent.last_order_at.getTime() < orderCooldown(agent, decision.side)
               )
                 continue
               let buyBudget =

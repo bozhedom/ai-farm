@@ -1,3 +1,5 @@
+import { shortCycle } from '../trading/short-cycle'
+import { executionStats } from '../trading/execution-stats'
 import { createHash } from 'node:crypto'
 import { config } from '../config'
 import { query, transaction, type Connection } from '../db'
@@ -30,7 +32,7 @@ export function strategyFingerprint(a: AgentRow) {
 export interface LiveSnapshot {
   at: string
   triggerKey: string
-  trigger: 'loss' | 'idle' | 'risk_stop'
+  trigger: 'loss' | 'idle' | 'risk_stop' | 'performance'
   status: string
   reason: string
   capital: string
@@ -40,6 +42,9 @@ export interface LiveSnapshot {
   feesUsdt: string
   idleHours: number
   lossBand: number
+  shortCycle?: ReturnType<typeof shortCycle>
+  executionStats?: Awaited<ReturnType<typeof executionStats>>
+  totalRoundTrips?: number
   source: {
     id: string
     fingerprint: string
@@ -103,16 +108,26 @@ export async function bybitSnapshot(): Promise<LiveSnapshot | null> {
     )
       return null
     const [lifetime] = await query(
-      "SELECT sum(realized)::text AS realized,sum(fees)::text AS fees FROM trading_agents WHERE exchange='bybit' AND mode='live'",
+      "SELECT sum(realized)::text AS realized,sum(fees)::text AS fees,sum(round_trips)::int AS trips FROM trading_agents WHERE exchange='bybit' AND mode='live'",
       [],
       db,
     )
     const pnl = equity - BigInt(p.capital)
     const lossBand =
       pnl < 0n ? Number((-pnl * 10000n) / BigInt(p.capital) / BigInt(P.liveReviewLossStepBps)) : 0
+    const cycle = shortCycle(bybitScope)
+    const idleLimit = cycle?.reviewIdleMs ?? P.liveReviewIdleMs
+    const performance = !!cycle && lifetime!.trips >= cycle.reviewRoundTrips
     const idleMs = Math.max(0, now - (a.last_order_at?.getTime() ?? a.created_at.getTime()))
-    if (p.status === 'running' && pnl >= 0n && idleMs < P.liveReviewIdleMs) return null
-    const trigger = p.status === 'paused' ? 'risk_stop' : pnl < 0n ? 'loss' : 'idle'
+    if (p.status === 'running' && pnl >= 0n && idleMs < idleLimit && !performance) return null
+    const trigger =
+      p.status === 'paused'
+        ? 'risk_stop'
+        : pnl < 0n
+          ? 'loss'
+          : idleMs >= idleLimit
+            ? 'idle'
+            : 'performance'
     const [lastExit] = await query(
       "SELECT id FROM trading_orders WHERE exchange='bybit' AND mode='live' AND side='sell' AND filled_qty>0 ORDER BY settled_at DESC NULLS LAST LIMIT 1",
       [],
@@ -123,11 +138,12 @@ export async function bybitSnapshot(): Promise<LiveSnapshot | null> {
         JSON.stringify([
           a.id,
           lastExit?.id ?? null,
-          idleMs >= P.liveReviewIdleMs ? a.last_order_at?.toISOString() : null,
+          idleMs >= idleLimit ? a.last_order_at?.toISOString() : null,
           lifetime!.realized,
           lossBand,
+          cycle ? Math.floor(lifetime!.trips / cycle.reviewRoundTrips) : null,
           p.reason,
-          p.status === 'running' ? Math.floor(idleMs / P.liveReviewIdleMs) : 0,
+          p.status === 'running' ? Math.floor(idleMs / idleLimit) : 0,
         ]),
       )
       .digest('hex')
@@ -157,8 +173,11 @@ export async function bybitSnapshot(): Promise<LiveSnapshot | null> {
       pnlUsdt: decimal(pnl),
       realizedUsdt: decimal(BigInt(lifetime!.realized)),
       feesUsdt: decimal(BigInt(lifetime!.fees)),
-      idleHours: Math.floor(idleMs / 3600000),
+      idleHours: idleMs / 3600000,
       lossBand,
+      shortCycle: cycle,
+      executionStats: await executionStats(bybitScope, db),
+      totalRoundTrips: lifetime!.trips,
       source: {
         id: a.id,
         fingerprint: strategyFingerprint(a),
@@ -203,12 +222,17 @@ export async function pendingBybitReview(snapshot: LiveSnapshot | null, requeste
     const stopped =
       snapshot.trigger === 'risk_stop' &&
       (before.trigger !== 'risk_stop' || snapshot.reason !== before.reason)
+    const cycle = shortCycle(bybitScope)
+    const idleHours = (cycle?.reviewIdleMs ?? P.liveReviewIdleMs) / 3600000
+    const performance =
+      !!cycle &&
+      (snapshot.totalRoundTrips ?? 0) - (before.totalRoundTrips ?? 0) >= cycle.reviewRoundTrips
     const idle =
       snapshot.status === 'running' &&
-      snapshot.idleHours >= P.liveReviewIdleMs / 3600000 &&
+      snapshot.idleHours >= idleHours &&
       (snapshot.source.lastOrderAt !== before.source.lastOrderAt ||
-        snapshot.idleHours >= before.idleHours + P.liveReviewIdleMs / 3600000)
-    if (!worse && !stopped && !idle) return null
+        snapshot.idleHours >= before.idleHours + idleHours)
+    if (!worse && !stopped && !idle && !performance) return null
   }
   return snapshot
 }
@@ -267,7 +291,8 @@ export async function applyBybitReview(s: TradingScope, db: Connection) {
   if (
     !a ||
     strategyFingerprint(a) !== snapshot.source.fingerprint ||
-    p.capital !== snapshot.capital
+    p.capital !== snapshot.capital ||
+    (snapshot.shortCycle?.version ?? null) !== (shortCycle(s)?.version ?? null)
   )
     return finish('MANAGER_AGENT_CHANGED', 'rejected')
   if (BigInt(a.base) || BigInt(a.basis)) return finish('MANAGER_POSITION_OPEN')
@@ -315,12 +340,14 @@ export async function applyBybitReview(s: TradingScope, db: Connection) {
 }
 export function validateLivePlan(plan: LivePlan, snapshot: LiveSnapshot) {
   const p = plan.proposal
+  const target = (bps: number) =>
+    snapshot.shortCycle ? Math.min(bps, snapshot.shortCycle.takeProfitBps) : bps
   if (
     p &&
     p.kind === snapshot.source.kind &&
     p.params.lookback === snapshot.source.params.lookback &&
     p.params.entryBps === snapshot.source.params.entryBps &&
-    p.params.takeProfitBps === snapshot.source.params.takeProfitBps
+    target(p.params.takeProfitBps) === target(snapshot.source.params.takeProfitBps)
   )
     throw new Error('MANAGER_UNCHANGED_PROPOSAL')
   if (p && snapshot.rules.allowedKinds && !snapshot.rules.allowedKinds.includes(p.kind))

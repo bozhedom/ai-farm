@@ -1,3 +1,4 @@
+import { shortCycle } from './short-cycle'
 import { query } from '../db'
 import { SCOUT_POLICY as S, TRADING_POLICY as P } from '../policy'
 import { agents, ensurePortfolios } from './store'
@@ -54,8 +55,8 @@ export async function tradingMarketView(
       })),
     limits: {
       scanMinutes: S.scanMs / 60_000,
-      idleHours: S.idleRotationMs / 3_600_000,
-      holdHours: S.maxPositionMs / 3_600_000,
+      idleHours: (shortCycle(s)?.idleRotationMs ?? S.idleRotationMs) / 3_600_000,
+      holdHours: (shortCycle(s)?.maxHoldingMs ?? S.maxPositionMs) / 3_600_000,
       bookDepthUsdt: P.orderUsdt * S.depthOrderMultiplier,
       dailyTurnover: S.minTurnoverUsdt,
       maxSpreadBps: P.maxSpreadBps,

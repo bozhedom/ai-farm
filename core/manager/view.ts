@@ -1,3 +1,5 @@
+import { shortCycle } from '../trading/short-cycle'
+import { executionStats } from '../trading/execution-stats'
 import { config, paidModelId } from '../config'
 import { roleModel, withAgentProfiles } from '../agent-profiles'
 import { query } from '../db'
@@ -63,6 +65,8 @@ async function managerViewWithProfiles(): Promise<ManagerView> {
   return {
     bybit: {
       enabled: config().BYBIT_STRATEGY_REVIEW_ENABLED,
+      shortCycle: !!shortCycle({ exchange: 'bybit', mode: 'live' }),
+      executionStats: await executionStats({ exchange: 'bybit', mode: 'live' }),
       model: roleModel('bybit-analyst') || paidModelId(config()),
       reviews: liveReviews.map((r) => ({
         id: r.run_id,

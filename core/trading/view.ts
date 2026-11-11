@@ -1,3 +1,4 @@
+import { shortCycle, orderLimit } from './short-cycle'
 import { query } from '../db'
 import { tradingInstructions } from './owner-rules'
 import { describeTradingRules } from '../contracts/trading-instructions'
@@ -71,7 +72,14 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
     exchange,
     ownerInstructions: {
       revision: instructions.revision,
-      rules: describeTradingRules(rules),
+      rules: [
+        ...describeTradingRules(rules),
+        ...(shortCycle(s)
+          ? [
+              'Bybit: короткие сделки; выход через 5 минут при доступном исполнении, цель 0,5% после резерва комиссии и проскальзывания. Поиск входа каждые 15 секунд; пауза после ордера 30 секунд. Сделки только при сигнале, прибыль не гарантирована.',
+            ]
+          : []),
+      ],
       appliedAt: instructions.appliedAt,
     },
     liveConfirmation: liveConfirmation(p),
@@ -109,7 +117,7 @@ export async function tradingView(s: TradingScope): Promise<TradingView> {
       dailyLossBps: P.dailyLossBps,
       drawdownBps: P.drawdownBps,
       positionStopBps: rules.positionStopBps ?? P.positionStopBps,
-      maxOrdersPerDay: rules.maxOrdersPerDay ?? P.maxOrdersPerDay,
+      maxOrdersPerDay: orderLimit(s, rules.maxOrdersPerDay),
       evaluationDays: P.minEvaluationDays,
       evaluationTrips: P.minRoundTrips,
     },

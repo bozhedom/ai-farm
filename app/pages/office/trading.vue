@@ -341,8 +341,19 @@ async function allocationSaved() {
       </p>
       <p v-if="error" class="t-notice t-warning" role="alert">{{ error }}</p>
       <p v-if="notice" class="t-notice" role="status">{{ notice }}</p>
-      <details v-if="exchange && v?.ownerInstructions?.appliedAt" class="t-notice">
-        <summary>Торговые инструкции: версия {{ v.ownerInstructions.revision }}</summary>
+      <details
+        v-if="
+          exchange &&
+          v?.ownerInstructions &&
+          (v.ownerInstructions.appliedAt || v.ownerInstructions.rules.length)
+        "
+        class="t-notice"
+      >
+        <summary>
+          Действующие условия торговли<span v-if="v.ownerInstructions.appliedAt"
+            >: версия {{ v.ownerInstructions.revision }}</span
+          >
+        </summary>
         <ul v-if="v.ownerInstructions.rules.length">
           <li v-for="rule in v.ownerInstructions.rules" :key="rule">{{ rule }}</li>
         </ul>

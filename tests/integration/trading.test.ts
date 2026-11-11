@@ -1,3 +1,4 @@
+import { executionStats } from '../../core/trading/execution-stats'
 import { rotateAgents } from '../../core/trading/rotation'
 import { scoutState } from '../../core/trading/scout'
 import { saveWorkFocus } from '../../core/work-focus'
@@ -50,6 +51,7 @@ class Exchange implements TradingVenue {
   fills = new Map<string, OrderResult>()
   loseResponse = false
   loseRequest = false
+  wideSpread = false
   stale = false
   foreignOrder = false
   accountError = ''
@@ -83,6 +85,7 @@ class Exchange implements TradingVenue {
   async market(symbol: TradingSymbol) {
     const m = market(symbol, this.price, this.reference)
     for (let i = 0; i < 30; i++) m.candles[i]!.close = (units(this.reference) * 102n) / 100n
+    if (this.wideSpread) m.book.asks[0]![0] += units('2')
     if (this.stale) m.book.at -= 60_000
     return m
   }
@@ -135,6 +138,95 @@ beforeEach(async () => {
 afterAll(() => pool.end())
 
 describe('durable trading lifecycle', () => {
+  it('enforces the increased Bybit Live quota transactionally and permits an exit after the quota', async () => {
+    const previous = {
+      live: config().TRADING_LIVE_ENABLED,
+      short: config().BYBIT_SHORT_CYCLE_ENABLED,
+    }
+    config().TRADING_LIVE_ENABLED = true
+    config().BYBIT_SHORT_CYCLE_ENABLED = true
+    try {
+      await allocateLive({ okx: 0, bybit: 20, binance: 0, bitget: 0 })
+      exchange.balances.USDT = { total: units('20'), available: units('20') }
+      const s = scope('bybit', 'live')
+      await startTrading(s, 'ТОРГОВАТЬ 20 USDT НА BYBIT', false, factory)
+      const [a] = await agents(s)
+      await query(
+        `INSERT INTO trading_orders(id,exchange,mode,agent_id,client_id,symbol,side,qty,price,status,reason)
+        SELECT gen_random_uuid(),'bybit','live',$1,md5(n::text),$2,'buy',1,1,'rejected','TEST' FROM generate_series(1,599) n`,
+        [a!.id, a!.symbol],
+      )
+      await tick()
+      expect(exchange.placed).toHaveLength(1)
+      expect(exchange.placed[0]!.side).toBe('buy')
+      await query(
+        "UPDATE trading_agents SET position_opened_at=now()-interval '5 minutes' WHERE id=$1",
+        [a!.id],
+      )
+      exchange.wideSpread = true
+      await tick()
+      expect(exchange.placed).toHaveLength(2)
+      expect(exchange.placed[1]!.side).toBe('sell')
+      exchange.wideSpread = false
+      await noCooldown()
+      await tick()
+      expect(exchange.placed).toHaveLength(2)
+      expect((await agents(s))[0]!.last_signal).toBe('TRADING_ORDER_COUNT')
+      expect((await portfolio(s)).capital).toBe(units('20').toString())
+      expect((await executionStats(s)).closedPositions).toBe(1)
+    } finally {
+      config().TRADING_LIVE_ENABLED = previous.live
+      config().BYBIT_SHORT_CYCLE_ENABLED = previous.short
+    }
+  })
+
+  it('exits a five-minute Bybit position through a wide spread, records actual results, and fences re-entry', async () => {
+    const previous = config().BYBIT_SHORT_CYCLE_ENABLED
+    config().BYBIT_SHORT_CYCLE_ENABLED = true
+    try {
+      await startTrading(scope('bybit', 'paper'), '', false, factory)
+      await tick()
+      const buys = await query("SELECT * FROM trading_orders WHERE exchange='bybit' AND side='buy'")
+      expect(buys.length).toBeGreaterThan(0)
+      await query(
+        "UPDATE trading_agents SET position_opened_at=now()-interval '5 minutes' WHERE exchange='bybit' AND base>0",
+      )
+      exchange.wideSpread = true
+      await tick()
+      const exits = await query(
+        "SELECT * FROM trading_orders WHERE exchange='bybit' AND side='sell'",
+      )
+      expect(exits.length).toBeGreaterThan(0)
+      expect(
+        exits.every((o) => o.reason === 'BYBIT_SHORT_TIME_EXIT' && BigInt(o.filled_qty) > 0n),
+      ).toBe(true)
+      const stats = await executionStats(scope('bybit', 'paper'))
+      expect(stats.closedPositions).toBe(exits.length)
+      expect(stats.losingExits).toBe(exits.length)
+      expect(units(stats.realizedUsdt)).toBeLessThan(0n)
+      expect(units(stats.feesUsdt)).toBeGreaterThan(0n)
+      expect(stats.averageHoldingSeconds).toBeGreaterThanOrEqual(300)
+      await tick()
+      expect(
+        await query("SELECT id FROM trading_orders WHERE exchange='bybit' AND side='buy'"),
+      ).toHaveLength(buys.length)
+      exchange.wideSpread = false
+      await tick()
+      expect(
+        await query("SELECT id FROM trading_orders WHERE exchange='bybit' AND side='buy'"),
+      ).toHaveLength(buys.length)
+      await query(
+        "UPDATE trading_agents SET last_order_at=now()-interval '31 seconds' WHERE exchange='bybit'",
+      )
+      await tick()
+      expect(
+        (await query("SELECT id FROM trading_orders WHERE exchange='bybit' AND side='buy'")).length,
+      ).toBeGreaterThan(buys.length)
+    } finally {
+      config().BYBIT_SHORT_CYCLE_ENABLED = previous
+    }
+  })
+
   it('uses the saved profit target and holding deadline for existing positions', async () => {
     await startTrading(scope('okx', 'paper'), '', false, factory)
     await tick()

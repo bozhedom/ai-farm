@@ -1046,6 +1046,15 @@ for (const width of [1440, 390]) {
       tasks: [],
       bybit: {
         enabled: true,
+        shortCycle: true,
+        executionStats: {
+          closedPositions: 10,
+          profitableExits: 6,
+          losingExits: 4,
+          realizedUsdt: '-0.02',
+          feesUsdt: '0.12',
+          averageHoldingSeconds: 296,
+        },
         model: 'anthropic/claude-opus-5.5',
         reviews: [
           {
@@ -1070,6 +1079,8 @@ for (const width of [1440, 390]) {
       page.getByRole('heading', { name: 'Разбор Bybit Live', exact: true }),
     ).toBeVisible()
     await expect(page.getByText(/Один повод не вызывает повторных оплат/)).toBeVisible()
+    await expect(page.getByText(/серия из 10 закрытых позиций/)).toBeVisible()
+    await expect(page.getByText(/Среднее удержание до выхода: 296 сек/)).toBeVisible()
     await expect(page.getByText(/Менеджер: anthropic\/claude-opus-5.5/)).toBeVisible()
     await expect(
       page.getByText('После комиссий есть убыток. Покупки приостановлены лимитом риска.', {

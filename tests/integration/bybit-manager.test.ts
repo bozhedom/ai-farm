@@ -6,7 +6,12 @@ import { config } from '../../core/config'
 import { pool, query } from '../../core/db'
 import { withAgentProfiles, roleModel, saveProfile } from '../../core/agent-profiles'
 import { ensureManager, managerTick, controlManager } from '../../core/manager/runtime'
-import { bybitSnapshot, bybitScope, applyBybitReview } from '../../core/manager/live'
+import {
+  bybitSnapshot,
+  bybitScope,
+  applyBybitReview,
+  pendingBybitReview,
+} from '../../core/manager/live'
 import type { LivePlanner } from '../../core/manager/live-plan'
 import {
   livePlanSchema,
@@ -368,4 +373,35 @@ it('reviews only a matching billed truncation receipt and preserves the charge a
   // The confirmation becomes inapplicable if a cost record changes afterwards.
   await query('UPDATE tool_calls SET actual_microusd=71401 WHERE id=$1', [callId])
   expect((await managerBudget()).uncertain).toBe(true)
+})
+
+it('reviews short-cycle performance batches and half-hour inactivity without duplicate paid runs', async () => {
+  config().BYBIT_SHORT_CYCLE_ENABLED = true
+  await query(
+    'UPDATE trading_agents SET cash=$1,realized=$2,round_trips=10,last_order_at=now() WHERE id=$3',
+    [units('20.1').toString(), units('0.1').toString(), id],
+  )
+  const first = await bybitSnapshot()
+  expect(first?.trigger).toBe('performance')
+  expect(first?.executionStats?.closedPositions).toBe(0)
+  const fn = vi.fn(async () => ({
+    plan: { ...plan, proposal: null },
+    critique: { ...critique, approved: false },
+    analystModel: 'anthropic/claude-opus-5.5',
+  }))
+  expect(await tick(fn)).toBe(true)
+  expect(await pendingBybitReview(await bybitSnapshot(), false)).toBeNull()
+  await query('UPDATE trading_agents SET round_trips=19 WHERE id=$1', [id])
+  expect(await pendingBybitReview(await bybitSnapshot(), false)).toBeNull()
+  await query('UPDATE trading_agents SET round_trips=20 WHERE id=$1', [id])
+  expect(await pendingBybitReview(await bybitSnapshot(), false)).not.toBeNull()
+  // New facts still cannot bypass the paid manager cooldown.
+  expect(await tick(fn)).toBe(false)
+  expect(fn).toHaveBeenCalledTimes(1)
+  await query(
+    "UPDATE trading_agents SET round_trips=10,last_order_at=now()-interval '31 minutes' WHERE id=$1",
+    [id],
+  )
+  expect((await bybitSnapshot())?.trigger).toBe('idle')
+  expect(await pendingBybitReview(await bybitSnapshot(), false)).not.toBeNull()
 })

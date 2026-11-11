@@ -1,3 +1,4 @@
+import { shortCycle } from './short-cycle'
 import { isResidual, parkResidual } from './residuals'
 import { randomUUID } from 'node:crypto'
 import { ownerEntryReason, tradingInstructions } from './owner-rules'
@@ -55,11 +56,15 @@ export async function rotateAgents(
       // Existing funded strategies keep their authorization until a qualified successor is promoted.
       if (legacy && s.mode === 'live') continue
       const restricted = !!ownerEntryReason(rules, a)
-      if (!restricted && !legacy && Date.now() - a.assigned_at.getTime() < S.minAssignmentMs)
+      if (
+        !restricted &&
+        !legacy &&
+        Date.now() - a.assigned_at.getTime() < (shortCycle(s)?.minAssignmentMs ?? S.minAssignmentMs)
+      )
         continue
       const idle =
         Date.now() - Math.max(a.assigned_at.getTime(), a.last_order_at?.getTime() || 0) >=
-        S.idleRotationMs
+        (shortCycle(s)?.idleRotationMs ?? S.idleRotationMs)
       if (!restricted && !legacy && !idle && admitted(scout, a.symbol)) continue
       const symbol = pickSymbol(
         a.kind,

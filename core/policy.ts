@@ -133,6 +133,18 @@ export const TRADING_POLICY = Object.freeze({
   maxAgentDrawdownBps: 800,
   promotionGapBps: 50,
 })
+/** Owner-requested five-minute Bybit spot cycles; capital and loss protection are unchanged. */
+export const BYBIT_SHORT_CYCLE_POLICY = Object.freeze({
+  version: 'bybit-short-v1',
+  maxHoldingMs: 5 * 60_000,
+  entryCooldownMs: 30_000,
+  maxOrdersPerDay: 600,
+  takeProfitBps: 50,
+  minAssignmentMs: 5 * 60_000,
+  idleRotationMs: 15 * 60_000,
+  reviewIdleMs: 30 * 60_000,
+  reviewRoundTrips: 10,
+})
 export const SCOUT_POLICY = Object.freeze({
   version: 'scout-v1',
   scanMs: 5 * 60_000,
