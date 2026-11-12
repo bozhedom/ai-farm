@@ -66,6 +66,9 @@ export interface ExecutionIntent {
   positionQuantity: string
   outcome?: 'yes' | 'no'
   expiresAt: number
+  stopPrice?: string
+  takePrice?: string
+  leverage?: number
 }
 
 /** Persist before broadcast. Payload may contain a signed transaction; never expose it in a DTO. */

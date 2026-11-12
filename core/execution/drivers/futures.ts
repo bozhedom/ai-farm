@@ -255,6 +255,9 @@ export function createFuturesDriver(
             quoteBudget: decimal(notional + fee(notional, P.maxFeeBps)),
             positionQuantity: decimal(owned),
             expiresAt: now() + P.intentLifetimeMs,
+            stopPrice: op.plan.stopPrice,
+            takePrice: op.plan.takePrice,
+            leverage: op.plan.leverage,
           },
         }
       }

@@ -22,6 +22,12 @@ export type OptionQuote = {
 
 export type OptionsClient = {
   quote(symbol: string, kind: 'call' | 'put'): Promise<OptionQuote>
+  identity?(): Promise<string>
+  available?(): Promise<bigint>
+  prepare?(intent: import('../types').ExecutionIntent): Promise<import('../types').PreparedExecution>
+  broadcast?(prepared: import('../types').PreparedExecution): Promise<void>
+  lookup?(prepared: import('../types').PreparedExecution): Promise<ExecutionReceipt | null>
+  cancel?(prepared: import('../types').PreparedExecution): Promise<void>
 }
 
 /** Long option only: max loss is the paid premium, capped by policy. Short options are refused. */
@@ -69,7 +75,11 @@ export function createOptionsDriver(
       return null
     },
   }
-  const execution = mode === 'paper' ? paper : pending
+  const liveAdapter: ExecutionAdapter | null =
+    client?.prepare && client.broadcast && client.lookup
+      ? { prepare: client.prepare, broadcast: client.broadcast, lookup: client.lookup, cancel: client.cancel }
+      : null
+  const execution = mode === 'paper' ? paper : liveAdapter || pending
 
   return {
     adapter(selected) {
@@ -78,7 +88,10 @@ export function createOptionsDriver(
     },
     async accounts(p) {
       if (mode === 'paper') return [{ identity: `${venue}:paper:virtual`, venue }]
-      throw new Error('EXECUTION_OPTIONS_ADAPTER_PENDING')
+      if (!client?.identity || !client.available) throw new Error('EXECUTION_OPTIONS_ADAPTER_PENDING')
+      const available = await client.available()
+      if (!p.started_at && available < units(p.capital)) throw new Error('EXECUTION_INSUFFICIENT_BALANCE')
+      return [{ identity: await client.identity(), venue }]
     },
     async plan(p) {
       const budget = min(units(p.cash), (units(p.capital) * BigInt(P.options.maxAllocationBps)) / BPS)

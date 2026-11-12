@@ -16,8 +16,10 @@ import type {
 
 export type SwapQuote = { amountIn: bigint; amountOut: bigint; midOut: bigint; feeBps: number; at: number }
 export type SwapClient = {
+  identity?(): string
   quote(symbol: TradingSymbol, amountIn: bigint): Promise<SwapQuote>
   prepareSwap?(intent: ExecutionIntent, quote: SwapQuote): Promise<{ payload: Record<string, string | number>; externalId: string | null }>
+  broadcast?(prepared: import('../types').PreparedExecution): Promise<void>
   market?(symbol: TradingSymbol): Promise<Market>
 }
 
@@ -69,8 +71,9 @@ export function createSwapDriver(
       const prepared = await client.prepareSwap(intent, quote)
       return { intent, externalId: prepared.externalId, payload: { ...prepared.payload, minOut: decimal(minOut) } }
     },
-    async broadcast() {
-      throw new Error('EXECUTION_LIVE_DISABLED')
+    async broadcast(prepared) {
+      if (!client?.broadcast) throw new Error(mode === 'live' ? 'EXECUTION_LIVE_DISABLED' : 'EXECUTION_WALLET_REQUIRED')
+      await client.broadcast(prepared)
     },
     async lookup() {
       return null
@@ -85,7 +88,8 @@ export function createSwapDriver(
     },
     async accounts(p) {
       if (mode === 'paper') return [{ identity: 'uniswap:paper:virtual', venue }]
-      throw new Error(p.mode === 'live' ? 'EXECUTION_LIVE_DISABLED' : 'EXECUTION_WALLET_REQUIRED')
+      if (!client) throw new Error('EXECUTION_WALLET_REQUIRED')
+      return [{ identity: client.identity?.() || 'uniswap', venue }]
     },
     async plan(p) {
       const budget = min(units(p.cash), (units(p.capital) * BigInt(P.maxOrderShareBps)) / BPS)

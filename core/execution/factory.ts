@@ -14,6 +14,10 @@ import { createSwapDriver } from './drivers/swap'
 import { createOptionsDriver } from './drivers/options'
 import { assertAaveConfigNetwork } from './aave-networks'
 import { createFundingVenue, fundingEnvPrefix } from './adapters/funding-venues'
+import { createFuturesClient } from './adapters/futures-venues'
+import { createMarginClient } from './adapters/margin-venues'
+import { createOptionsClient } from './adapters/options-venues'
+import { httpRpc } from './adapters/uniswap'
 import { createPaperFundingVenue } from './adapters/paper-funding'
 import { createEarnClient } from './adapters/earn-venues'
 import { createUniswapClient } from './adapters/uniswap'
@@ -127,46 +131,113 @@ export function createExecutionDriver(p: ExecutionPortfolio): ExecutionDriver {
       )
 
     case 'futures':
-      return createFuturesDriver(p.mode, venueExchange)
+      return createFuturesDriver(
+        p.mode,
+        venueExchange,
+        p.mode === 'paper'
+          ? undefined
+          : createFuturesClient({
+              mode: p.mode,
+              exchange: venueExchange,
+              credentials: {
+                key: read(`FUTURES_${venueExchange.toUpperCase()}_${suffix}_API_KEY`),
+                secret: read(`FUTURES_${venueExchange.toUpperCase()}_${suffix}_SECRET`),
+                passphrase: read(`FUTURES_${venueExchange.toUpperCase()}_${suffix}_PASSPHRASE`),
+              },
+              liveEnabled: process.env.EXECUTION_LIVE_ENABLED === 'true',
+              leverage: p.settings.leverage ?? P.futures.defaultLeverage,
+              authorizeWrite: () => {
+                executionWritesAllowed(p.mode, p.track)
+                return true
+              },
+            }),
+      )
     case 'margin':
-      return createMarginDriver(p.mode, venueExchange)
+      return createMarginDriver(
+        p.mode,
+        venueExchange,
+        p.mode === 'paper'
+          ? undefined
+          : createMarginClient({
+              mode: p.mode,
+              exchange: venueExchange,
+              credentials: {
+                key: read(`MARGIN_${venueExchange.toUpperCase()}_${suffix}_API_KEY`),
+                secret: read(`MARGIN_${venueExchange.toUpperCase()}_${suffix}_SECRET`),
+                passphrase: read(`MARGIN_${venueExchange.toUpperCase()}_${suffix}_PASSPHRASE`),
+              },
+              liveEnabled: process.env.EXECUTION_LIVE_ENABLED === 'true',
+              leverage: p.settings.leverage ?? P.margin.defaultLeverage,
+              authorizeWrite: () => {
+                executionWritesAllowed(p.mode, p.track)
+                return true
+              },
+            }),
+      )
     case 'earn':
       if ((p.settings.venue || 'bybit') === 'bitget') throw new Error('EXECUTION_EARN_VENUE_UNSUPPORTED')
       return createEarnDriver(
         p.mode,
         venueExchange,
-        p.mode === 'paper'
+        p.mode === 'paper' || venueExchange === 'bitget'
           ? undefined
-          : venueExchange === 'bitget'
-            ? undefined
-            : createEarnClient(venueExchange, p.mode, {
-              key: read(`EARN_${venueExchange.toUpperCase()}_${suffix}_API_KEY`),
-              secret: read(`EARN_${venueExchange.toUpperCase()}_${suffix}_SECRET`),
-              passphrase: read(`EARN_${venueExchange.toUpperCase()}_${suffix}_PASSPHRASE`),
+          : createEarnClient({
+              exchange: venueExchange === 'okx' || venueExchange === 'binance' ? venueExchange : 'bybit',
+              mode: p.mode,
+              credentials: {
+                key: read(`EARN_${venueExchange.toUpperCase()}_${suffix}_API_KEY`),
+                secret: read(`EARN_${venueExchange.toUpperCase()}_${suffix}_SECRET`),
+                passphrase: read(`EARN_${venueExchange.toUpperCase()}_${suffix}_PASSPHRASE`),
+              },
+              liveEnabled: process.env.EXECUTION_LIVE_ENABLED === 'true',
+              authorizeWrite: () => {
+                executionWritesAllowed(p.mode, p.track)
+                return true
+              },
             }),
       )
-    case 'swap':
+    case 'swap': {
+      const rpcUrl = read(`SWAP_${suffix}_RPC_URL`)
       return createSwapDriver(
         p.mode,
         p.mode === 'paper'
           ? undefined
           : createUniswapClient(
               {
-                rpcUrl: read(`SWAP_${suffix}_RPC_URL`),
+                rpcUrl,
                 network: p.mode === 'live' ? 'mainnet' : 'sepolia',
                 chainId: p.mode === 'live' ? 1 : 11155111,
                 sender: address.parse(read(`SWAP_${suffix}_SENDER`)) as `0x${string}`,
                 privateKey: hash.parse(read(`SWAP_${suffix}_PRIVATE_KEY`)) as `0x${string}`,
-                slippageBps: (p.settings.slippageBps ?? P.swap.defaultSlippageBps),
+                slippageBps: p.settings.slippageBps ?? P.swap.defaultSlippageBps,
+                liveEnabled: process.env.EXECUTION_LIVE_ENABLED === 'true',
               },
-              {
-                async quote() {
-                  throw new Error('EXECUTION_WALLET_REQUIRED')
-                },
-              },
+              rpcUrl ? httpRpc(rpcUrl) : undefined,
             ),
       )
-    case 'options':
-      return createOptionsDriver(p.mode, (p.settings.venue || 'bybit') === 'okx' ? 'okx' : 'bybit')
+    }
+    case 'options': {
+      const optionsExchange = (p.settings.venue || 'bybit') === 'okx' ? 'okx' : 'bybit'
+      return createOptionsDriver(
+        p.mode,
+        optionsExchange,
+        p.mode === 'paper'
+          ? undefined
+          : createOptionsClient({
+              exchange: optionsExchange,
+              mode: p.mode,
+              credentials: {
+                key: read(`OPTIONS_${optionsExchange.toUpperCase()}_${suffix}_API_KEY`),
+                secret: read(`OPTIONS_${optionsExchange.toUpperCase()}_${suffix}_SECRET`),
+                passphrase: read(`OPTIONS_${optionsExchange.toUpperCase()}_${suffix}_PASSPHRASE`),
+              },
+              liveEnabled: process.env.EXECUTION_LIVE_ENABLED === 'true',
+              authorizeWrite: () => {
+                executionWritesAllowed(p.mode, p.track)
+                return true
+              },
+            }),
+      )
+    }
   }
 }

@@ -341,6 +341,7 @@ describe('Uniswap paper swap', () => {
 
   it('keeps official Ethereum router pins and the 50 bps cap', () => {
     expect(UNISWAP_V3.mainnet.swapRouter02).toMatch(/^0x[0-9a-fA-F]{40}$/)
+    expect(UNISWAP_V3.sepolia.swapRouter02).toBe('0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E')
     expect(uniswapSlippageCap(P.swap.maxSlippageBps)).toBe(50)
     expect(() => uniswapSlippageCap(51)).toThrow('EXECUTION_SLIPPAGE_FORBIDDEN')
   })
