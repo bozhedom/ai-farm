@@ -75,15 +75,16 @@ export function executionReady(track: ExecutionTrack, mode: ExecutionMode) {
       )
     )
       return 'EXECUTION_CREDENTIALS_REQUIRED'
-    if (
-      (track === 'futures' || track === 'margin') &&
-      !['BYBIT', 'OKX', 'BINANCE', 'BITGET'].some(
-        (name) =>
-          executionSecret(`${track === 'futures' ? 'FUTURES' : 'MARGIN'}_${name}_${suffix}_API_KEY`) &&
-          executionSecret(`${track === 'futures' ? 'FUTURES' : 'MARGIN'}_${name}_${suffix}_SECRET`),
+    if (track === 'futures' || track === 'margin') {
+      const prefix = track === 'futures' ? 'FUTURES' : 'MARGIN'
+      if (
+        !['BYBIT', 'OKX', 'BINANCE', 'BITGET'].some(
+          (name) => executionSecret(`${prefix}_${name}_${suffix}_API_KEY`) && executionSecret(`${prefix}_${name}_${suffix}_SECRET`),
+        )
       )
-    )
-      return 'EXECUTION_CREDENTIALS_REQUIRED'
+        return 'EXECUTION_CREDENTIALS_REQUIRED'
+      return track === 'futures' ? 'EXECUTION_FUTURES_ADAPTER_PENDING' : 'EXECUTION_MARGIN_ADAPTER_PENDING'
+    }
     if (track === 'earn') return 'EXECUTION_EARN_ADAPTER_PENDING'
     if (track === 'swap' && (!executionSecret(`SWAP_${suffix}_RPC_URL`) || !executionSecret(`SWAP_${suffix}_PRIVATE_KEY`)))
       return 'EXECUTION_WALLET_REQUIRED'

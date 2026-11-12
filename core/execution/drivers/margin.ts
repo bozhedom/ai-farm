@@ -74,6 +74,7 @@ export function createMarginDriver(
     },
     async accounts(p) {
       if (mode === 'paper') return [{ identity: `${venue}:paper:virtual`, venue }]
+      if (!client) throw new Error('EXECUTION_MARGIN_ADAPTER_PENDING')
       const account = await raw.account((p.settings.symbols[0] || 'BTC-USDT') as TradingSymbol)
       if (!p.started_at && (account.debt || account.positions.length || (await raw.pending()).length))
         throw new Error('EXECUTION_ACCOUNT_NOT_EMPTY')
@@ -84,6 +85,7 @@ export function createMarginDriver(
       return [{ identity: account.identity, venue }]
     },
     async plan(p) {
+      if (mode !== 'paper' && !client) throw new Error('EXECUTION_MARGIN_ADAPTER_PENDING')
       const leverage = Math.min(Math.max(p.settings.leverage ?? P.margin.defaultLeverage, P.margin.minLeverage), P.margin.maxLeverage)
       const budget = min(units(p.cash), (units(p.capital) * BigInt(P.maxOrderShareBps)) / BPS)
       if (budget < units(P.minOrder)) return null

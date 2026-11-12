@@ -125,6 +125,7 @@ export function createFuturesDriver(
     },
     async accounts(p) {
       if (mode === 'paper') return [{ identity: `${venue}:paper:virtual`, venue }]
+      if (!client) throw new Error('EXECUTION_FUTURES_ADAPTER_PENDING')
       const account = await raw.account((p.settings.symbols[0] || 'BTC-USDT') as TradingSymbol)
       if (!p.started_at && account.available < units(p.capital))
         throw new Error('EXECUTION_INSUFFICIENT_BALANCE')
@@ -135,6 +136,7 @@ export function createFuturesDriver(
       return [{ identity: account.identity, venue }]
     },
     async plan(p) {
+      if (mode !== 'paper' && !client) throw new Error('EXECUTION_FUTURES_ADAPTER_PENDING')
       const leverage = Math.min(Math.max(p.settings.leverage ?? P.futures.defaultLeverage, P.futures.minLeverage), P.futures.maxLeverage)
       const budget = min(units(p.cash), (units(p.capital) * BigInt(P.maxOrderShareBps)) / BPS)
       if (budget < units(P.minOrder)) return null
