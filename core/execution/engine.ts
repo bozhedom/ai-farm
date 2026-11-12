@@ -33,12 +33,15 @@ async function defaultFactory(p: ExecutionPortfolio) {
 }
 
 const opening = (intent: ExecutionIntent) =>
-  ['buy', 'short', 'approve', 'supply'].includes(intent.action)
+  ['buy', 'short', 'approve', 'supply', 'borrow', 'swap', 'subscribe'].includes(
+    intent.action,
+  )
 const openingForbidden = (p: ExecutionPortfolio) =>
   p.close_requested || p.status === 'stopped' || p.status === 'attention'
 
 function nonceReservation(p: ExecutionPortfolio, prepared: PreparedExecution) {
-  if (p.mode === 'paper' || prepared.intent.venue !== 'aave') return [null, null, null]
+  if (p.mode === 'paper' || !['aave', 'uniswap'].includes(prepared.intent.venue))
+    return [null, null, null]
   const { chainId, sender, nonce } = prepared.payload
   if (
     typeof chainId !== 'number' ||
@@ -57,6 +60,10 @@ export async function configureExecution(input: unknown) {
   const data = allocationSchema.parse(input)
   if (data.track === 'arbitrage' && data.settings.buyExchange === data.settings.sellExchange)
     throw new Error('EXECUTION_DIFFERENT_EXCHANGES_REQUIRED')
+  if (data.track === 'defi' && data.mode === 'demo' && data.settings.defiNetwork === 'mainnet')
+    throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
+  if (data.track === 'defi' && data.mode === 'live' && data.settings.defiNetwork !== 'mainnet')
+    throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
   return executionLock(async () => {
     await ensureExecution()
     await transaction(async (db) => {
@@ -66,7 +73,8 @@ export async function configureExecution(input: unknown) {
           throw new Error('EXECUTION_ALLOCATION_IMMUTABLE')
         if (
           data.settings.buyExchange !== p.settings.buyExchange ||
-          data.settings.sellExchange !== p.settings.sellExchange
+          data.settings.sellExchange !== p.settings.sellExchange ||
+          data.settings.venue !== p.settings.venue
         )
           throw new Error('EXECUTION_CONNECTIONS_IMMUTABLE')
         if (executionRiskStopped(p)) throw new Error('EXECUTION_RISK_STOP')

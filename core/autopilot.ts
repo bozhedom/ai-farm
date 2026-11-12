@@ -85,6 +85,11 @@ const trackName: Record<ExecutionTrack, string> = {
   funding: 'Фандинг',
   defi: 'DeFi',
   prediction: 'Прогнозы',
+  futures: 'Фьючерсы',
+  margin: 'Маржа',
+  earn: 'Накопления',
+  swap: 'Обмен DeFi',
+  options: 'Опционы',
 }
 const exchangeName: Record<TradingExchange, string> = {
   okx: 'OKX',

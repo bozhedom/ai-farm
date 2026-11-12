@@ -2,7 +2,7 @@ import { query } from '../db'
 import { decimal, units } from '../trading/decimal'
 import type { ExecutionView } from '../contracts/execution'
 import { executionReady } from './config'
-import { ensureExecution, portfolio } from './store'
+import { ensureExecution, executionSettingsSchema, portfolio } from './store'
 import type { ExecutionLeg, ExecutionMode, ExecutionOperation, ExecutionTrack } from './types'
 
 export async function executionView(
@@ -34,14 +34,14 @@ export async function executionView(
     track,
     mode,
     status: p.status,
-    currency: track === 'defi' ? 'USDC' : track === 'prediction' ? 'USD' : 'USDT',
+    currency: track === 'defi' || track === 'swap' ? 'USDC' : track === 'prediction' ? 'USD' : 'USDT',
     capital: decimal(units(p.capital)),
     available: decimal(units(p.cash)),
     equity: decimal(units(p.equity)),
     realized: decimal(units(p.realized)),
     fees: decimal(units(p.fees)),
     networkFees: network,
-    settings: p.settings,
+    settings: executionSettingsSchema.parse(p.settings),
     activated: !!p.started_at,
     reason: p.reason,
     readiness: executionReady(track, mode),

@@ -57,12 +57,6 @@ export function executionReady(track: ExecutionTrack, mode: ExecutionMode) {
     executionWritesAllowed(mode, track)
     const suffix = mode.toUpperCase()
     if (
-      track === 'funding' &&
-      (!executionSecret(`FUNDING_BYBIT_${suffix}_API_KEY`) ||
-        !executionSecret(`FUNDING_BYBIT_${suffix}_SECRET`))
-    )
-      return 'EXECUTION_CREDENTIALS_REQUIRED'
-    if (
       track === 'prediction' &&
       (!executionSecret(`PREDICTION_KALSHI_${suffix}_KEY_ID`) ||
         !executionSecret(`PREDICTION_KALSHI_${suffix}_PRIVATE_KEY`))
@@ -72,6 +66,28 @@ export function executionReady(track: ExecutionTrack, mode: ExecutionMode) {
       return 'EXECUTION_WALLET_REQUIRED'
     if (track === 'arbitrage' && !verifiedAssets().length)
       return 'EXECUTION_ASSET_REGISTRY_REQUIRED'
+    if (
+      track === 'funding' &&
+      !['BYBIT', 'OKX', 'BINANCE', 'BITGET'].some(
+        (name) =>
+          executionSecret(`FUNDING_${name}_${suffix}_API_KEY`) &&
+          executionSecret(`FUNDING_${name}_${suffix}_SECRET`),
+      )
+    )
+      return 'EXECUTION_CREDENTIALS_REQUIRED'
+    if (
+      (track === 'futures' || track === 'margin') &&
+      !['BYBIT', 'OKX', 'BINANCE', 'BITGET'].some(
+        (name) =>
+          executionSecret(`${track === 'futures' ? 'FUTURES' : 'MARGIN'}_${name}_${suffix}_API_KEY`) &&
+          executionSecret(`${track === 'futures' ? 'FUTURES' : 'MARGIN'}_${name}_${suffix}_SECRET`),
+      )
+    )
+      return 'EXECUTION_CREDENTIALS_REQUIRED'
+    if (track === 'earn') return 'EXECUTION_EARN_ADAPTER_PENDING'
+    if (track === 'swap' && (!executionSecret(`SWAP_${suffix}_RPC_URL`) || !executionSecret(`SWAP_${suffix}_PRIVATE_KEY`)))
+      return 'EXECUTION_WALLET_REQUIRED'
+    if (track === 'options') return 'EXECUTION_OPTIONS_ADAPTER_PENDING'
     return ''
   } catch (e) {
     return e instanceof Error && /^EXECUTION_[A-Z_]+$/.test(e.message)

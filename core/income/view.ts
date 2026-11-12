@@ -53,12 +53,22 @@ const trackTitle: Record<ExecutionTrack, string> = {
   funding: 'Фандинг: спот + фьючерс Bybit',
   defi: 'DeFi: USDC в Aave',
   prediction: 'Рынки прогнозов Kalshi',
+  futures: 'Бессрочные фьючерсы',
+  margin: 'Маржинальный спот',
+  earn: 'Накопления биржи',
+  swap: 'Обмен Uniswap V3',
+  options: 'Опционы',
 }
 const trackCurrency: Record<ExecutionTrack, IncomeCurrency> = {
   arbitrage: 'USDT',
   funding: 'USDT',
   defi: 'USDC',
   prediction: 'USD',
+  futures: 'USDT',
+  margin: 'USDT',
+  earn: 'USDT',
+  swap: 'USDC',
+  options: 'USDT',
 }
 const managerWords: Record<string, string> = {
   MANAGER_WORKER_UNAVAILABLE: 'фоновый процесс не на связи',

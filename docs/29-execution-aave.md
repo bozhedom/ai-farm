@@ -40,3 +40,8 @@ npx tsx scripts/execution-aave-local.ts
 Live дополнительно требует явного разрешения, серверных проверок и завершённой приёмки Demo. Работа с настоящим Aave, восстановление на внешнем RPC и расходы реального газа ещё должны быть проверены с выбранным кошельком. L2, другие активы и безлимитные разрешения в этот исполнитель не входят.
 
 Сигнатуры вызовов и событий соответствуют [Pool Aave V3](https://aave.com/docs/aave-v3/smart-contracts/pool) и [совместимому `ReserveDataLegacy`](https://github.com/aave/aave-v3-origin/blob/main/src/contracts/protocol/libraries/types/DataTypes.sol).
+
+
+## Переключатель сети в кабинете
+
+В карточке DeFi владелец выбирает `Sepolia`, `Ethereum` или локальный Anvil. Тренировка не отправляет транзакции. Demo принимает только Sepolia или local и переменные `EXECUTION_DEFI_DEMO_*`. Live принимает только Ethereum, требует `EXECUTION_LIVE_ENABLED`, принятый трек `defi` и пины `EXECUTION_DEFI_LIVE_*`. Официальные адреса пула, USDC и aUSDC Ethereum записаны в `core/execution/aave-networks.ts` и сверяются с CONFIG; хеши кода по-прежнему задаёт владелец после `eth_getCode`. Адреса Sepolia в репозиторий не зашиты: их нужно сверить с актуальной книгой Aave.
