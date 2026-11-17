@@ -40,7 +40,17 @@ function lev(value?: number) {
   return n
 }
 
-function book(symbol: TradingSymbol, tick: bigint, lot: bigint, minQty: bigint, minNotional: bigint, bid: bigint, ask: bigint, at: number, last: bigint): Market {
+function book(
+  symbol: TradingSymbol,
+  tick: bigint,
+  lot: bigint,
+  minQty: bigint,
+  minNotional: bigint,
+  bid: bigint,
+  ask: bigint,
+  at: number,
+  last: bigint,
+): Market {
   return {
     instrument: { symbol, lot, minQty, tick, minNotional },
     book: { symbol, at, bids: [[bid, units('1')]], asks: [[ask, units('1')]] },
@@ -53,7 +63,8 @@ function book(symbol: TradingSymbol, tick: bigint, lot: bigint, minQty: bigint, 
 }
 
 function str(value: unknown) {
-  if (typeof value !== 'string' && typeof value !== 'number') throw new Error('EXECUTION_RESPONSE_INVALID')
+  if (typeof value !== 'string' && typeof value !== 'number')
+    throw new Error('EXECUTION_RESPONSE_INVALID')
   return String(value)
 }
 
@@ -79,7 +90,12 @@ export function createFuturesClient(
   async function call(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
-    p: { query?: Record<string, string>; body?: Record<string, unknown>; signed?: boolean; kind?: RestKind } = {},
+    p: {
+      query?: Record<string, string>
+      body?: Record<string, unknown>
+      signed?: boolean
+      kind?: RestKind
+    } = {},
   ) {
     const built = buildRequest({
       exchange: options.exchange,
@@ -108,7 +124,13 @@ export function createFuturesClient(
     if (options.exchange === 'bybit') {
       await call('POST', '/v5/position/switch-isolated', {
         signed: true,
-        body: { category: 'linear', symbol: code, tradeMode: 1, buyLeverage: value, sellLeverage: value },
+        body: {
+          category: 'linear',
+          symbol: code,
+          tradeMode: 1,
+          buyLeverage: value,
+          sellLeverage: value,
+        },
       })
       await call('POST', '/v5/position/set-leverage', {
         signed: true,
@@ -124,13 +146,24 @@ export function createFuturesClient(
       return
     }
     if (options.exchange === 'binance') {
-      await call('POST', '/fapi/v1/marginType', { signed: true, body: { symbol: code, marginType: 'ISOLATED' } })
-      await call('POST', '/fapi/v1/leverage', { signed: true, body: { symbol: code, leverage: value } })
+      await call('POST', '/fapi/v1/marginType', {
+        signed: true,
+        body: { symbol: code, marginType: 'ISOLATED' },
+      })
+      await call('POST', '/fapi/v1/leverage', {
+        signed: true,
+        body: { symbol: code, leverage: value },
+      })
       return
     }
     await call('POST', '/api/v2/mix/account/set-margin-mode', {
       signed: true,
-      body: { symbol: code, productType: 'USDT-FUTURES', marginCoin: 'USDT', marginMode: 'isolated' },
+      body: {
+        symbol: code,
+        productType: 'USDT-FUTURES',
+        marginCoin: 'USDT',
+        marginMode: 'isolated',
+      },
     })
     await call('POST', '/api/v2/mix/account/set-leverage', {
       signed: true,
@@ -172,12 +205,14 @@ export function createFuturesClient(
       })) as Record<string, string>[]
       const row = inst?.[0]
       const ctVal = amount(row?.ctVal || '1')
-      const depth = (await call('GET', '/api/v5/market/books', { query: { instId: code, sz: '1' } })) as Record<
-        string,
-        unknown
-      >[]
-      const bookRow = depth?.[0] as { ts?: string; bids?: string[][]; asks?: string[][] } | undefined
-      const ticker = (await call('GET', '/api/v5/market/ticker', { query: { instId: code } })) as Record<string, string>[]
+      const depth = (await call('GET', '/api/v5/market/books', {
+        query: { instId: code, sz: '1' },
+      })) as Record<string, unknown>[]
+      const bookRow = depth?.[0] as
+        { ts?: string; bids?: string[][]; asks?: string[][] } | undefined
+      const ticker = (await call('GET', '/api/v5/market/ticker', {
+        query: { instId: code },
+      })) as Record<string, string>[]
       const last = amount(ticker?.[0]?.last || ticker?.[0]?.markPx)
       return book(
         symbol,
@@ -193,18 +228,30 @@ export function createFuturesClient(
     }
     if (options.exchange === 'binance') {
       const info = (await call('GET', '/fapi/v1/exchangeInfo', { query: { symbol: code } })) as {
-        symbols?: { filters?: { filterType: string; tickSize?: string; stepSize?: string; minQty?: string; notional?: string }[] }[]
+        symbols?: {
+          filters?: {
+            filterType: string
+            tickSize?: string
+            stepSize?: string
+            minQty?: string
+            notional?: string
+          }[]
+        }[]
       }
       const filters = info.symbols?.[0]?.filters || []
       const price = filters.find((item) => item.filterType === 'PRICE_FILTER')
       const lot = filters.find((item) => item.filterType === 'LOT_SIZE')
       const notional = filters.find((item) => item.filterType === 'MIN_NOTIONAL')
-      const depth = (await call('GET', '/fapi/v1/depth', { query: { symbol: code, limit: '5' } })) as {
+      const depth = (await call('GET', '/fapi/v1/depth', {
+        query: { symbol: code, limit: '5' },
+      })) as {
         bids?: string[][]
         asks?: string[][]
         T?: number
       }
-      const ticker = (await call('GET', '/fapi/v1/ticker/price', { query: { symbol: code } })) as { price?: string }
+      const ticker = (await call('GET', '/fapi/v1/ticker/price', { query: { symbol: code } })) as {
+        price?: string
+      }
       const last = amount(ticker.price)
       return book(
         symbol,
@@ -231,7 +278,11 @@ export function createFuturesClient(
     const last = amount(Array.isArray(ticker) ? ticker[0]?.lastPr : ticker.lastPr)
     return book(
       symbol,
-      amount(row?.pricePlace ? `0.${'0'.repeat(Math.max(0, Number(row.pricePlace) - 1))}1` : row?.tickSize || '0.01'),
+      amount(
+        row?.pricePlace
+          ? `0.${'0'.repeat(Math.max(0, Number(row.pricePlace) - 1))}1`
+          : row?.tickSize || '0.01',
+      ),
       amount(row?.sizeMultiplier || row?.minTradeNum || '0.001'),
       amount(row?.minTradeNum || '0.001'),
       units('5'),
@@ -244,23 +295,37 @@ export function createFuturesClient(
 
   async function discover(): Promise<TradingSymbol[]> {
     if (options.exchange === 'bybit') {
-      const rows = (await call('GET', '/v5/market/instruments-info', { query: { category: 'linear' } })) as {
+      const rows = (await call('GET', '/v5/market/instruments-info', {
+        query: { category: 'linear' },
+      })) as {
         list?: { symbol?: string; quoteCoin?: string; status?: string; contractType?: string }[]
       }
       return (rows.list || [])
-        .filter((row) => row.quoteCoin === 'USDT' && row.status === 'Trading' && row.contractType === 'LinearPerpetual')
+        .filter(
+          (row) =>
+            row.quoteCoin === 'USDT' &&
+            row.status === 'Trading' &&
+            row.contractType === 'LinearPerpetual',
+        )
         .map((row) => tradingSymbolFromCompact(row.symbol || ''))
         .slice(0, P.maxSymbols) as TradingSymbol[]
     }
     if (options.exchange === 'okx') {
-      const rows = (await call('GET', '/api/v5/public/instruments', { query: { instType: 'SWAP' } })) as {
+      const rows = (await call('GET', '/api/v5/public/instruments', {
+        query: { instType: 'SWAP' },
+      })) as {
         instId?: string
         settleCcy?: string
         state?: string
         ctType?: string
       }[]
       return (rows || [])
-        .filter((row) => row.settleCcy === 'USDT' && row.state === 'live' && (row.instId || '').endsWith('-USDT-SWAP'))
+        .filter(
+          (row) =>
+            row.settleCcy === 'USDT' &&
+            row.state === 'live' &&
+            (row.instId || '').endsWith('-USDT-SWAP'),
+        )
         .map((row) => (row.instId || '').replace(/-SWAP$/, '') as TradingSymbol)
         .slice(0, P.maxSymbols) as TradingSymbol[]
     }
@@ -269,17 +334,26 @@ export function createFuturesClient(
         symbols?: { symbol?: string; contractType?: string; quoteAsset?: string; status?: string }[]
       }
       return (info.symbols || [])
-        .filter((row) => row.quoteAsset === 'USDT' && row.status === 'TRADING' && row.contractType === 'PERPETUAL')
+        .filter(
+          (row) =>
+            row.quoteAsset === 'USDT' &&
+            row.status === 'TRADING' &&
+            row.contractType === 'PERPETUAL',
+        )
         .map((row) => tradingSymbolFromCompact(row.symbol || ''))
         .slice(0, P.maxSymbols) as TradingSymbol[]
     }
-    const rows = (await call('GET', '/api/v2/mix/market/contracts', { query: { productType: 'USDT-FUTURES' } })) as {
+    const rows = (await call('GET', '/api/v2/mix/market/contracts', {
+      query: { productType: 'USDT-FUTURES' },
+    })) as {
       symbol?: string
       quoteCoin?: string
       symbolStatus?: string
     }[]
     return (rows || [])
-      .filter((row) => (row.quoteCoin === 'USDT' || true) && (row.symbolStatus || 'normal') !== 'offline')
+      .filter(
+        (row) => (row.quoteCoin === 'USDT' || true) && (row.symbolStatus || 'normal') !== 'offline',
+      )
       .map((row) => tradingSymbolFromCompact(row.symbol || ''))
       .slice(0, P.maxSymbols) as TradingSymbol[]
   }
@@ -292,7 +366,9 @@ export function createFuturesClient(
       const wallet = (await call('GET', '/v5/account/wallet-balance', {
         signed: true,
         query: { accountType: 'UNIFIED' },
-      })) as { list?: { coin?: { coin: string; walletBalance: string; availableToWithdraw?: string }[] }[] }
+      })) as {
+        list?: { coin?: { coin: string; walletBalance: string; availableToWithdraw?: string }[] }[]
+      }
       const usdt = wallet.list?.[0]?.coin?.find((item) => item.coin === 'USDT')
       available = amount(usdt?.availableToWithdraw || usdt?.walletBalance || '0')
       const list = (await call('GET', '/v5/position/list', {
@@ -341,10 +417,16 @@ export function createFuturesClient(
         })
       }
     } else if (options.exchange === 'binance') {
-      const bals = (await call('GET', '/fapi/v2/balance', { signed: true })) as { asset?: string; availableBalance?: string }[]
+      const bals = (await call('GET', '/fapi/v2/balance', { signed: true })) as {
+        asset?: string
+        availableBalance?: string
+      }[]
       const usdt = (bals || []).find((item) => item.asset === 'USDT')
       available = amount(usdt?.availableBalance || '0')
-      const list = (await call('GET', '/fapi/v2/positionRisk', { signed: true, query: { symbol: code } })) as Record<string, string>[]
+      const list = (await call('GET', '/fapi/v2/positionRisk', {
+        signed: true,
+        query: { symbol: code },
+      })) as Record<string, string>[]
       for (const row of list || []) {
         const qty = amount(row.positionAmt)
         if (!qty) continue
@@ -354,7 +436,10 @@ export function createFuturesClient(
           qty: qty < 0n ? -qty : qty,
           entry: amount(row.entryPrice || '0'),
           mark: amount(row.markPrice || '0'),
-          liquidation: row.liquidationPrice && row.liquidationPrice !== '0' ? amount(row.liquidationPrice) : null,
+          liquidation:
+            row.liquidationPrice && row.liquidationPrice !== '0'
+              ? amount(row.liquidationPrice)
+              : null,
           leverage: Number(row.leverage || leverage),
           margin: amount(row.isolatedWallet || row.isolatedMargin || '0'),
         })
@@ -384,7 +469,8 @@ export function createFuturesClient(
         })
       }
     }
-    if (positions.some((item) => item.leverage > P.futures.maxLeverage)) throw new Error('EXECUTION_LEVERAGE_FORBIDDEN')
+    if (positions.some((item) => item.leverage > P.futures.maxLeverage))
+      throw new Error('EXECUTION_LEVERAGE_FORBIDDEN')
     return { identity, available, positions, feeBps: P.maxFeeBps }
   }
 
@@ -396,11 +482,14 @@ export function createFuturesClient(
       return []
     },
     async prepare(intent: ExecutionIntent): Promise<PreparedExecution> {
-      if (!['buy', 'sell', 'short', 'cover'].includes(intent.action)) throw new Error('EXECUTION_INTENT_INVALID')
+      if (!['buy', 'sell', 'short', 'cover'].includes(intent.action))
+        throw new Error('EXECUTION_INTENT_INVALID')
       compactSymbol(intent.symbol)
-      if (units(intent.quantity) <= 0n || units(intent.limitPrice) <= 0n) throw new ExecutionRejected('EXECUTION_ORDER_SIZE')
+      if (units(intent.quantity) <= 0n || units(intent.limitPrice) <= 0n)
+        throw new ExecutionRejected('EXECUTION_ORDER_SIZE')
       const snapshot = await market(intent.symbol as TradingSymbol)
-      if (units(intent.quantity) % snapshot.instrument.lot) throw new ExecutionRejected('EXECUTION_ORDER_SIZE')
+      if (units(intent.quantity) % snapshot.instrument.lot)
+        throw new ExecutionRejected('EXECUTION_ORDER_SIZE')
       return {
         intent,
         payload: {
@@ -416,15 +505,24 @@ export function createFuturesClient(
     },
     async broadcast(prepared: PreparedExecution) {
       assertLiveWrite(options.mode, options.liveEnabled)
-      if (options.authorizeWrite && !(await options.authorizeWrite())) throw new Error('EXECUTION_WRITE_FORBIDDEN')
+      if (options.authorizeWrite && !(await options.authorizeWrite()))
+        throw new Error('EXECUTION_WRITE_FORBIDDEN')
       await ensureIsolated(prepared.intent.symbol as TradingSymbol)
       const code = native(prepared.intent.symbol)
       const side = ['buy', 'cover'].includes(prepared.intent.action) ? 'buy' : 'sell'
-      const reduceOnly = ['sell', 'cover'].includes(prepared.intent.action) && ['sell', 'cover'].includes(prepared.intent.action) && prepared.intent.action !== 'buy' && prepared.intent.action !== 'short'
+      const reduceOnly =
+        ['sell', 'cover'].includes(prepared.intent.action) &&
+        ['sell', 'cover'].includes(prepared.intent.action) &&
+        prepared.intent.action !== 'buy' &&
+        prepared.intent.action !== 'short'
       const qty = prepared.intent.quantity
       const price = prepared.intent.limitPrice
-      const stop = prepared.intent.stopPrice || (typeof prepared.payload.stopPrice === 'string' ? prepared.payload.stopPrice : '')
-      const take = prepared.intent.takePrice || (typeof prepared.payload.takePrice === 'string' ? prepared.payload.takePrice : '')
+      const stop =
+        prepared.intent.stopPrice ||
+        (typeof prepared.payload.stopPrice === 'string' ? prepared.payload.stopPrice : '')
+      const take =
+        prepared.intent.takePrice ||
+        (typeof prepared.payload.takePrice === 'string' ? prepared.payload.takePrice : '')
       if (options.exchange === 'bybit') {
         await call('POST', '/v5/order/create', {
           signed: true,
@@ -549,7 +647,14 @@ export function createFuturesClient(
         if (!row) return null
         const filled = amount(row.cumExecQty)
         return {
-          status: row.orderStatus === 'Filled' ? 'filled' : row.orderStatus === 'Cancelled' || row.orderStatus === 'Rejected' ? (row.orderStatus === 'Rejected' ? 'rejected' : 'cancelled') : 'pending',
+          status:
+            row.orderStatus === 'Filled'
+              ? 'filled'
+              : row.orderStatus === 'Cancelled' || row.orderStatus === 'Rejected'
+                ? row.orderStatus === 'Rejected'
+                  ? 'rejected'
+                  : 'cancelled'
+                : 'pending',
           externalId: row.orderId || null,
           filledQuantity: decimal(filled),
           grossQuote: decimal(amount(row.cumExecValue || '0')),
@@ -568,7 +673,8 @@ export function createFuturesClient(
     },
     async cancel(prepared: PreparedExecution) {
       assertLiveWrite(options.mode, options.liveEnabled)
-      if (options.authorizeWrite && !(await options.authorizeWrite())) throw new Error('EXECUTION_WRITE_FORBIDDEN')
+      if (options.authorizeWrite && !(await options.authorizeWrite()))
+        throw new Error('EXECUTION_WRITE_FORBIDDEN')
       const code = native(prepared.intent.symbol)
       if (options.exchange === 'bybit') {
         await call('POST', '/v5/order/cancel', {
@@ -580,12 +686,18 @@ export function createFuturesClient(
       if (options.exchange === 'okx') {
         await call('POST', '/api/v5/trade/cancel-order', {
           signed: true,
-          body: { instId: code, clOrdId: prepared.intent.clientId.replace(/[^0-9A-Za-z]/g, '').slice(0, 32) },
+          body: {
+            instId: code,
+            clOrdId: prepared.intent.clientId.replace(/[^0-9A-Za-z]/g, '').slice(0, 32),
+          },
         })
         return
       }
       if (options.exchange === 'binance') {
-        await call('DELETE', '/fapi/v1/order', { signed: true, query: { symbol: code, origClientOrderId: prepared.intent.clientId } })
+        await call('DELETE', '/fapi/v1/order', {
+          signed: true,
+          query: { symbol: code, origClientOrderId: prepared.intent.clientId },
+        })
         return
       }
       await call('POST', '/api/v2/mix/order/cancel-order', {

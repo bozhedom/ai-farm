@@ -21,9 +21,14 @@ export type EarnVenueOptions = {
   authorizeWrite?: () => boolean | Promise<boolean>
 }
 
-export function earnProductPath(exchange: Exclude<ExecutionExchange, 'bitget'>, action: 'subscribe' | 'redeem') {
+export function earnProductPath(
+  exchange: Exclude<ExecutionExchange, 'bitget'>,
+  action: 'subscribe' | 'redeem',
+) {
   if (exchange === 'binance')
-    return action === 'subscribe' ? '/sapi/v1/simple-earn/flexible/subscribe' : '/sapi/v1/simple-earn/flexible/redeem'
+    return action === 'subscribe'
+      ? '/sapi/v1/simple-earn/flexible/subscribe'
+      : '/sapi/v1/simple-earn/flexible/redeem'
   if (exchange === 'okx') return '/api/v5/finance/savings/purchase-redempt'
   return '/v5/earn/place-order'
 }
@@ -60,7 +65,11 @@ function bpsFromRate(value: unknown) {
   return Math.round(asNumber * 10_000)
 }
 
-export function createEarnClient(options: EarnVenueOptions, fetchImpl?: typeof fetch, now?: () => number): EarnClient
+export function createEarnClient(
+  options: EarnVenueOptions,
+  fetchImpl?: typeof fetch,
+  now?: () => number,
+): EarnClient
 export function createEarnClient(
   exchange: Exclude<ExecutionExchange, 'bitget'>,
   mode: RestMode,
@@ -81,12 +90,17 @@ export function createEarnClient(
           credentials: credentialsOrNow as EarnCredentials,
         }
       : exchangeOrOptions
-  const fetchImpl = (typeof exchangeOrOptions === 'string' ? maybeFetch : (modeOrFetch as typeof fetch)) || fetch
-  const now = (typeof exchangeOrOptions === 'string' ? maybeNow : (credentialsOrNow as () => number)) || Date.now
+  const fetchImpl =
+    (typeof exchangeOrOptions === 'string' ? maybeFetch : (modeOrFetch as typeof fetch)) || fetch
+  const now =
+    (typeof exchangeOrOptions === 'string' ? maybeNow : (credentialsOrNow as () => number)) ||
+    Date.now
   if (options.exchange === 'binance' && options.mode === 'demo') {
     const refuse: EarnClient = {
       async identity() {
-        return createHash('sha256').update(`earn:binance:demo:${options.credentials.key}`).digest('hex')
+        return createHash('sha256')
+          .update(`earn:binance:demo:${options.credentials.key}`)
+          .digest('hex')
       },
       async available() {
         throw new Error('EXECUTION_EARN_DEMO_UNAVAILABLE')
@@ -130,20 +144,33 @@ export function createEarnClient(
   async function lookupProduct(asset: string) {
     const coin = asset.replace('-USDT', '') || 'USDT'
     if (options.exchange === 'bybit') {
-      const rows = (await call('GET', '/v5/earn/product', { query: { category: 'FlexibleSaving', coin } })) as {
+      const rows = (await call('GET', '/v5/earn/product', {
+        query: { category: 'FlexibleSaving', coin },
+      })) as {
         list?: { productId?: string; coin?: string; latestApr?: string; status?: string }[]
       }
-      const row = (rows.list || []).find((item) => item.coin === coin && (item.status || 'Available') !== 'SoldOut')
+      const row = (rows.list || []).find(
+        (item) => item.coin === coin && (item.status || 'Available') !== 'SoldOut',
+      )
       if (!row?.productId) throw new Error('EXECUTION_EARN_PRODUCT_UNAVAILABLE')
       productId = row.productId
       cachedRate = bpsFromRate(row.latestApr)
       return row.productId
     }
     if (options.exchange === 'binance') {
-      const rows = (await call('GET', '/sapi/v1/simple-earn/flexible/list', { query: { asset: coin } })) as {
-        rows?: { productId?: string; asset?: string; latestAnnualPercentageRate?: string; status?: string }[]
+      const rows = (await call('GET', '/sapi/v1/simple-earn/flexible/list', {
+        query: { asset: coin },
+      })) as {
+        rows?: {
+          productId?: string
+          asset?: string
+          latestAnnualPercentageRate?: string
+          status?: string
+        }[]
       }
-      const row = (rows.rows || []).find((item) => item.asset === coin && item.status === 'PURCHASING')
+      const row = (rows.rows || []).find(
+        (item) => item.asset === coin && item.status === 'PURCHASING',
+      )
       const fallback = (rows.rows || [])[0]
       const chosen = row || fallback
       if (!chosen?.productId) throw new Error('EXECUTION_EARN_PRODUCT_UNAVAILABLE')
@@ -151,7 +178,9 @@ export function createEarnClient(
       cachedRate = bpsFromRate(chosen.latestAnnualPercentageRate)
       return chosen.productId
     }
-    const rows = (await call('GET', '/api/v5/finance/savings/lending-rate-summary', { query: { ccy: coin } })) as {
+    const rows = (await call('GET', '/api/v5/finance/savings/lending-rate-summary', {
+      query: { ccy: coin },
+    })) as {
       ccy?: string
       avgRate?: string
     }[]
@@ -164,21 +193,32 @@ export function createEarnClient(
 
   return {
     async identity() {
-      return createHash('sha256').update(`earn:${options.exchange}:${options.mode}:${options.credentials.key}`).digest('hex')
+      return createHash('sha256')
+        .update(`earn:${options.exchange}:${options.mode}:${options.credentials.key}`)
+        .digest('hex')
     },
     async available() {
       if (options.exchange === 'bybit') {
-        const wallet = (await call('GET', '/v5/account/wallet-balance', { query: { accountType: 'UNIFIED' } })) as {
-          list?: { coin?: { coin: string; walletBalance: string; availableToWithdraw?: string }[] }[]
+        const wallet = (await call('GET', '/v5/account/wallet-balance', {
+          query: { accountType: 'UNIFIED' },
+        })) as {
+          list?: {
+            coin?: { coin: string; walletBalance: string; availableToWithdraw?: string }[]
+          }[]
         }
         const usdt = wallet.list?.[0]?.coin?.find((item) => item.coin === 'USDT')
         return amount(usdt?.availableToWithdraw || usdt?.walletBalance)
       }
       if (options.exchange === 'okx') {
-        const bals = (await call('GET', '/api/v5/account/balance')) as { details?: { ccy: string; availBal: string }[] }[]
+        const bals = (await call('GET', '/api/v5/account/balance')) as {
+          details?: { ccy: string; availBal: string }[]
+        }[]
         return amount(bals?.[0]?.details?.find((item) => item.ccy === 'USDT')?.availBal)
       }
-      const bals = (await call('GET', '/sapi/v1/capital/config/getall')) as { coin?: string; free?: string }[]
+      const bals = (await call('GET', '/sapi/v1/capital/config/getall')) as {
+        coin?: string
+        free?: string
+      }[]
       return amount((bals || []).find((item) => item.coin === 'USDT')?.free)
     },
     async rateBps() {
@@ -187,7 +227,8 @@ export function createEarnClient(
     },
     async subscribe(asset, qty) {
       assertLiveWrite(options.mode, options.liveEnabled)
-      if (options.authorizeWrite && !(await options.authorizeWrite())) throw new Error('EXECUTION_WRITE_FORBIDDEN')
+      if (options.authorizeWrite && !(await options.authorizeWrite()))
+        throw new Error('EXECUTION_WRITE_FORBIDDEN')
       const id = productId || (await lookupProduct(asset))
       const coin = asset.replace('-USDT', '') || 'USDT'
       if (options.exchange === 'bybit') {
@@ -217,7 +258,8 @@ export function createEarnClient(
     },
     async redeem(asset, qty) {
       assertLiveWrite(options.mode, options.liveEnabled)
-      if (options.authorizeWrite && !(await options.authorizeWrite())) throw new Error('EXECUTION_WRITE_FORBIDDEN')
+      if (options.authorizeWrite && !(await options.authorizeWrite()))
+        throw new Error('EXECUTION_WRITE_FORBIDDEN')
       const id = productId || (await lookupProduct(asset))
       const coin = asset.replace('-USDT', '') || 'USDT'
       if (options.exchange === 'bybit') {

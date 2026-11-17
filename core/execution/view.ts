@@ -34,7 +34,8 @@ export async function executionView(
     track,
     mode,
     status: p.status,
-    currency: track === 'defi' || track === 'swap' ? 'USDC' : track === 'prediction' ? 'USD' : 'USDT',
+    currency:
+      track === 'defi' || track === 'swap' ? 'USDC' : track === 'prediction' ? 'USD' : 'USDT',
     capital: decimal(units(p.capital)),
     available: decimal(units(p.cash)),
     equity: decimal(units(p.equity)),

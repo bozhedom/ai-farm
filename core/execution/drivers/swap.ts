@@ -14,11 +14,20 @@ import type {
   Json,
 } from '../types'
 
-export type SwapQuote = { amountIn: bigint; amountOut: bigint; midOut: bigint; feeBps: number; at: number }
+export type SwapQuote = {
+  amountIn: bigint
+  amountOut: bigint
+  midOut: bigint
+  feeBps: number
+  at: number
+}
 export type SwapClient = {
   identity?(): string
   quote(symbol: TradingSymbol, amountIn: bigint): Promise<SwapQuote>
-  prepareSwap?(intent: ExecutionIntent, quote: SwapQuote): Promise<{ payload: Record<string, string | number>; externalId: string | null }>
+  prepareSwap?(
+    intent: ExecutionIntent,
+    quote: SwapQuote,
+  ): Promise<{ payload: Record<string, string | number>; externalId: string | null }>
   broadcast?(prepared: import('../types').PreparedExecution): Promise<void>
   market?(symbol: TradingSymbol): Promise<Market>
 }
@@ -53,7 +62,11 @@ export function createSwapDriver(
         quoteFee: decimal(fee(quote.amountIn, quote.feeBps)),
         baseFee: '0',
       }
-      return { intent, externalId: receipt.externalId, payload: { receipt: receipt as unknown as Json, minOut: decimal(minOut) } }
+      return {
+        intent,
+        externalId: receipt.externalId,
+        payload: { receipt: receipt as unknown as Json, minOut: decimal(minOut) },
+      }
     },
     async broadcast() {},
     async lookup(prepared) {
@@ -69,10 +82,15 @@ export function createSwapDriver(
       if (quote.amountOut < minOut) throw new Error('EXECUTION_SLIPPAGE_EXCEEDED')
       if (!client.prepareSwap) throw new Error('EXECUTION_WALLET_REQUIRED')
       const prepared = await client.prepareSwap(intent, quote)
-      return { intent, externalId: prepared.externalId, payload: { ...prepared.payload, minOut: decimal(minOut) } }
+      return {
+        intent,
+        externalId: prepared.externalId,
+        payload: { ...prepared.payload, minOut: decimal(minOut) },
+      }
     },
     async broadcast(prepared) {
-      if (!client?.broadcast) throw new Error(mode === 'live' ? 'EXECUTION_LIVE_DISABLED' : 'EXECUTION_WALLET_REQUIRED')
+      if (!client?.broadcast)
+        throw new Error(mode === 'live' ? 'EXECUTION_LIVE_DISABLED' : 'EXECUTION_WALLET_REQUIRED')
       await client.broadcast(prepared)
     },
     async lookup() {
@@ -96,7 +114,8 @@ export function createSwapDriver(
       if (budget < units(P.minOrder)) return null
       const symbol = (p.settings.symbols[0] || 'USDC-USDT') as TradingSymbol
       const quote = await source.quote(symbol, budget)
-      const minOut = (quote.midOut * (BPS - BigInt((p.settings.slippageBps ?? P.swap.defaultSlippageBps)))) / BPS
+      const minOut =
+        (quote.midOut * (BPS - BigInt(p.settings.slippageBps ?? P.swap.defaultSlippageBps))) / BPS
       if (quote.amountOut < minOut) return null
       return {
         reserve: decimal(budget + fee(budget, quote.feeBps)),
@@ -115,7 +134,14 @@ export function createSwapDriver(
       }
     },
     async decide(_p: ExecutionPortfolio, op, legs: ExecutionLeg[]): Promise<ExecutionDecision> {
-      if (legs.some((item) => item.state !== 'terminal' || !item.receipt || ['unknown', 'pending'].includes(item.receipt.status)))
+      if (
+        legs.some(
+          (item) =>
+            item.state !== 'terminal' ||
+            !item.receipt ||
+            ['unknown', 'pending'].includes(item.receipt.status),
+        )
+      )
         return { type: 'attention', reason: 'EXECUTION_ORDER_UNKNOWN' }
       if (!legs.length) {
         const notional = units(op.plan.quantity)
@@ -135,7 +161,10 @@ export function createSwapDriver(
           },
         }
       }
-      const filled = legs.reduce((total, item) => total + units(item.receipt?.filledQuantity || '0'), 0n)
+      const filled = legs.reduce(
+        (total, item) => total + units(item.receipt?.filledQuantity || '0'),
+        0n,
+      )
       const spent = legs.reduce((total, item) => total + units(item.receipt?.grossQuote || '0'), 0n)
       const fees = legs.reduce((total, item) => total + units(item.receipt?.quoteFee || '0'), 0n)
       const minOut = units(op.plan.hedgePrice)

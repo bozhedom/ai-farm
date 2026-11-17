@@ -104,7 +104,7 @@ export function createExecutionDriver(p: ExecutionPortfolio): ExecutionDriver {
           maxFeePerGasWei: BigInt(P.defiMaxFeePerGasWei),
           maxGasCostWei: BigInt(P.defiMaxGasCostWei),
         } as AaveSettings
-        assertAaveConfigNetwork(p.mode, (p.settings.defiNetwork || 'sepolia'), conf)
+        assertAaveConfigNetwork(p.mode, p.settings.defiNetwork || 'sepolia', conf)
       } catch (error) {
         if (error instanceof Error && error.message.startsWith('EXECUTION_DEFI_')) throw error
         throw new Error('EXECUTION_WALLET_CONFIG_INVALID')
@@ -175,14 +175,16 @@ export function createExecutionDriver(p: ExecutionPortfolio): ExecutionDriver {
             }),
       )
     case 'earn':
-      if ((p.settings.venue || 'bybit') === 'bitget') throw new Error('EXECUTION_EARN_VENUE_UNSUPPORTED')
+      if ((p.settings.venue || 'bybit') === 'bitget')
+        throw new Error('EXECUTION_EARN_VENUE_UNSUPPORTED')
       return createEarnDriver(
         p.mode,
         venueExchange,
         p.mode === 'paper' || venueExchange === 'bitget'
           ? undefined
           : createEarnClient({
-              exchange: venueExchange === 'okx' || venueExchange === 'binance' ? venueExchange : 'bybit',
+              exchange:
+                venueExchange === 'okx' || venueExchange === 'binance' ? venueExchange : 'bybit',
               mode: p.mode,
               credentials: {
                 key: read(`EARN_${venueExchange.toUpperCase()}_${suffix}_API_KEY`),

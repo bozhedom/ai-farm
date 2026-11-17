@@ -22,9 +22,20 @@ const { data, pending, status, refresh } = useOfficeResource<EarningsView>(
   () => officeFetch('/api/earnings'),
   { interval: 10_000 },
 )
-const executedTracks = ['arbitrage', 'yield', 'futures', 'margin', 'earn', 'swap', 'options', 'prediction'] as const
+const executedTracks = [
+  'arbitrage',
+  'yield',
+  'futures',
+  'margin',
+  'earn',
+  'swap',
+  'options',
+  'prediction',
+] as const
 const monitored = computed(() => ['arbitrage', 'yield', 'prediction'].includes(track.value.id))
-const executed = computed(() => executedTracks.includes(track.value.id as (typeof executedTracks)[number]))
+const executed = computed(() =>
+  executedTracks.includes(track.value.id as (typeof executedTracks)[number]),
+)
 const feeds = computed(() =>
   (data.value?.report?.feeds || []).filter((f) =>
     track.value.id === 'prediction'
@@ -36,12 +47,7 @@ const executionTrack = computed(() => {
   if (track.value.id === 'yield') return yieldTrack.value
   if (track.value.id === 'arbitrage') return 'arbitrage' as const
   if (track.value.id === 'prediction') return 'prediction' as const
-  return track.value.id as
-    | 'futures'
-    | 'margin'
-    | 'earn'
-    | 'swap'
-    | 'options'
+  return track.value.id as 'futures' | 'margin' | 'earn' | 'swap' | 'options'
 })
 const busy = ref(false)
 const error = ref('')

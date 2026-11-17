@@ -12,7 +12,11 @@ import {
 import { createFuturesClient } from '../../core/execution/adapters/futures-venues'
 import { createFundingVenue } from '../../core/execution/adapters/funding-venues'
 import { createMarginClient } from '../../core/execution/adapters/margin-venues'
-import { createEarnClient, earnProductListPath, earnProductPath } from '../../core/execution/adapters/earn-venues'
+import {
+  createEarnClient,
+  earnProductListPath,
+  earnProductPath,
+} from '../../core/execution/adapters/earn-venues'
 import { createOptionsClient } from '../../core/execution/adapters/options-venues'
 import {
   createUniswapClient,
@@ -29,13 +33,16 @@ const now = 1_794_000_000_000
 const credentials = { key: 'test-key', secret: 'test-secret', passphrase: 'test-pass' }
 
 function captured() {
-  const calls: { url: string; method: string; headers: Record<string, string>; body?: string }[] = []
+  const calls: { url: string; method: string; headers: Record<string, string>; body?: string }[] =
+    []
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input)
     calls.push({
       url,
       method: String(init?.method || 'GET'),
-      headers: Object.fromEntries(Object.entries(init?.headers || {}).map(([key, value]) => [key, String(value)])),
+      headers: Object.fromEntries(
+        Object.entries(init?.headers || {}).map(([key, value]) => [key, String(value)]),
+      ),
       body: typeof init?.body === 'string' ? init.body : undefined,
     })
     throw new Error('EXECUTION_NETWORK_UNAVAILABLE')
@@ -44,7 +51,10 @@ function captured() {
 }
 
 function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 const intent: ExecutionIntent = {
@@ -70,17 +80,23 @@ describe('exchange request signing', () => {
     expect(venueOrigin('bitget', 'demo')).toBe('https://api.bitget.com')
     const ts = String(now)
     expect(signBybit('s', ts, 'k', '5000', '{"a":1}')).toBe(
-      createHmac('sha256', 's').update(ts + 'k' + '5000' + '{"a":1}').digest('hex'),
+      createHmac('sha256', 's')
+        .update(ts + 'k' + '5000' + '{"a":1}')
+        .digest('hex'),
     )
     const iso = new Date(now).toISOString()
     expect(signOkx('s', iso, 'POST', '/api/v5/trade/order', '{"x":1}')).toBe(
-      createHmac('sha256', 's').update(iso + 'POST' + '/api/v5/trade/order' + '{"x":1}').digest('base64'),
+      createHmac('sha256', 's')
+        .update(iso + 'POST' + '/api/v5/trade/order' + '{"x":1}')
+        .digest('base64'),
     )
     expect(signBinance('s', 'symbol=BTCUSDT&timestamp=1')).toBe(
       createHmac('sha256', 's').update('symbol=BTCUSDT&timestamp=1').digest('hex'),
     )
     expect(signBitget('s', ts, 'POST', '/api/v2/mix/order/place-order', '{"a":1}')).toBe(
-      createHmac('sha256', 's').update(ts + 'POST' + '/api/v2/mix/order/place-order' + '{"a":1}').digest('base64'),
+      createHmac('sha256', 's')
+        .update(ts + 'POST' + '/api/v2/mix/order/place-order' + '{"a":1}')
+        .digest('base64'),
     )
     const okx = buildRequest({
       exchange: 'okx',
@@ -118,7 +134,11 @@ describe('exchange request signing', () => {
     })
     expect(binance.url).toBe('https://demo-fapi.binance.com/fapi/v1/order')
     expect(binance.body).toContain('signature=')
-    expect(binance.body?.endsWith(signBinance('test-secret', binance.body!.replace(/&signature=.+$/, '')))).toBe(true)
+    expect(
+      binance.body?.endsWith(
+        signBinance('test-secret', binance.body!.replace(/&signature=.+$/, '')),
+      ),
+    ).toBe(true)
   })
 })
 
@@ -130,7 +150,13 @@ describe('futures clients', () => {
       paths.push(`${init?.method}:${url.pathname}`)
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
       if (url.pathname === '/v5/position/switch-isolated') {
-        expect(body).toMatchObject({ category: 'linear', symbol: 'BTCUSDT', tradeMode: 1, buyLeverage: '2', sellLeverage: '2' })
+        expect(body).toMatchObject({
+          category: 'linear',
+          symbol: 'BTCUSDT',
+          tradeMode: 1,
+          buyLeverage: '2',
+          sellLeverage: '2',
+        })
         return json({ retCode: 0, result: {} })
       }
       if (url.pathname === '/v5/position/set-leverage') return json({ retCode: 0, result: {} })
@@ -154,17 +180,29 @@ describe('futures clients', () => {
       () => now,
     )
     await client.broadcast({ intent, payload: { mode: 'demo' }, externalId: null })
-    expect(paths).toEqual(['POST:/v5/position/switch-isolated', 'POST:/v5/position/set-leverage', 'POST:/v5/order/create'])
+    expect(paths).toEqual([
+      'POST:/v5/position/switch-isolated',
+      'POST:/v5/position/set-leverage',
+      'POST:/v5/order/create',
+    ])
   })
 
   it('refuses a live futures write when the live flag is off', async () => {
     const { calls, fetchImpl } = captured()
     const client = createFuturesClient(
-      { mode: 'live', exchange: 'okx', credentials, liveEnabled: false, authorizeWrite: () => true },
+      {
+        mode: 'live',
+        exchange: 'okx',
+        credentials,
+        liveEnabled: false,
+        authorizeWrite: () => true,
+      },
       fetchImpl,
       () => now,
     )
-    await expect(client.broadcast({ intent, payload: {}, externalId: null })).rejects.toThrow('EXECUTION_LIVE_DISABLED')
+    await expect(client.broadcast({ intent, payload: {}, externalId: null })).rejects.toThrow(
+      'EXECUTION_LIVE_DISABLED',
+    )
     expect(calls).toHaveLength(0)
   })
 })
@@ -179,15 +217,23 @@ describe('funding market and execution', () => {
         return json({ code: '0', data: [{ tickSz: '0.1', lotSz: '1', minSz: '1', ctVal: '0.01' }] })
       }
       if (url.pathname === '/api/v5/market/books') {
-        return json({ code: '0', data: [{ ts: String(now), bids: [['10000', '1']], asks: [['10001', '1']] }] })
+        return json({
+          code: '0',
+          data: [{ ts: String(now), bids: [['10000', '1']], asks: [['10001', '1']] }],
+        })
       }
       if (url.pathname === '/api/v5/public/funding-rate') {
-        return json({ code: '0', data: [{ fundingRate: '0.0001', fundingTime: String(now + 3_600_000) }] })
+        return json({
+          code: '0',
+          data: [{ fundingRate: '0.0001', fundingTime: String(now + 3_600_000) }],
+        })
       }
       if (url.pathname === '/api/v5/account/set-leverage') {
         const body = JSON.parse(String(init?.body))
         expect(body).toMatchObject({ instId: 'BTC-USDT-SWAP', lever: '1', mgnMode: 'isolated' })
-        expect(init?.headers && (init.headers as Record<string, string>)['x-simulated-trading']).toBe('1')
+        expect(
+          init?.headers && (init.headers as Record<string, string>)['x-simulated-trading'],
+        ).toBe('1')
         return json({ code: '0', data: [] })
       }
       if (url.pathname === '/api/v5/trade/order') {
@@ -199,7 +245,11 @@ describe('funding market and execution', () => {
       }
       return json({ code: '0', data: [] })
     }
-    const venue = createFundingVenue({ mode: 'demo', exchange: 'okx', credentials, authorizeWrite: () => true }, fetchImpl, () => now)
+    const venue = createFundingVenue(
+      { mode: 'demo', exchange: 'okx', credentials, authorizeWrite: () => true },
+      fetchImpl,
+      () => now,
+    )
     const market = await venue.market('BTC-USDT')
     expect(market.fundingRate).toBe(units('0.0001'))
     expect(market.perp.instrument.lot).toBe(units('0.01'))
@@ -220,12 +270,22 @@ describe('spot margin and earn', () => {
       const url = new URL(String(input))
       paths.push(url.pathname)
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
-      if (url.pathname === '/v5/account/borrow') expect(body).toMatchObject({ coin: 'USDT', amount: '10' })
-      if (url.pathname === '/v5/order/create') expect(body).toMatchObject({ category: 'spot', isLeverage: 1 })
+      if (url.pathname === '/v5/account/borrow')
+        expect(body).toMatchObject({ coin: 'USDT', amount: '10' })
+      if (url.pathname === '/v5/order/create')
+        expect(body).toMatchObject({ category: 'spot', isLeverage: 1 })
       return json({ retCode: 0, result: {} })
     }
-    const client = createMarginClient({ mode: 'demo', exchange: 'bybit', credentials, leverage: 2, authorizeWrite: () => true }, fetchImpl, () => now)
-    await client.broadcast({ intent: { ...intent, action: 'borrow', quantity: '10' }, payload: {}, externalId: null })
+    const client = createMarginClient(
+      { mode: 'demo', exchange: 'bybit', credentials, leverage: 2, authorizeWrite: () => true },
+      fetchImpl,
+      () => now,
+    )
+    await client.broadcast({
+      intent: { ...intent, action: 'borrow', quantity: '10' },
+      payload: {},
+      externalId: null,
+    })
     await client.broadcast({ intent, payload: {}, externalId: null })
     expect(paths).toContain('/v5/account/borrow')
     expect(paths).toContain('/v5/spot-margin-trade/set-leverage')
@@ -239,7 +299,12 @@ describe('spot margin and earn', () => {
       const url = new URL(String(input))
       if (url.pathname === '/v5/earn/product') {
         expect(url.searchParams.get('category')).toBe('FlexibleSaving')
-        return json({ retCode: 0, result: { list: [{ productId: '430', coin: 'USDT', latestApr: '0.05', status: 'Available' }] } })
+        return json({
+          retCode: 0,
+          result: {
+            list: [{ productId: '430', coin: 'USDT', latestApr: '0.05', status: 'Available' }],
+          },
+        })
       }
       if (url.pathname === '/v5/earn/place-order') {
         expect(JSON.parse(String(init?.body))).toMatchObject({
@@ -252,12 +317,18 @@ describe('spot margin and earn', () => {
       }
       return json({ retCode: 0, result: {} })
     }
-    const client = createEarnClient({ exchange: 'bybit', mode: 'demo', credentials, authorizeWrite: () => true }, fetchImpl, () => now)
+    const client = createEarnClient(
+      { exchange: 'bybit', mode: 'demo', credentials, authorizeWrite: () => true },
+      fetchImpl,
+      () => now,
+    )
     const receipt = await client.subscribe('USDT', units('10'))
     expect(receipt.externalId).toBe('ord-1')
     expect(await client.rateBps()).toBe(500)
     const binance = createEarnClient({ exchange: 'binance', mode: 'demo', credentials })
-    await expect(binance.subscribe('USDT', units('1'))).rejects.toThrow('EXECUTION_EARN_DEMO_UNAVAILABLE')
+    await expect(binance.subscribe('USDT', units('1'))).rejects.toThrow(
+      'EXECUTION_EARN_DEMO_UNAVAILABLE',
+    )
   })
 })
 
@@ -269,7 +340,9 @@ describe('options and uniswap', () => {
       if (url.pathname === '/v5/market/tickers') {
         return json({
           retCode: 0,
-          result: { list: [{ symbol: 'BTC-29NOV24-100000-C', markPrice: '1.5', ask1Price: '1.6' }] },
+          result: {
+            list: [{ symbol: 'BTC-29NOV24-100000-C', markPrice: '1.5', ask1Price: '1.6' }],
+          },
         })
       }
       if (url.pathname === '/v5/order/create') {
@@ -278,11 +351,20 @@ describe('options and uniswap', () => {
       }
       return json({ retCode: 0, result: {} })
     }
-    const client = createOptionsClient({ exchange: 'bybit', mode: 'demo', credentials, authorizeWrite: () => true }, fetchImpl, () => now)
+    const client = createOptionsClient(
+      { exchange: 'bybit', mode: 'demo', credentials, authorizeWrite: () => true },
+      fetchImpl,
+      () => now,
+    )
     const quote = await client.quote('BTC-USDT', 'call')
     expect(quote.symbol).toBe('BTC-29NOV24-100000-C')
     expect(quote.premium).toBe(units('1.6'))
-    const prepared = await client.prepare!({ ...intent, venue: 'bybit-options', action: 'buy', limitPrice: '1.6' })
+    const prepared = await client.prepare!({
+      ...intent,
+      venue: 'bybit-options',
+      action: 'buy',
+      limitPrice: '1.6',
+    })
     await client.broadcast!(prepared)
     await client.broadcast!({ ...prepared, intent: { ...prepared.intent, action: 'sell' } })
     expect(bodies[0]).toMatchObject({ category: 'option', side: 'Buy', reduceOnly: false })
@@ -344,9 +426,13 @@ describe('options and uniswap', () => {
         throw new Error('no-rpc')
       },
     )
-    await expect(live.broadcast!({ intent, payload: { rawTransaction: '0xabc' }, externalId: null } satisfies PreparedExecution)).rejects.toThrow(
-      'EXECUTION_LIVE_DISABLED',
-    )
+    await expect(
+      live.broadcast!({
+        intent,
+        payload: { rawTransaction: '0xabc' },
+        externalId: null,
+      } satisfies PreparedExecution),
+    ).rejects.toThrow('EXECUTION_LIVE_DISABLED')
   })
 })
 
@@ -363,7 +449,11 @@ describe('executionReady after adapters landed', () => {
     try {
       for (const name of names) delete process.env[name]
       for (const key of Object.keys(process.env)) {
-        if (key.startsWith('EXECUTION_FUTURES_') || key.startsWith('EXECUTION_OPTIONS_') || key.startsWith('EXECUTION_EARN_')) {
+        if (
+          key.startsWith('EXECUTION_FUTURES_') ||
+          key.startsWith('EXECUTION_OPTIONS_') ||
+          key.startsWith('EXECUTION_EARN_')
+        ) {
           previous[key] = process.env[key]
           delete process.env[key]
         }

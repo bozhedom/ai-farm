@@ -1,10 +1,4 @@
-import {
-  encodeFunctionData,
-  hexToBigInt,
-  parseAbi,
-  type Address,
-  type Hex,
-} from 'viem'
+import { encodeFunctionData, hexToBigInt, parseAbi, type Address, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { EXECUTION_POLICY as P } from '../../policy'
 import { BPS, units } from '../../trading/decimal'
@@ -58,7 +52,8 @@ export type UniswapSettings = {
 export type EvmRpc = (method: string, params: unknown[]) => Promise<unknown>
 
 export function uniswapSlippageCap(slippageBps: number) {
-  if (slippageBps < 1 || slippageBps > P.swap.maxSlippageBps) throw new Error('EXECUTION_SLIPPAGE_FORBIDDEN')
+  if (slippageBps < 1 || slippageBps > P.swap.maxSlippageBps)
+    throw new Error('EXECUTION_SLIPPAGE_FORBIDDEN')
   return slippageBps
 }
 
@@ -123,16 +118,28 @@ export function encodeExactInputSingle(p: {
   })
 }
 
-export function createUniswapClient(settings: UniswapSettings, rpc?: EvmRpc, now: () => number = Date.now): SwapClient {
+export function createUniswapClient(
+  settings: UniswapSettings,
+  rpc?: EvmRpc,
+  now: () => number = Date.now,
+): SwapClient {
   uniswapSlippageCap(settings.slippageBps)
-  if (settings.network === 'mainnet' && settings.chainId !== 1) throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
-  if (settings.network === 'sepolia' && settings.chainId !== 11155111) throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
+  if (settings.network === 'mainnet' && settings.chainId !== 1)
+    throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
+  if (settings.network === 'sepolia' && settings.chainId !== 11155111)
+    throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
   const network = pins(settings.network)
   const tokenIn = (settings.tokenIn || network.usdc) as Address
   const tokenOut = (settings.tokenOut || network.weth) as Address
   const fee = settings.poolFee || 500
-  const tokenInDecimals = tokenIn.toLowerCase() === network.weth.toLowerCase() ? network.wethDecimals : network.usdcDecimals
-  const tokenOutDecimals = tokenOut.toLowerCase() === network.weth.toLowerCase() ? network.wethDecimals : network.usdcDecimals
+  const tokenInDecimals =
+    tokenIn.toLowerCase() === network.weth.toLowerCase()
+      ? network.wethDecimals
+      : network.usdcDecimals
+  const tokenOutDecimals =
+    tokenOut.toLowerCase() === network.weth.toLowerCase()
+      ? network.wethDecimals
+      : network.usdcDecimals
   const evm = rpc || (settings.rpcUrl ? httpRpc(settings.rpcUrl) : undefined)
 
   async function quote(_symbol: TradingSymbol, amountIn: bigint): Promise<SwapQuote> {
@@ -203,7 +210,8 @@ export function createUniswapClient(settings: UniswapSettings, rpc?: EvmRpc, now
       if (settings.network === 'mainnet') assertLiveWrite('live', settings.liveEnabled)
       if (!evm) throw new Error('EXECUTION_WALLET_REQUIRED')
       const raw = prepared.payload.rawTransaction
-      if (typeof raw !== 'string' || !raw.startsWith('0x')) throw new Error('EXECUTION_TRANSACTION_REQUIRED')
+      if (typeof raw !== 'string' || !raw.startsWith('0x'))
+        throw new Error('EXECUTION_TRANSACTION_REQUIRED')
       const hash = (await evm('eth_sendRawTransaction', [raw])) as string
       prepared.externalId = hash
       prepared.payload.hash = hash
@@ -220,4 +228,3 @@ export function parseSwapAmount(value: string) {
   if (amount <= 0n) throw new Error('EXECUTION_ORDER_SIZE')
   return amount
 }
-

@@ -23,7 +23,10 @@ import type { TradingSymbol } from '../../core/trading/types'
 
 const settings: ExecutionSettings = executionSettingsSchema.parse({})
 
-function portfolio(track: ExecutionPortfolio['track'], overrides: Partial<ExecutionPortfolio> = {}): ExecutionPortfolio {
+function portfolio(
+  track: ExecutionPortfolio['track'],
+  overrides: Partial<ExecutionPortfolio> = {},
+): ExecutionPortfolio {
   return {
     track,
     mode: 'paper',
@@ -36,7 +39,13 @@ function portfolio(track: ExecutionPortfolio['track'], overrides: Partial<Execut
     peak: '100',
     day_equity: '100',
     risk_day: '',
-    settings: { ...settings, symbols: ['BTC-USDT'], leverage: 2, stopLossBps: 150, takeProfitBps: 200 },
+    settings: {
+      ...settings,
+      symbols: ['BTC-USDT'],
+      leverage: 2,
+      stopLossBps: 150,
+      takeProfitBps: 200,
+    },
     reason: '',
     heartbeat: null,
     last_scan: null,
@@ -242,8 +251,16 @@ describe('directional futures paper book', () => {
 describe('funding paper venue for other exchanges', () => {
   it('opens a 1x hedge on a virtual OKX book when the rate stays positive', async () => {
     const venue = createPaperFundingVenue()
-    const driver = createFundingDriver('paper', { credentials: { key: '', secret: '' } }, { venue, exchange: 'okx' })
-    const planned = await driver.plan(portfolio('funding', { settings: { ...settings, minFundingBps: 2, minEdgeBps: 10, maxHoldHours: 48 } }))
+    const driver = createFundingDriver(
+      'paper',
+      { credentials: { key: '', secret: '' } },
+      { venue, exchange: 'okx' },
+    )
+    const planned = await driver.plan(
+      portfolio('funding', {
+        settings: { ...settings, minFundingBps: 2, minEdgeBps: 10, maxHoldHours: 48 },
+      }),
+    )
     expect(planned).toBeTruthy()
     expect(planned!.plan.buyVenue).toBe('okx-funding')
   })
@@ -255,7 +272,7 @@ describe('spot margin paper book', () => {
     const planned = await driver.plan(portfolio('margin'))
     expect(planned).toBeTruthy()
     expect(planned!.plan.leverage).toBe(2)
-    const notional = units(planned!.plan.quantity) * units(planned!.plan.entryPrice) / SCALE
+    const notional = (units(planned!.plan.quantity) * units(planned!.plan.entryPrice)) / SCALE
     expect(units(planned!.reserve)).toBeLessThan(notional)
   })
 })
@@ -312,30 +329,40 @@ describe('Uniswap paper swap', () => {
 
   it('closes a paper swap after a fill above the minimum out', async () => {
     const driver = createSwapDriver('paper')
-    const planned = (await driver.plan(portfolio('swap', { settings: { ...settings, symbols: ['USDC-USDT'], slippageBps: 30 } })))!
-    const open = await driver.decide(portfolio('swap'), operation(planned.plan, planned.reserve), [])
+    const planned = (await driver.plan(
+      portfolio('swap', { settings: { ...settings, symbols: ['USDC-USDT'], slippageBps: 30 } }),
+    ))!
+    const open = await driver.decide(
+      portfolio('swap'),
+      operation(planned.plan, planned.reserve),
+      [],
+    )
     expect(open.type).toBe('leg')
     if (open.type !== 'leg') throw new Error('expected swap')
     const filled = units(planned.plan.hedgePrice) + units('1')
-    const decision = await driver.decide(portfolio('swap'), operation(planned.plan, planned.reserve), [
-      {
-        id: 'sw1',
-        operation_id: 'op-1',
-        sequence: 0,
-        role: 'swap',
-        state: 'terminal',
-        prepared: { intent: open.intent, payload: {}, externalId: 'paper:sw' },
-        receipt: {
-          status: 'filled',
-          externalId: 'paper:sw',
-          filledQuantity: decimal(filled),
-          grossQuote: planned.plan.quantity,
-          quoteFee: '0',
-          baseFee: '0',
+    const decision = await driver.decide(
+      portfolio('swap'),
+      operation(planned.plan, planned.reserve),
+      [
+        {
+          id: 'sw1',
+          operation_id: 'op-1',
+          sequence: 0,
+          role: 'swap',
+          state: 'terminal',
+          prepared: { intent: open.intent, payload: {}, externalId: 'paper:sw' },
+          receipt: {
+            status: 'filled',
+            externalId: 'paper:sw',
+            filledQuantity: decimal(filled),
+            grossQuote: planned.plan.quantity,
+            quoteFee: '0',
+            baseFee: '0',
+          },
+          created_at: new Date(),
         },
-        created_at: new Date(),
-      },
-    ])
+      ],
+    )
     expect(decision.type).toBe('close')
   })
 
@@ -351,15 +378,26 @@ describe('options paper book', () => {
   it('buys only a long option and caps premium by the max-loss budget', async () => {
     const driver = createOptionsDriver('paper', 'bybit', {
       async quote() {
-        return { symbol: 'BTC-USDT', kind: 'call', premium: units('2'), mark: units('2'), expiry: Date.now() + 86_400_000, at: Date.now() }
+        return {
+          symbol: 'BTC-USDT',
+          kind: 'call',
+          premium: units('2'),
+          mark: units('2'),
+          expiry: Date.now() + 86_400_000,
+          at: Date.now(),
+        }
       },
     })
     const planned = await driver.plan(portfolio('options', { capital: '100', cash: '100' }))
     expect(planned).toBeTruthy()
-    const premium = units(planned!.plan.entryPrice) * units(planned!.plan.quantity) / SCALE
+    const premium = (units(planned!.plan.entryPrice) * units(planned!.plan.quantity)) / SCALE
     const cap = (units('100') * BigInt(P.options.maxLossBps)) / 10000n
     expect(premium).toBeLessThanOrEqual(cap)
-    const first = await driver.decide(portfolio('options'), operation(planned!.plan, planned!.reserve), [])
+    const first = await driver.decide(
+      portfolio('options'),
+      operation(planned!.plan, planned!.reserve),
+      [],
+    )
     expect(first.type).toBe('leg')
     if (first.type === 'leg') expect(first.intent.action).toBe('buy')
   })

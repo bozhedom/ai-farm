@@ -32,7 +32,13 @@ export function aaveNetworkFor(id: AaveNetworkId) {
 export function assertAaveConfigNetwork(
   mode: 'paper' | 'demo' | 'live',
   selected: AaveNetworkId,
-  config: { network: string; chainId: number; pool?: { address?: string }; token?: { address?: string }; aToken?: { address?: string } },
+  config: {
+    network: string
+    chainId: number
+    pool?: { address?: string }
+    token?: { address?: string }
+    aToken?: { address?: string }
+  },
 ) {
   const expected = AAVE_NETWORKS[selected]
   if (!expected) throw new Error('EXECUTION_DEFI_NETWORK_INVALID')
@@ -45,8 +51,11 @@ export function assertAaveConfigNetwork(
     const pool = config.pool?.address?.toLowerCase()
     const token = config.token?.address?.toLowerCase()
     const aToken = config.aToken?.address?.toLowerCase()
-    if (pool && pool !== mainnet.pool.toLowerCase()) throw new Error('EXECUTION_DEFI_ADDRESS_MISMATCH')
-    if (token && token !== mainnet.token.toLowerCase()) throw new Error('EXECUTION_DEFI_ADDRESS_MISMATCH')
-    if (aToken && aToken !== mainnet.aToken.toLowerCase()) throw new Error('EXECUTION_DEFI_ADDRESS_MISMATCH')
+    if (pool && pool !== mainnet.pool.toLowerCase())
+      throw new Error('EXECUTION_DEFI_ADDRESS_MISMATCH')
+    if (token && token !== mainnet.token.toLowerCase())
+      throw new Error('EXECUTION_DEFI_ADDRESS_MISMATCH')
+    if (aToken && aToken !== mainnet.aToken.toLowerCase())
+      throw new Error('EXECUTION_DEFI_ADDRESS_MISMATCH')
   }
 }

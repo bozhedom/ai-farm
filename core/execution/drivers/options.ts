@@ -24,7 +24,9 @@ export type OptionsClient = {
   quote(symbol: string, kind: 'call' | 'put'): Promise<OptionQuote>
   identity?(): Promise<string>
   available?(): Promise<bigint>
-  prepare?(intent: import('../types').ExecutionIntent): Promise<import('../types').PreparedExecution>
+  prepare?(
+    intent: import('../types').ExecutionIntent,
+  ): Promise<import('../types').PreparedExecution>
   broadcast?(prepared: import('../types').PreparedExecution): Promise<void>
   lookup?(prepared: import('../types').PreparedExecution): Promise<ExecutionReceipt | null>
   cancel?(prepared: import('../types').PreparedExecution): Promise<void>
@@ -40,12 +42,20 @@ export function createOptionsDriver(
   const venue = optionsVenue(venueName)
   const source: OptionsClient = client || {
     async quote(symbol, kind) {
-      return { symbol, kind, premium: units('1.5'), mark: units('1.5'), expiry: now() + 7 * 86_400_000, at: now() }
+      return {
+        symbol,
+        kind,
+        premium: units('1.5'),
+        mark: units('1.5'),
+        expiry: now() + 7 * 86_400_000,
+        at: now(),
+      }
     },
   }
   const paper: ExecutionAdapter = {
     async prepare(intent) {
-      if (intent.action !== 'buy' && intent.action !== 'sell') throw new Error('EXECUTION_ACTION_INVALID')
+      if (intent.action !== 'buy' && intent.action !== 'sell')
+        throw new Error('EXECUTION_ACTION_INVALID')
       const receipt: ExecutionReceipt = {
         status: 'filled',
         externalId: `paper:${intent.clientId}`,
@@ -54,10 +64,18 @@ export function createOptionsDriver(
         quoteFee: decimal(fee(units(intent.limitPrice), P.maxFeeBps)),
         baseFee: '0',
       }
-      if (intent.action === 'buy' && units(intent.limitPrice) * BPS > units(intent.quoteBudget) * BigInt(P.options.maxLossBps) && units(intent.quoteBudget) > 0n) {
+      if (
+        intent.action === 'buy' &&
+        units(intent.limitPrice) * BPS > units(intent.quoteBudget) * BigInt(P.options.maxLossBps) &&
+        units(intent.quoteBudget) > 0n
+      ) {
         // Budget already includes the premium cap; reject an oversized premium.
       }
-      return { intent, externalId: receipt.externalId, payload: { receipt: receipt as unknown as Json } }
+      return {
+        intent,
+        externalId: receipt.externalId,
+        payload: { receipt: receipt as unknown as Json },
+      }
     },
     async broadcast() {},
     async lookup(prepared) {
@@ -77,7 +95,12 @@ export function createOptionsDriver(
   }
   const liveAdapter: ExecutionAdapter | null =
     client?.prepare && client.broadcast && client.lookup
-      ? { prepare: client.prepare, broadcast: client.broadcast, lookup: client.lookup, cancel: client.cancel }
+      ? {
+          prepare: client.prepare,
+          broadcast: client.broadcast,
+          lookup: client.lookup,
+          cancel: client.cancel,
+        }
       : null
   const execution = mode === 'paper' ? paper : liveAdapter || pending
 
@@ -88,18 +111,23 @@ export function createOptionsDriver(
     },
     async accounts(p) {
       if (mode === 'paper') return [{ identity: `${venue}:paper:virtual`, venue }]
-      if (!client?.identity || !client.available) throw new Error('EXECUTION_OPTIONS_ADAPTER_PENDING')
+      if (!client?.identity || !client.available)
+        throw new Error('EXECUTION_OPTIONS_ADAPTER_PENDING')
       const available = await client.available()
-      if (!p.started_at && available < units(p.capital)) throw new Error('EXECUTION_INSUFFICIENT_BALANCE')
+      if (!p.started_at && available < units(p.capital))
+        throw new Error('EXECUTION_INSUFFICIENT_BALANCE')
       return [{ identity: await client.identity(), venue }]
     },
     async plan(p) {
-      const budget = min(units(p.cash), (units(p.capital) * BigInt(P.options.maxAllocationBps)) / BPS)
+      const budget = min(
+        units(p.cash),
+        (units(p.capital) * BigInt(P.options.maxAllocationBps)) / BPS,
+      )
       const cap = (units(p.capital) * BigInt(P.options.maxLossBps)) / BPS
       const spend = budget < cap ? budget : cap
       if (spend < units(P.minOrder)) return null
       const symbol = p.settings.symbols[0] || 'BTC-USDT'
-      const quote = await source.quote(symbol, (p.settings.optionKind || 'call'))
+      const quote = await source.quote(symbol, p.settings.optionKind || 'call')
       if (now() - quote.at > P.quoteMaxAgeMs) return null
       if (quote.premium <= 0n || quote.premium > spend) return null
       const qty = spend / quote.premium
@@ -123,7 +151,14 @@ export function createOptionsDriver(
       }
     },
     async decide(p, op, legs: ExecutionLeg[]): Promise<ExecutionDecision> {
-      if (legs.some((item) => item.state !== 'terminal' || !item.receipt || ['unknown', 'pending'].includes(item.receipt.status)))
+      if (
+        legs.some(
+          (item) =>
+            item.state !== 'terminal' ||
+            !item.receipt ||
+            ['unknown', 'pending'].includes(item.receipt.status),
+        )
+      )
         return { type: 'attention', reason: 'EXECUTION_ORDER_UNKNOWN' }
       const open = legs
         .filter((item) => item.prepared.intent.action === 'buy')
@@ -133,10 +168,18 @@ export function createOptionsDriver(
         .reduce((total, item) => total + units(item.receipt?.filledQuantity || '0'), 0n)
       const paid = legs
         .filter((item) => item.prepared.intent.action === 'buy')
-        .reduce((total, item) => total + units(item.receipt?.grossQuote || '0') + units(item.receipt?.quoteFee || '0'), 0n)
+        .reduce(
+          (total, item) =>
+            total + units(item.receipt?.grossQuote || '0') + units(item.receipt?.quoteFee || '0'),
+          0n,
+        )
       const received = legs
         .filter((item) => item.prepared.intent.action === 'sell')
-        .reduce((total, item) => total + units(item.receipt?.grossQuote || '0') - units(item.receipt?.quoteFee || '0'), 0n)
+        .reduce(
+          (total, item) =>
+            total + units(item.receipt?.grossQuote || '0') - units(item.receipt?.quoteFee || '0'),
+          0n,
+        )
       const leftover = open - closed
       const expired = now() >= op.plan.nextPaymentAt || p.close_requested
       const intent = (role: string, action: 'buy' | 'sell', qty: bigint, price: bigint) => ({
@@ -162,7 +205,7 @@ export function createOptionsDriver(
       if (leftover > 0n && expired) {
         let mark = units(op.plan.hedgePrice)
         try {
-          const quote = await source.quote(op.plan.symbol, (p.settings.optionKind || 'call'))
+          const quote = await source.quote(op.plan.symbol, p.settings.optionKind || 'call')
           mark = quote.mark * leftover
         } catch {
           mark = 0n

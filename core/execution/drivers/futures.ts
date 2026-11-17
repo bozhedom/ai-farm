@@ -1,5 +1,17 @@
 import { EXECUTION_POLICY as P } from '../../policy'
-import { BPS, ceilDiv, ceilStep, cost, decimal, fee, floorStep, min, proceeds, SCALE, units } from '../../trading/decimal'
+import {
+  BPS,
+  ceilDiv,
+  ceilStep,
+  cost,
+  decimal,
+  fee,
+  floorStep,
+  min,
+  proceeds,
+  SCALE,
+  units,
+} from '../../trading/decimal'
 import type { Market, TradingSymbol } from '../../trading/types'
 import { estimatedLiquidation, syntheticBook } from '../adapters/paper-markets'
 import { createPaperAdapter } from '../adapters/paper'
@@ -99,7 +111,12 @@ export function createFuturesDriver(
       return ['BTC-USDT']
     },
     async account() {
-      return { identity: `${venue}:${mode}:paper`, available: units('100'), positions: [], feeBps: P.maxFeeBps }
+      return {
+        identity: `${venue}:${mode}:paper`,
+        available: units('100'),
+        positions: [],
+        feeBps: P.maxFeeBps,
+      }
     },
     async pending() {
       return []
@@ -137,7 +154,10 @@ export function createFuturesDriver(
     },
     async plan(p) {
       if (mode !== 'paper' && !client) throw new Error('EXECUTION_FUTURES_ADAPTER_PENDING')
-      const leverage = Math.min(Math.max(p.settings.leverage ?? P.futures.defaultLeverage, P.futures.minLeverage), P.futures.maxLeverage)
+      const leverage = Math.min(
+        Math.max(p.settings.leverage ?? P.futures.defaultLeverage, P.futures.minLeverage),
+        P.futures.maxLeverage,
+      )
       const budget = min(units(p.cash), (units(p.capital) * BigInt(P.maxOrderShareBps)) / BPS)
       if (budget < units(P.minOrder)) return null
       const symbols = (p.settings.symbols.slice(0, P.maxSymbols) as TradingSymbol[]) || []
@@ -152,25 +172,52 @@ export function createFuturesDriver(
         const side = sideFromTrend(market)
         if (!side) continue
         const price = limits(market)[side]
-        const feeBps = mode === 'paper' ? P.maxFeeBps : (await raw.account(symbol)).feeBps || P.maxFeeBps
-        const bufferBps = BigInt((p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps))
+        const feeBps =
+          mode === 'paper' ? P.maxFeeBps : (await raw.account(symbol)).feeBps || P.maxFeeBps
+        const bufferBps = BigInt(p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps)
         // budget is the isolated reserve: margin, round-trip fees and the liquidation buffer.
         const notional =
-          (budget * BigInt(leverage) * BPS) / (BPS + bufferBps + 2n * BigInt(feeBps) * BigInt(leverage))
+          (budget * BigInt(leverage) * BPS) /
+          (BPS + bufferBps + 2n * BigInt(feeBps) * BigInt(leverage))
         const qty = floorStep((notional * SCALE) / price, market.instrument.lot)
         if (qty < market.instrument.minQty) continue
         const gross = cost(qty, price)
         const margin = ceilDiv(gross, BigInt(leverage))
-        const reserve = margin + fee(gross, feeBps) * 2n + fee(margin, (p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps))
+        const reserve =
+          margin +
+          fee(gross, feeBps) * 2n +
+          fee(margin, p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps)
         if (reserve > budget) continue
         const stop =
           side === 'buy'
-            ? floorStep((price * (BPS - BigInt((p.settings.stopLossBps ?? P.futures.defaultStopLossBps)))) / BPS, market.instrument.tick)
-            : ceilStep(ceilDiv(price * (BPS + BigInt((p.settings.stopLossBps ?? P.futures.defaultStopLossBps))), BPS), market.instrument.tick)
+            ? floorStep(
+                (price * (BPS - BigInt(p.settings.stopLossBps ?? P.futures.defaultStopLossBps))) /
+                  BPS,
+                market.instrument.tick,
+              )
+            : ceilStep(
+                ceilDiv(
+                  price * (BPS + BigInt(p.settings.stopLossBps ?? P.futures.defaultStopLossBps)),
+                  BPS,
+                ),
+                market.instrument.tick,
+              )
         const take =
           side === 'buy'
-            ? ceilStep(ceilDiv(price * (BPS + BigInt((p.settings.takeProfitBps ?? P.futures.defaultTakeProfitBps))), BPS), market.instrument.tick)
-            : floorStep((price * (BPS - BigInt((p.settings.takeProfitBps ?? P.futures.defaultTakeProfitBps)))) / BPS, market.instrument.tick)
+            ? ceilStep(
+                ceilDiv(
+                  price *
+                    (BPS + BigInt(p.settings.takeProfitBps ?? P.futures.defaultTakeProfitBps)),
+                  BPS,
+                ),
+                market.instrument.tick,
+              )
+            : floorStep(
+                (price *
+                  (BPS - BigInt(p.settings.takeProfitBps ?? P.futures.defaultTakeProfitBps))) /
+                  BPS,
+                market.instrument.tick,
+              )
         return {
           reserve: decimal(reserve),
           plan: {
@@ -194,7 +241,14 @@ export function createFuturesDriver(
       return null
     },
     async decide(p, op, legs) {
-      if (legs.some((item) => item.state !== 'terminal' || !item.receipt || ['unknown', 'pending'].includes(item.receipt.status)))
+      if (
+        legs.some(
+          (item) =>
+            item.state !== 'terminal' ||
+            !item.receipt ||
+            ['unknown', 'pending'].includes(item.receipt.status),
+        )
+      )
         return { type: 'attention', reason: 'EXECUTION_ORDER_UNKNOWN' }
       const market = await raw.market(op.plan.symbol as TradingSymbol)
       const position = totals(legs)
@@ -211,14 +265,26 @@ export function createFuturesDriver(
         liquidationClose =
           held.liquidation !== null &&
           (side === 'buy'
-            ? held.mark * BPS <= held.liquidation * (BPS + BigInt((p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps)))
-            : held.mark * BPS >= held.liquidation * (BPS - BigInt((p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps))))
+            ? held.mark * BPS <=
+              held.liquidation *
+                (BPS + BigInt(p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps))
+            : held.mark * BPS >=
+              held.liquidation *
+                (BPS - BigInt(p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps)))
       } else if (position.qty) {
-        const liq = estimatedLiquidation(units(op.plan.entryPrice), op.plan.leverage || p.settings.leverage || P.futures.defaultLeverage, side)
+        const liq = estimatedLiquidation(
+          units(op.plan.entryPrice),
+          op.plan.leverage || p.settings.leverage || P.futures.defaultLeverage,
+          side,
+        )
         liquidationClose =
           side === 'buy'
-            ? mark * BPS <= liq * (BPS + BigInt((p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps)))
-            : mark * BPS >= liq * (BPS - BigInt((p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps)))
+            ? mark * BPS <=
+              liq *
+                (BPS + BigInt(p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps))
+            : mark * BPS >=
+              liq *
+                (BPS - BigInt(p.settings.liquidationBufferBps ?? P.futures.liquidationBufferBps))
       }
       const stopHit =
         !!op.plan.stopPrice &&
@@ -266,19 +332,17 @@ export function createFuturesDriver(
         return intent('open', side === 'buy' ? 'buy' : 'short', units(op.plan.quantity), 0n)
       }
       if (!position.qty) {
-        const markPnl =
-          position.cash +
-          (side === 'buy' ? proceeds(0n, mark) : 0n)
+        const markPnl = position.cash + (side === 'buy' ? proceeds(0n, mark) : 0n)
         return { type: 'close', pnl: decimal(position.cash), fees: decimal(position.fees) }
       }
       if (closing) {
         return intent('close', side === 'buy' ? 'sell' : 'cover', position.qty, position.qty)
       }
       const openPnl =
-        position.cash +
-        (side === 'buy' ? proceeds(position.qty, mark) : -cost(position.qty, mark))
+        position.cash + (side === 'buy' ? proceeds(position.qty, mark) : -cost(position.qty, mark))
       const loss = openPnl < 0n && -openPnl * BPS >= units(op.reserve) * BigInt(P.positionLossBps)
-      if (loss) return intent('close', side === 'buy' ? 'sell' : 'cover', position.qty, position.qty)
+      if (loss)
+        return intent('close', side === 'buy' ? 'sell' : 'cover', position.qty, position.qty)
       return { type: 'hold', pnl: decimal(openPnl), fees: decimal(position.fees) }
     },
   }

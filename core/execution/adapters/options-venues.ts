@@ -36,7 +36,8 @@ function baseCoin(symbol: string) {
 }
 
 function kindFromContract(symbol: string, fallback: 'call' | 'put'): 'call' | 'put' {
-  if (symbol.endsWith('-C') || symbol.endsWith('-C'.toLowerCase()) || /[-]C$/.test(symbol)) return 'call'
+  if (symbol.endsWith('-C') || symbol.endsWith('-C'.toLowerCase()) || /[-]C$/.test(symbol))
+    return 'call'
   if (symbol.endsWith('-P') || /[-]P$/.test(symbol)) return 'put'
   return fallback
 }
@@ -74,25 +75,48 @@ export function createOptionsClient(
     if (options.exchange === 'bybit') {
       const contract = symbol.includes('-') && /-(C|P)$/.test(symbol) ? symbol : ''
       const rows = (await call('GET', '/v5/market/tickers', {
-        query: contract ? { category: 'option', symbol: contract } : { category: 'option', baseCoin: baseCoin(symbol) },
-      })) as { list?: { symbol?: string; markPrice?: string; bid1Price?: string; ask1Price?: string }[] }
-      const list = (rows.list || []).filter((row) => kindFromContract(row.symbol || '', kind) === kind)
+        query: contract
+          ? { category: 'option', symbol: contract }
+          : { category: 'option', baseCoin: baseCoin(symbol) },
+      })) as {
+        list?: { symbol?: string; markPrice?: string; bid1Price?: string; ask1Price?: string }[]
+      }
+      const list = (rows.list || []).filter(
+        (row) => kindFromContract(row.symbol || '', kind) === kind,
+      )
       const row = list[0]
       if (!row?.symbol) throw new Error('EXECUTION_OPTIONS_MARKET_UNAVAILABLE')
       const ask = amount(row.ask1Price || row.markPrice)
       if (ask <= 0n) throw new Error('EXECUTION_OPTIONS_MARKET_UNAVAILABLE')
-      return { symbol: row.symbol, kind, premium: ask, mark: amount(row.markPrice || row.ask1Price), expiry: now() + 7 * 86_400_000, at: now() }
+      return {
+        symbol: row.symbol,
+        kind,
+        premium: ask,
+        mark: amount(row.markPrice || row.ask1Price),
+        expiry: now() + 7 * 86_400_000,
+        at: now(),
+      }
     }
     const instFamily = `${baseCoin(symbol)}-USD`
     const tickers = (await call('GET', '/api/v5/market/tickers', {
       query: { instType: 'OPTION', instFamily },
     })) as { instId?: string; askPx?: string; markPx?: string; last?: string }[]
     const list = (tickers || []).filter((row) => kindFromContract(row.instId || '', kind) === kind)
-    const row = symbol.includes('-C') || symbol.includes('-P') ? (tickers || []).find((item) => item.instId === symbol) : list[0]
+    const row =
+      symbol.includes('-C') || symbol.includes('-P')
+        ? (tickers || []).find((item) => item.instId === symbol)
+        : list[0]
     if (!row?.instId) throw new Error('EXECUTION_OPTIONS_MARKET_UNAVAILABLE')
     const ask = amount(row.askPx || row.markPx || row.last)
     if (ask <= 0n) throw new Error('EXECUTION_OPTIONS_MARKET_UNAVAILABLE')
-    return { symbol: row.instId, kind, premium: ask, mark: amount(row.markPx || row.askPx), expiry: now() + 7 * 86_400_000, at: now() }
+    return {
+      symbol: row.instId,
+      kind,
+      premium: ask,
+      mark: amount(row.markPx || row.askPx),
+      expiry: now() + 7 * 86_400_000,
+      at: now(),
+    }
   }
 
   return {
@@ -105,7 +129,11 @@ export function createOptionsClient(
         const wallet = (await call('GET', '/v5/account/wallet-balance', {
           signed: true,
           query: { accountType: 'UNIFIED' },
-        })) as { list?: { coin?: { coin: string; walletBalance: string; availableToWithdraw?: string }[] }[] }
+        })) as {
+          list?: {
+            coin?: { coin: string; walletBalance: string; availableToWithdraw?: string }[]
+          }[]
+        }
         const usdt = wallet.list?.[0]?.coin?.find((item) => item.coin === 'USDT')
         return amount(usdt?.availableToWithdraw || usdt?.walletBalance)
       }
@@ -115,18 +143,26 @@ export function createOptionsClient(
       return amount(bals?.[0]?.details?.find((item) => item.ccy === 'USDT')?.availBal)
     },
     async prepare(intent: ExecutionIntent): Promise<PreparedExecution> {
-      if (intent.action !== 'buy' && intent.action !== 'sell') throw new Error('EXECUTION_ACTION_INVALID')
+      if (intent.action !== 'buy' && intent.action !== 'sell')
+        throw new Error('EXECUTION_ACTION_INVALID')
       const quoted = await quote(intent.symbol, intent.outcome === 'no' ? 'put' : 'call')
       if (intent.action === 'buy' && units(intent.limitPrice) > quoted.premium * 2n) {
         // limit is the total premium for the order, not a unit price in every path
       }
-      if (intent.action === 'buy' && units(intent.quantity) <= 0n) throw new ExecutionRejected('EXECUTION_ORDER_SIZE')
-      return { intent: { ...intent, symbol: quoted.symbol }, payload: { mode: options.mode, contract: quoted.symbol }, externalId: null }
+      if (intent.action === 'buy' && units(intent.quantity) <= 0n)
+        throw new ExecutionRejected('EXECUTION_ORDER_SIZE')
+      return {
+        intent: { ...intent, symbol: quoted.symbol },
+        payload: { mode: options.mode, contract: quoted.symbol },
+        externalId: null,
+      }
     },
     async broadcast(prepared: PreparedExecution) {
       assertLiveWrite(options.mode, options.liveEnabled)
-      if (options.authorizeWrite && !(await options.authorizeWrite())) throw new Error('EXECUTION_WRITE_FORBIDDEN')
-      if (prepared.intent.action !== 'buy' && prepared.intent.action !== 'sell') throw new Error('EXECUTION_ACTION_INVALID')
+      if (options.authorizeWrite && !(await options.authorizeWrite()))
+        throw new Error('EXECUTION_WRITE_FORBIDDEN')
+      if (prepared.intent.action !== 'buy' && prepared.intent.action !== 'sell')
+        throw new Error('EXECUTION_ACTION_INVALID')
       const contract = String(prepared.payload.contract || prepared.intent.symbol)
       if (options.exchange === 'bybit') {
         await call('POST', '/v5/order/create', {

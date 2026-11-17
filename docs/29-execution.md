@@ -72,19 +72,18 @@ Unit и интеграционные тесты покрывают полные 
 
 Источники API: [Bybit orders](https://bybit-exchange.github.io/docs/v5/order/create-order), [Bybit transaction log](https://bybit-exchange.github.io/docs/v5/account/transaction-log), [Bybit Demo](https://bybit-exchange.github.io/docs/v5/demo), [Aave Pool](https://aave.com/docs/aave-v3/smart-contracts/pool), [Kalshi Create Order V2](https://docs.kalshi.com/api-reference/orders/create-order-v2), [Kalshi fixed-point migration](https://docs.kalshi.com/getting_started/fixed_point_migration).
 
-
 ## Дополнительные направления (12.11.2026)
 
 Кабинет «Направления» дополнительно содержит книги тренировки для бессрочных фьючерсов, маржинального спота, фандинга на OKX/Binance/Bitget, накопительных продуктов, обмена Uniswap V3 и покупки опционов. Live по-прежнему выключен (`EXECUTION_LIVE_ENABLED=false`) и требует явного списка `EXECUTION_LIVE_ACCEPTED_TRACKS`.
 
-| Направление | Что делает | Что нужно от владельца | Ограничения |
-| ----------- | ---------- | ---------------------- | ----------- |
-| Фьючерсы USDT-M | Изолированная маржа, плечо 1-3, стоп и фиксация, выход при приближении ликвидации | Отдельный счёт и ключи `EXECUTION_FUTURES_*` | REST-клиенты Bybit/OKX/Binance/Bitget написаны. Demo-хосты: api-demo.bybit.com, x-simulated-trading, demo-fapi.binance.com, paptrading. Не использовать спотовый ключ. |
-| Фандинг на других биржах | Та же схема спот+перп 1x, что на Bybit | Отдельные `EXECUTION_FUNDING_OKX/BINANCE/BITGET_*` | Публичный market() и постановка ног реализованы в адаптере. Paper по-прежнему виртуальный. |
-| Маржинальный спот | Изолированное плечо 1-3, займ/погашение и ордер | Отдельные `EXECUTION_MARGIN_*` | Не смешивать с cash-spot счётом. |
-| Aave сеть | Выбор Sepolia / Ethereum / Anvil в настройках книги | `EXECUTION_DEFI_*_CONFIG` с пинами и ключом | Demo не может выбрать mainnet. Live только Ethereum и только после флага. Адреса mainnet сверяются с официальной книгой. |
-| Накопления | Поиск гибкого продукта, подписка и погашение | `EXECUTION_EARN_*` (Bybit/OKX/Binance) | Bitget не подключён. У Binance нет официального Simple Earn demo. |
-| Uniswap V3 | QuoterV2 и подпись exactInputSingle, потолок 50 б.п. | RPC и отдельный кошелёк `EXECUTION_SWAP_*` | Live выключен. Адреса Sepolia взяты из официальных деплоев Uniswap. |
-| Опционы | Только покупка колла или пута, убыток не больше премии и потолка капитала | `EXECUTION_OPTIONS_BYBIT_*` или `EXECUTION_OPTIONS_OKX_*` | Короткие опционы запрещены. Deribit не подключён. |
+| Направление              | Что делает                                                                        | Что нужно от владельца                                    | Ограничения                                                                                                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Фьючерсы USDT-M          | Изолированная маржа, плечо 1-3, стоп и фиксация, выход при приближении ликвидации | Отдельный счёт и ключи `EXECUTION_FUTURES_*`              | REST-клиенты Bybit/OKX/Binance/Bitget написаны. Demo-хосты: api-demo.bybit.com, x-simulated-trading, demo-fapi.binance.com, paptrading. Не использовать спотовый ключ. |
+| Фандинг на других биржах | Та же схема спот+перп 1x, что на Bybit                                            | Отдельные `EXECUTION_FUNDING_OKX/BINANCE/BITGET_*`        | Публичный market() и постановка ног реализованы в адаптере. Paper по-прежнему виртуальный.                                                                             |
+| Маржинальный спот        | Изолированное плечо 1-3, займ/погашение и ордер                                   | Отдельные `EXECUTION_MARGIN_*`                            | Не смешивать с cash-spot счётом.                                                                                                                                       |
+| Aave сеть                | Выбор Sepolia / Ethereum / Anvil в настройках книги                               | `EXECUTION_DEFI_*_CONFIG` с пинами и ключом               | Demo не может выбрать mainnet. Live только Ethereum и только после флага. Адреса mainnet сверяются с официальной книгой.                                               |
+| Накопления               | Поиск гибкого продукта, подписка и погашение                                      | `EXECUTION_EARN_*` (Bybit/OKX/Binance)                    | Bitget не подключён. У Binance нет официального Simple Earn demo.                                                                                                      |
+| Uniswap V3               | QuoterV2 и подпись exactInputSingle, потолок 50 б.п.                              | RPC и отдельный кошелёк `EXECUTION_SWAP_*`                | Live выключен. Адреса Sepolia взяты из официальных деплоев Uniswap.                                                                                                    |
+| Опционы                  | Только покупка колла или пута, убыток не больше премии и потолка капитала         | `EXECUTION_OPTIONS_BYBIT_*` или `EXECUTION_OPTIONS_OKX_*` | Короткие опционы запрещены. Deribit не подключён.                                                                                                                      |
 
 Прибыльность этих книг не утверждается. Тестовая прогонка на биржах и в публичных сетях в этой поставке не выполнялась.

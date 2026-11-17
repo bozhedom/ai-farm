@@ -46,7 +46,11 @@ type FundingClient = Pick<
   | 'lookup'
   | 'cancel'
 >
-type Dependencies = { venue?: FundingClient; now?: () => number; exchange?: 'okx' | 'bybit' | 'binance' | 'bitget' }
+type Dependencies = {
+  venue?: FundingClient
+  now?: () => number
+  exchange?: 'okx' | 'bybit' | 'binance' | 'bitget'
+}
 const week = 7 * 24 * 60 * 60_000
 
 /**

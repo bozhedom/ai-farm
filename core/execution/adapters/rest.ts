@@ -11,18 +11,25 @@ export type BuiltRequest = {
   body?: string
 }
 
-export function venueOrigin(exchange: ExecutionExchange, mode: RestMode, kind: RestKind = 'futures') {
-  if (exchange === 'bybit') return mode === 'demo' ? 'https://api-demo.bybit.com' : 'https://api.bybit.com'
+export function venueOrigin(
+  exchange: ExecutionExchange,
+  mode: RestMode,
+  kind: RestKind = 'futures',
+) {
+  if (exchange === 'bybit')
+    return mode === 'demo' ? 'https://api-demo.bybit.com' : 'https://api.bybit.com'
   if (exchange === 'okx') return 'https://www.okx.com'
   if (exchange === 'binance') {
-    if (kind === 'futures') return mode === 'demo' ? 'https://demo-fapi.binance.com' : 'https://fapi.binance.com'
+    if (kind === 'futures')
+      return mode === 'demo' ? 'https://demo-fapi.binance.com' : 'https://fapi.binance.com'
     return mode === 'demo' ? 'https://testnet.binance.vision' : 'https://api.binance.com'
   }
   return 'https://api.bitget.com'
 }
 
 export function compactSymbol(symbol: string) {
-  if (!/^[A-Z0-9]{1,32}-USDT$/.test(symbol) || symbol === 'USDT-USDT') throw new Error('EXECUTION_SYMBOL_INVALID')
+  if (!/^[A-Z0-9]{1,32}-USDT$/.test(symbol) || symbol === 'USDT-USDT')
+    throw new Error('EXECUTION_SYMBOL_INVALID')
   return symbol.replace('-', '')
 }
 
@@ -42,20 +49,44 @@ export function tradingSymbolFromCompact(code: string) {
   return symbol
 }
 
-export function signBybit(secret: string, timestamp: string, key: string, recvWindow: string, payload: string) {
-  return createHmac('sha256', secret).update(timestamp + key + recvWindow + payload).digest('hex')
+export function signBybit(
+  secret: string,
+  timestamp: string,
+  key: string,
+  recvWindow: string,
+  payload: string,
+) {
+  return createHmac('sha256', secret)
+    .update(timestamp + key + recvWindow + payload)
+    .digest('hex')
 }
 
-export function signOkx(secret: string, timestamp: string, method: string, path: string, body: string) {
-  return createHmac('sha256', secret).update(timestamp + method + path + body).digest('base64')
+export function signOkx(
+  secret: string,
+  timestamp: string,
+  method: string,
+  path: string,
+  body: string,
+) {
+  return createHmac('sha256', secret)
+    .update(timestamp + method + path + body)
+    .digest('base64')
 }
 
 export function signBinance(secret: string, query: string) {
   return createHmac('sha256', secret).update(query).digest('hex')
 }
 
-export function signBitget(secret: string, timestamp: string, method: string, path: string, body: string) {
-  return createHmac('sha256', secret).update(timestamp + method + path + body).digest('base64')
+export function signBitget(
+  secret: string,
+  timestamp: string,
+  method: string,
+  path: string,
+  body: string,
+) {
+  return createHmac('sha256', secret)
+    .update(timestamp + method + path + body)
+    .digest('base64')
 }
 
 export function assertLiveWrite(mode: RestMode, liveEnabled?: boolean) {
@@ -79,11 +110,13 @@ export function buildRequest(p: {
   const origin = venueOrigin(p.exchange, p.mode, kind)
   const method = p.method
   const query = new URLSearchParams(p.query || {})
-  const jsonBody = p.body && method !== 'GET' && p.exchange !== 'binance' ? JSON.stringify(p.body) : ''
+  const jsonBody =
+    p.body && method !== 'GET' && p.exchange !== 'binance' ? JSON.stringify(p.body) : ''
   if (p.signed) {
     const credentials = p.credentials
     if (!credentials?.key || !credentials.secret) throw new Error('EXECUTION_CREDENTIALS_REQUIRED')
-    if (['okx', 'bitget'].includes(p.exchange) && !credentials.passphrase) throw new Error('EXECUTION_CREDENTIALS_REQUIRED')
+    if (['okx', 'bitget'].includes(p.exchange) && !credentials.passphrase)
+      throw new Error('EXECUTION_CREDENTIALS_REQUIRED')
     if (p.exchange === 'bybit') {
       const timestamp = String(p.now)
       const recvWindow = p.recvWindow || '5000'
@@ -96,7 +129,13 @@ export function buildRequest(p: {
           'X-BAPI-API-KEY': credentials.key,
           'X-BAPI-TIMESTAMP': timestamp,
           'X-BAPI-RECV-WINDOW': recvWindow,
-          'X-BAPI-SIGN': signBybit(credentials.secret, timestamp, credentials.key, recvWindow, payload),
+          'X-BAPI-SIGN': signBybit(
+            credentials.secret,
+            timestamp,
+            credentials.key,
+            recvWindow,
+            payload,
+          ),
         },
         body: jsonBody || undefined,
       }
@@ -195,7 +234,8 @@ export function requireRetOk(exchange: ExecutionExchange, raw: unknown) {
     if (row.code !== '00000') throw new Error('EXECUTION_EXCHANGE_API_ERROR')
     return row.data
   }
-  if (row.code !== undefined && row.code !== 0 && row.code !== '0') throw new Error('EXECUTION_EXCHANGE_API_ERROR')
+  if (row.code !== undefined && row.code !== 0 && row.code !== '0')
+    throw new Error('EXECUTION_EXCHANGE_API_ERROR')
   return raw
 }
 
@@ -204,7 +244,15 @@ export function alreadyConfigured(exchange: ExecutionExchange, raw: unknown) {
   const row = raw as Record<string, unknown>
   const code = String(row.retCode ?? row.code ?? '')
   const message = String(row.retMsg ?? row.msg ?? row.message ?? '').toLowerCase()
-  if (exchange === 'binance' && (code === '-4046' || message.includes('no need to change margin type'))) return true
-  if (message.includes('isolated') && (message.includes('already') || message.includes('not modified'))) return true
+  if (
+    exchange === 'binance' &&
+    (code === '-4046' || message.includes('no need to change margin type'))
+  )
+    return true
+  if (
+    message.includes('isolated') &&
+    (message.includes('already') || message.includes('not modified'))
+  )
+    return true
   return false
 }

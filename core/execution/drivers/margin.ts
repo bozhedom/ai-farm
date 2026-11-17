@@ -1,5 +1,17 @@
 import { EXECUTION_POLICY as P } from '../../policy'
-import { BPS, ceilDiv, ceilStep, cost, decimal, fee, floorStep, min, proceeds, SCALE, units } from '../../trading/decimal'
+import {
+  BPS,
+  ceilDiv,
+  ceilStep,
+  cost,
+  decimal,
+  fee,
+  floorStep,
+  min,
+  proceeds,
+  SCALE,
+  units,
+} from '../../trading/decimal'
 import type { Market, TradingSymbol } from '../../trading/types'
 import { estimatedLiquidation, syntheticBook } from '../adapters/paper-markets'
 import { createPaperAdapter } from '../adapters/paper'
@@ -23,7 +35,14 @@ export type MarginClient = {
     identity: string
     available: bigint
     debt: bigint
-    positions: { symbol: TradingSymbol; qty: bigint; entry: bigint; mark: bigint; liquidation: bigint | null; leverage: number }[]
+    positions: {
+      symbol: TradingSymbol
+      qty: bigint
+      entry: bigint
+      mark: bigint
+      liquidation: bigint | null
+      leverage: number
+    }[]
   }>
   pending(): Promise<{ clientId: string }[]>
 } & ExecutionAdapter
@@ -43,7 +62,12 @@ export function createMarginDriver(
       return ['BTC-USDT']
     },
     async account() {
-      return { identity: `${venue}:${mode}:paper`, available: units('100'), debt: 0n, positions: [] }
+      return {
+        identity: `${venue}:${mode}:paper`,
+        available: units('100'),
+        debt: 0n,
+        positions: [],
+      }
     },
     async pending() {
       return []
@@ -57,14 +81,23 @@ export function createMarginDriver(
     },
   }
   const execution: ExecutionAdapter =
-    mode === 'paper' ? createPaperAdapter((intent) => raw.market(intent.symbol as TradingSymbol)) : raw
+    mode === 'paper'
+      ? createPaperAdapter((intent) => raw.market(intent.symbol as TradingSymbol))
+      : raw
 
   function interest(op: ExecutionOperation, borrowed: bigint): ExecutionFlow[] {
     if (borrowed <= 0n) return []
     const days = Math.max(1, Math.ceil((now() - op.created_at.getTime()) / 86_400_000))
     const amount = (borrowed * BigInt(P.margin.paperInterestBpsPerDay) * BigInt(days)) / BPS
     if (mode !== 'paper' || amount <= 0n) return []
-    return [{ externalId: `paper-interest:${op.id}:${days}`, kind: 'interest', amount: decimal(amount), at: now() }]
+    return [
+      {
+        externalId: `paper-interest:${op.id}:${days}`,
+        kind: 'interest',
+        amount: decimal(amount),
+        at: now(),
+      },
+    ]
   }
 
   return {
@@ -76,7 +109,10 @@ export function createMarginDriver(
       if (mode === 'paper') return [{ identity: `${venue}:paper:virtual`, venue }]
       if (!client) throw new Error('EXECUTION_MARGIN_ADAPTER_PENDING')
       const account = await raw.account((p.settings.symbols[0] || 'BTC-USDT') as TradingSymbol)
-      if (!p.started_at && (account.debt || account.positions.length || (await raw.pending()).length))
+      if (
+        !p.started_at &&
+        (account.debt || account.positions.length || (await raw.pending()).length)
+      )
         throw new Error('EXECUTION_ACCOUNT_NOT_EMPTY')
       if (!p.started_at && account.available < units(p.capital))
         throw new Error('EXECUTION_INSUFFICIENT_BALANCE')
@@ -86,7 +122,10 @@ export function createMarginDriver(
     },
     async plan(p) {
       if (mode !== 'paper' && !client) throw new Error('EXECUTION_MARGIN_ADAPTER_PENDING')
-      const leverage = Math.min(Math.max(p.settings.leverage ?? P.margin.defaultLeverage, P.margin.minLeverage), P.margin.maxLeverage)
+      const leverage = Math.min(
+        Math.max(p.settings.leverage ?? P.margin.defaultLeverage, P.margin.minLeverage),
+        P.margin.maxLeverage,
+      )
       const budget = min(units(p.cash), (units(p.capital) * BigInt(P.maxOrderShareBps)) / BPS)
       if (budget < units(P.minOrder)) return null
       const list = (p.settings.symbols.slice(0, P.maxSymbols) as TradingSymbol[]) || []
@@ -112,8 +151,17 @@ export function createMarginDriver(
         const margin = ceilDiv(gross, BigInt(leverage))
         const reserve = margin + fee(gross, P.maxFeeBps) * 2n
         if (reserve > budget) continue
-        const stop = floorStep((price * (BPS - BigInt((p.settings.stopLossBps ?? P.margin.defaultStopLossBps)))) / BPS, market.instrument.tick)
-        const take = ceilStep(ceilDiv(price * (BPS + BigInt((p.settings.takeProfitBps ?? P.margin.defaultTakeProfitBps))), BPS), market.instrument.tick)
+        const stop = floorStep(
+          (price * (BPS - BigInt(p.settings.stopLossBps ?? P.margin.defaultStopLossBps))) / BPS,
+          market.instrument.tick,
+        )
+        const take = ceilStep(
+          ceilDiv(
+            price * (BPS + BigInt(p.settings.takeProfitBps ?? P.margin.defaultTakeProfitBps)),
+            BPS,
+          ),
+          market.instrument.tick,
+        )
         return {
           reserve: decimal(reserve),
           plan: {
@@ -137,11 +185,24 @@ export function createMarginDriver(
       return null
     },
     async decide(p, op, legs: ExecutionLeg[]): Promise<ExecutionDecision> {
-      if (legs.some((item) => item.state !== 'terminal' || !item.receipt || ['unknown', 'pending'].includes(item.receipt.status)))
+      if (
+        legs.some(
+          (item) =>
+            item.state !== 'terminal' ||
+            !item.receipt ||
+            ['unknown', 'pending'].includes(item.receipt.status),
+        )
+      )
         return { type: 'attention', reason: 'EXECUTION_ORDER_UNKNOWN' }
       const market = await raw.market(op.plan.symbol as TradingSymbol)
-      const sell = floorStep((market.book.bids[0]![0] * (BPS - BigInt(P.slippageBps))) / BPS, market.instrument.tick)
-      const buy = ceilStep(ceilDiv(market.book.asks[0]![0] * (BPS + BigInt(P.slippageBps)), BPS), market.instrument.tick)
+      const sell = floorStep(
+        (market.book.bids[0]![0] * (BPS - BigInt(P.slippageBps))) / BPS,
+        market.instrument.tick,
+      )
+      const buy = ceilStep(
+        ceilDiv(market.book.asks[0]![0] * (BPS + BigInt(P.slippageBps)), BPS),
+        market.instrument.tick,
+      )
       let qty = 0n,
         spent = 0n,
         fees = 0n
@@ -171,11 +232,19 @@ export function createMarginDriver(
         liquidationClose = account.positions.some(
           (item) =>
             item.liquidation !== null &&
-            item.mark * BPS <= item.liquidation * (BPS + BigInt((p.settings.liquidationBufferBps ?? P.margin.liquidationBufferBps))),
+            item.mark * BPS <=
+              item.liquidation *
+                (BPS + BigInt(p.settings.liquidationBufferBps ?? P.margin.liquidationBufferBps)),
         )
       } else if (qty) {
-        const liq = estimatedLiquidation(units(op.plan.entryPrice), op.plan.leverage || p.settings.leverage || P.margin.defaultLeverage, 'buy')
-        liquidationClose = mark * BPS <= liq * (BPS + BigInt((p.settings.liquidationBufferBps ?? P.margin.liquidationBufferBps)))
+        const liq = estimatedLiquidation(
+          units(op.plan.entryPrice),
+          op.plan.leverage || p.settings.leverage || P.margin.defaultLeverage,
+          'buy',
+        )
+        liquidationClose =
+          mark * BPS <=
+          liq * (BPS + BigInt(p.settings.liquidationBufferBps ?? P.margin.liquidationBufferBps))
       }
       const stopHit = !!op.plan.stopPrice && mark <= units(op.plan.stopPrice)
       const takeHit = !!op.plan.takePrice && mark >= units(op.plan.takePrice)
@@ -186,7 +255,11 @@ export function createMarginDriver(
         stopHit ||
         takeHit ||
         now() - op.created_at.getTime() >= p.settings.maxHoldHours * 60 * 60_000
-      const leg = (role: string, action: 'buy' | 'sell' | 'borrow' | 'repay', size: bigint): ExecutionDecision => {
+      const leg = (
+        role: string,
+        action: 'buy' | 'sell' | 'borrow' | 'repay',
+        size: bigint,
+      ): ExecutionDecision => {
         const price = action === 'buy' || action === 'borrow' ? buy : sell
         const notional = cost(size, price)
         return {

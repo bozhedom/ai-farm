@@ -45,9 +45,14 @@ export function createEarnDriver(
   const venue = earnVenue(exchange)
   const paper: ExecutionAdapter = {
     async prepare(intent) {
-      if (!['subscribe', 'redeem'].includes(intent.action)) throw new Error('EXECUTION_ACTION_INVALID')
+      if (!['subscribe', 'redeem'].includes(intent.action))
+        throw new Error('EXECUTION_ACTION_INVALID')
       const receipt = paperReceipt(intent)
-      return { intent, externalId: receipt.externalId, payload: { receipt: receipt as unknown as Json } }
+      return {
+        intent,
+        externalId: receipt.externalId,
+        payload: { receipt: receipt as unknown as Json },
+      }
     },
     async broadcast() {},
     async lookup(prepared) {
@@ -57,7 +62,11 @@ export function createEarnDriver(
   const live: ExecutionAdapter = {
     async prepare(intent) {
       if (!client) throw new Error('EXECUTION_CREDENTIALS_REQUIRED')
-      return { intent, externalId: null, payload: { amount: intent.quantity, asset: intent.symbol } }
+      return {
+        intent,
+        externalId: null,
+        payload: { amount: intent.quantity, asset: intent.symbol },
+      }
     },
     async broadcast(prepared) {
       if (!client) throw new Error('EXECUTION_CREDENTIALS_REQUIRED')
@@ -78,9 +87,13 @@ export function createEarnDriver(
   function yieldFlow(op: ExecutionOperation, principal: bigint): ExecutionFlow[] {
     const elapsed = now() - op.created_at.getTime()
     if (elapsed < P.earn.minHoldMs) return []
-    const amount = (principal * BigInt(P.earn.paperApyBps) * BigInt(elapsed)) / (BPS * 365n * 24n * 60n * 60n * 1000n)
+    const amount =
+      (principal * BigInt(P.earn.paperApyBps) * BigInt(elapsed)) /
+      (BPS * 365n * 24n * 60n * 60n * 1000n)
     if (amount <= 0n) return []
-    return [{ externalId: `paper-yield:${op.id}`, kind: 'yield', amount: decimal(amount), at: now() }]
+    return [
+      { externalId: `paper-yield:${op.id}`, kind: 'yield', amount: decimal(amount), at: now() },
+    ]
   }
 
   return {
@@ -92,7 +105,8 @@ export function createEarnDriver(
       if (mode === 'paper') return [{ identity: `${venue}:paper:virtual`, venue }]
       if (!client) throw new Error('EXECUTION_CREDENTIALS_REQUIRED')
       const available = await client.available()
-      if (!p.started_at && available < units(p.capital)) throw new Error('EXECUTION_INSUFFICIENT_BALANCE')
+      if (!p.started_at && available < units(p.capital))
+        throw new Error('EXECUTION_INSUFFICIENT_BALANCE')
       return [{ identity: await client.identity(), venue }]
     },
     async plan(p) {
@@ -115,7 +129,14 @@ export function createEarnDriver(
       }
     },
     async decide(p, op, legs: ExecutionLeg[]): Promise<ExecutionDecision> {
-      if (legs.some((item) => item.state !== 'terminal' || !item.receipt || ['unknown', 'pending'].includes(item.receipt.status)))
+      if (
+        legs.some(
+          (item) =>
+            item.state !== 'terminal' ||
+            !item.receipt ||
+            ['unknown', 'pending'].includes(item.receipt.status),
+        )
+      )
         return { type: 'attention', reason: 'EXECUTION_ORDER_UNKNOWN' }
       const subscribed = legs
         .filter((item) => item.prepared.intent.action === 'subscribe' && item.receipt)
@@ -146,7 +167,9 @@ export function createEarnDriver(
         if (p.close_requested) return { type: 'close', pnl: '0', fees: '0' }
         return intent('open', 'subscribe', units(op.plan.quantity))
       }
-      const due = now() - op.created_at.getTime() >= p.settings.maxHoldHours * 60 * 60_000 || p.close_requested
+      const due =
+        now() - op.created_at.getTime() >= p.settings.maxHoldHours * 60 * 60_000 ||
+        p.close_requested
       if (open > 0n && due) return intent('close', 'redeem', open)
       if (open <= 0n) return { type: 'close', pnl: decimal(income), fees: '0', flows }
       return { type: 'hold', pnl: decimal(income), fees: '0', flows }

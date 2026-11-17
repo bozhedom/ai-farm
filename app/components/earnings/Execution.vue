@@ -335,7 +335,9 @@ async function act(action: 'save' | 'start' | 'pause' | 'close') {
           <summary>Условия работы</summary>
           <div class="e-execution-form">
             <label
-              v-if="['arbitrage', 'funding', 'futures', 'margin', 'swap', 'options'].includes(track)"
+              v-if="
+                ['arbitrage', 'funding', 'futures', 'margin', 'swap', 'options'].includes(track)
+              "
               >Монеты <span class="t-muted">(необязательно)</span
               ><input v-model="symbols" placeholder="Автоматический отбор" /><small
                 >Через запятую. Например, SOL, LINK.</small
