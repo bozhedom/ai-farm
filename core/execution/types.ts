@@ -1,3 +1,5 @@
+import type { WorkDirection } from '../contracts/work-focus'
+
 /** Server-owned execution plans. Never passed to a model or accepted directly from the browser. */
 export const executionTracks = [
   'arbitrage',
@@ -11,6 +13,16 @@ export const executionTracks = [
   'options',
 ] as const
 export type ExecutionTrack = (typeof executionTracks)[number]
+/**
+ * Work focus has no separate switches for the newer books. Each follows the venue family it
+ * shares: exchange accounts (perpetuals, margin, earn, options) follow funding, Uniswap follows DeFi.
+ */
+export const executionDirection = (track: ExecutionTrack): WorkDirection =>
+  track === 'swap'
+    ? 'defi'
+    : track === 'futures' || track === 'margin' || track === 'earn' || track === 'options'
+      ? 'funding'
+      : track
 export type ExecutionMode = 'paper' | 'demo' | 'live'
 export type ExecutionVenue =
   | 'okx'

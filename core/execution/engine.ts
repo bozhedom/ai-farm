@@ -16,6 +16,7 @@ import {
 } from './store'
 import {
   ExecutionRejected,
+  executionDirection,
   type ExecutionDriver,
   type ExecutionIntent,
   type ExecutionLeg,
@@ -33,9 +34,7 @@ async function defaultFactory(p: ExecutionPortfolio) {
 }
 
 const opening = (intent: ExecutionIntent) =>
-  ['buy', 'short', 'approve', 'supply', 'borrow', 'swap', 'subscribe'].includes(
-    intent.action,
-  )
+  ['buy', 'short', 'approve', 'supply', 'borrow', 'swap', 'subscribe'].includes(intent.action)
 const openingForbidden = (p: ExecutionPortfolio) =>
   p.close_requested || p.status === 'stopped' || p.status === 'attention'
 
@@ -122,7 +121,7 @@ export async function controlExecution(
       await executionEvent(p, action === 'close' ? 'EXECUTION_CLOSE_REQUESTED' : 'EXECUTION_PAUSED')
       return { ok: true }
     }
-    await assertDirectionAllowed(track)
+    await assertDirectionAllowed(executionDirection(track))
     if (p.status === 'running') return { ok: true }
     if (executionRiskStopped(p)) throw new Error('EXECUTION_RISK_STOP')
     if (units(p.capital) < units(P.minCapital)) throw new Error('EXECUTION_ALLOCATION_REQUIRED')
@@ -350,7 +349,7 @@ async function runPortfolio(
   if (!op) {
     if (
       p.status !== 'running' ||
-      !(await directionAllowed(p.track)) ||
+      !(await directionAllowed(executionDirection(p.track))) ||
       isStopping() ||
       (p.last_scan && Date.now() - p.last_scan.getTime() < P.scanMs)
     )
@@ -401,7 +400,7 @@ async function runPortfolio(
       throw new Error('EXECUTION_BUDGET_EXCEEDED')
     if (isStopping()) return
     await transaction(async (db) => {
-      await assertDirectionAllowed(p.track, db)
+      await assertDirectionAllowed(executionDirection(p.track), db)
       await query(
         'INSERT INTO execution_operations(id,track,mode,reserve,plan) VALUES($1,$2,$3,$4,$5)',
         [

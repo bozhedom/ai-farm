@@ -7,7 +7,7 @@ import { COMPUTER_USE_POLICY } from '../computer-use/policy'
 import { query } from '../db'
 import { exchanges } from '../trading/types'
 import { hasKeys } from '../trading/wire'
-import { executionTracks } from '../execution/types'
+import { executionDirection, executionTracks, type ExecutionTrack } from '../execution/types'
 import { executionReady } from '../execution/config'
 
 export type DirectionStatus =
@@ -108,11 +108,16 @@ export async function directionReadiness(): Promise<DirectionReadiness[]> {
     detail: 'Реализованы только на виртуальных средствах. Live для этих стратегий недоступен.',
     link: '/office/trading',
   })
-  const titles = {
+  const titles: Record<ExecutionTrack, string> = {
     arbitrage: 'Арбитраж',
     funding: 'Фандинг Bybit',
     defi: 'DeFi · Aave',
     prediction: 'Прогнозы · Kalshi',
+    futures: 'Бессрочные фьючерсы',
+    margin: 'Маржинальный спот',
+    earn: 'Накопления биржи',
+    swap: 'Обмен DeFi',
+    options: 'Опционы',
   }
   for (const track of executionTracks) {
     const live = execution.find((p) => p.track === track && p.mode === 'live')
@@ -241,7 +246,9 @@ export async function directionReadiness(): Promise<DirectionReadiness[]> {
           ? 'studio'
           : item.id === 'polymarket'
             ? 'monitor'
-            : (item.id as WorkDirection)
+            : (executionTracks as readonly string[]).includes(item.id)
+              ? executionDirection(item.id as ExecutionTrack)
+              : (item.id as WorkDirection)
     if (!alive) {
       item.active = false
       item.activity = 'Нет свежего сигнала обработчика'
