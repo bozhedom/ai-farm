@@ -436,8 +436,8 @@ describe('options and uniswap', () => {
   })
 })
 
-describe('executionReady after adapters landed', () => {
-  it('asks for keys instead of leaving tracks pending', () => {
+describe('incomplete adapters cannot be enabled with credentials', () => {
+  it('blocks Demo even when credentials are populated', () => {
     const names = [
       'EXECUTION_FUTURES_BYBIT_DEMO_API_KEY',
       'EXECUTION_FUTURES_BYBIT_DEMO_SECRET',
@@ -458,17 +458,17 @@ describe('executionReady after adapters landed', () => {
           delete process.env[key]
         }
       }
-      expect(executionReady('futures', 'demo')).toBe('EXECUTION_CREDENTIALS_REQUIRED')
-      expect(executionReady('options', 'demo')).toBe('EXECUTION_CREDENTIALS_REQUIRED')
-      expect(executionReady('earn', 'demo')).toBe('EXECUTION_CREDENTIALS_REQUIRED')
+      expect(executionReady('futures', 'demo')).toBe('EXECUTION_ADAPTER_INCOMPLETE')
+      expect(executionReady('options', 'demo')).toBe('EXECUTION_ADAPTER_INCOMPLETE')
+      expect(executionReady('earn', 'demo')).toBe('EXECUTION_ADAPTER_INCOMPLETE')
       process.env.EXECUTION_FUTURES_BYBIT_DEMO_API_KEY = 'k'
       process.env.EXECUTION_FUTURES_BYBIT_DEMO_SECRET = 's'
-      expect(executionReady('futures', 'demo')).toBe('')
+      expect(executionReady('futures', 'demo')).toBe('EXECUTION_ADAPTER_INCOMPLETE')
       process.env.EXECUTION_OPTIONS_OKX_DEMO_API_KEY = 'k'
       process.env.EXECUTION_OPTIONS_OKX_DEMO_SECRET = 's'
-      expect(executionReady('options', 'demo')).toBe('EXECUTION_CREDENTIALS_REQUIRED')
+      expect(executionReady('options', 'demo')).toBe('EXECUTION_ADAPTER_INCOMPLETE')
       process.env.EXECUTION_OPTIONS_OKX_DEMO_PASSPHRASE = 'p'
-      expect(executionReady('options', 'demo')).toBe('')
+      expect(executionReady('options', 'demo')).toBe('EXECUTION_ADAPTER_INCOMPLETE')
       expect(executionSecret('FUTURES_BYBIT_DEMO_API_KEY')).toBe('k')
     } finally {
       for (const name of Object.keys(previous)) {

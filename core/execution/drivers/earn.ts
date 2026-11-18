@@ -85,6 +85,8 @@ export function createEarnDriver(
   const execution = mode === 'paper' ? paper : live
 
   function yieldFlow(op: ExecutionOperation, principal: bigint): ExecutionFlow[] {
+    // Estimated Paper yield is never a confirmed exchange payment.
+    if (mode !== 'paper') return []
     const elapsed = now() - op.created_at.getTime()
     if (elapsed < P.earn.minHoldMs) return []
     const amount =

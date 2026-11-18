@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { z } from 'zod'
 import { EXECUTION_POLICY as P } from '../policy'
 import { units, SCALE } from '../trading/decimal'
-import { executionSecret, executionWritesAllowed } from './config'
+import { assertExecutionAdapterReady, executionSecret, executionWritesAllowed } from './config'
 import { createArbitrageDriver } from './drivers/arbitrage'
 import { createFundingDriver } from './drivers/funding'
 import { createDefiDriver } from './drivers/defi'
@@ -47,6 +47,7 @@ const aaveConfig = z
   })
   .strict()
 export function createExecutionDriver(p: ExecutionPortfolio): ExecutionDriver {
+  assertExecutionAdapterReady(p.mode, p.track, p.settings.venue || 'bybit')
   const suffix = p.mode.toUpperCase()
   const read = (name: string) => executionSecret(name)
   const venueExchange = p.settings.venue || 'bybit'

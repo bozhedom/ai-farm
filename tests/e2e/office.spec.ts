@@ -1097,3 +1097,61 @@ for (const width of [1440, 390]) {
     expect(errors).toEqual([])
   })
 }
+
+for (const width of [1440, 390]) {
+  test(`incomplete execution adapters ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const errors = watchConsole(page)
+    await stubOffice(page, officeFixtures())
+    const json = (route: Route, data: unknown) =>
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
+    await page.route('**/api/execution?*', async (route) => {
+      const url = new URL(route.request().url())
+      await json(route, {
+        track: url.searchParams.get('track'),
+        mode: url.searchParams.get('mode'),
+        status: 'idle',
+        currency: 'USDT',
+        capital: '100',
+        available: '100',
+        equity: '100',
+        realized: '0',
+        fees: '0',
+        networkFees: [],
+        settings: {
+          venue: 'bybit',
+          symbols: [],
+          buyExchange: 'okx',
+          sellExchange: 'bybit',
+          leverage: 2,
+          stopLossBps: 150,
+          takeProfitBps: 200,
+          maxHoldHours: 24,
+          entryBps: 30,
+          exitBps: 10,
+          liquidationBufferBps: 200,
+          slippageBps: 30,
+        },
+        activated: false,
+        reason: '',
+        readiness: url.searchParams.get('mode') === 'paper' ? '' : 'EXECUTION_ADAPTER_INCOMPLETE',
+        workerAlive: true,
+        heartbeat: null,
+        closeRequested: false,
+        operations: [],
+        events: [],
+        legs: [],
+      })
+    })
+    for (const track of ['futures', 'margin', 'earn', 'swap', 'options']) {
+      await page.goto(`/office/earnings?track=${track}`)
+      await page.getByRole('button', { name: 'Тестовый счёт', exact: true }).click()
+      await expect(
+        page.getByText('Доступна только тренировка Paper:', { exact: false }),
+      ).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Запустить', exact: true })).toBeDisabled()
+      await noHorizontalScroll(page)
+    }
+    expect(errors).toEqual([])
+  })
+}

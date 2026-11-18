@@ -3,9 +3,27 @@ import type { ExecutionMode, ExecutionTrack } from './types'
 import type { TradingExchange } from '../trading/types'
 import type { VenueAccess } from '../trading/wire'
 
+/** REST submission alone is not an execution adapter: reconciliation and accounting are required.
+ * These books still contain placeholder receipts, account checks or income calculations.
+ * Keep Paper available; no environment flag can promote incomplete code to Demo/Live.
+ */
+export function assertExecutionAdapterReady(
+  mode: ExecutionMode,
+  track: ExecutionTrack,
+  venue = 'bybit',
+) {
+  if (mode === 'paper') return
+  if (
+    ['futures', 'margin', 'earn', 'swap', 'options'].includes(track) ||
+    (track === 'funding' && venue !== 'bybit')
+  )
+    throw new Error('EXECUTION_ADAPTER_INCOMPLETE')
+}
+
 const flag = (name: string) => process.env[name] === 'true'
 export function executionWritesAllowed(mode: ExecutionMode, track: ExecutionTrack) {
   if (mode === 'paper') return
+  assertExecutionAdapterReady(mode, track)
   if (
     mode === 'live' &&
     (!flag('EXECUTION_LIVE_ENABLED') ||
@@ -65,9 +83,10 @@ function hasVenueKeys(prefix: string, suffix: string, names: string[]) {
     return true
   })
 }
-export function executionReady(track: ExecutionTrack, mode: ExecutionMode) {
+export function executionReady(track: ExecutionTrack, mode: ExecutionMode, venue = 'bybit') {
   if (mode === 'paper') return ''
   try {
+    assertExecutionAdapterReady(mode, track, venue)
     executionWritesAllowed(mode, track)
     const suffix = mode.toUpperCase()
     if (

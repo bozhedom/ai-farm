@@ -1,4 +1,6 @@
 const messages: Record<string, string> = {
+  EXECUTION_ADAPTER_INCOMPLETE:
+    'Доступна только тренировка Paper: сверка операций и учёт этого подключения ещё не завершены.',
   EXECUTION_CONFIGURED: 'Настройки сохранены',
   EXECUTION_SETTINGS_UPDATED: 'Условия работы обновлены',
   EXECUTION_STARTED: 'Работа началась',

@@ -846,3 +846,26 @@ it('blocks new execution operations but reconciles previously submitted legs out
   expect((await onlyLeg()).state).toBe('terminal')
   expect(h.broadcast).not.toHaveBeenCalled()
 })
+
+describe('new execution release readiness', () => {
+  it('migrates all new books and rejects external starts without side effects', async () => {
+    const factory = vi.fn()
+    vi.stubEnv('EXECUTION_LIVE_ENABLED', 'true')
+    vi.stubEnv('EXECUTION_LIVE_ACCEPTED_TRACKS', 'futures,margin,earn,swap,options')
+    for (const track of ['futures', 'margin', 'earn', 'swap', 'options'] as const) {
+      for (const mode of ['demo', 'live'] as const) {
+        await configure(track, mode)
+        await expect(controlExecution(track, mode, 'start', factory)).rejects.toThrow(
+          'EXECUTION_ADAPTER_INCOMPLETE',
+        )
+        expect((await executionView(track, mode)).readiness).toBe('EXECUTION_ADAPTER_INCOMPLETE')
+        expect((await portfolio(track, mode)).started_at).toBeNull()
+      }
+      await configure(track, 'paper')
+      await controlExecution(track, 'paper', 'start')
+      expect((await portfolio(track, 'paper')).status).toBe('running')
+    }
+    expect(factory).not.toHaveBeenCalled()
+    expect(await query('SELECT * FROM execution_legs')).toHaveLength(0)
+  })
+})

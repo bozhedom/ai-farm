@@ -45,7 +45,7 @@ export async function executionView(
     settings: executionSettingsSchema.parse(p.settings),
     activated: !!p.started_at,
     reason: p.reason,
-    readiness: executionReady(track, mode),
+    readiness: executionReady(track, mode, p.settings.venue),
     workerAlive: !p.started_at || Date.now() - (p.heartbeat || p.started_at).getTime() < 90_000,
     heartbeat: p.heartbeat?.toISOString() || null,
     closeRequested: p.close_requested,

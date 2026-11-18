@@ -1,3 +1,5 @@
+import { createExecutionDriver } from '../../core/execution/factory'
+import { executionReady, executionWritesAllowed } from '../../core/execution/config'
 import { describe, expect, it } from 'vitest'
 import { EXECUTION_POLICY as P } from '../../core/policy'
 import { executionSettingsSchema } from '../../core/execution/store'
@@ -306,6 +308,19 @@ describe('flexible earn paper book', () => {
         created_at: new Date(now),
       },
     ]
+    now += 2 * 60 * 60_000
+    const heldOperation = {
+      ...operation(planned.plan, planned.reserve),
+      created_at: new Date(now - 2 * 60 * 60_000),
+    }
+    const virtual = await driver.decide(p, heldOperation, opened)
+    expect(virtual.type).toBe('hold')
+    if (virtual.type === 'hold') expect(units(virtual.pnl)).toBeGreaterThan(0n)
+    for (const mode of ['demo', 'live'] as const) {
+      const external = createEarnDriver(mode, 'bybit', undefined, () => now)
+      const held = await external.decide({ ...p, mode }, heldOperation, opened)
+      expect(held).toMatchObject({ type: 'hold', pnl: '0', flows: [] })
+    }
     now += 25 * 60 * 60_000
     const closing = await driver.decide(
       { ...p, close_requested: true },
@@ -407,5 +422,48 @@ describe('options paper book', () => {
     await expect(driver.accounts(portfolio('options', { mode: 'demo' }))).rejects.toThrow(
       'EXECUTION_OPTIONS_ADAPTER_PENDING',
     )
+  })
+})
+
+describe('release boundary for incomplete external execution', () => {
+  for (const track of ['futures', 'margin', 'earn', 'swap', 'options'] as const) {
+    for (const mode of ['demo', 'live'] as const) {
+      it(`refuses ${track}/${mode} before creating an adapter, regardless of keys`, () => {
+        expect(() => createExecutionDriver(portfolio(track, { mode }))).toThrow(
+          'EXECUTION_ADAPTER_INCOMPLETE',
+        )
+        expect(() => executionWritesAllowed(mode, track)).toThrow('EXECUTION_ADAPTER_INCOMPLETE')
+        expect(executionReady(track, mode)).toBe('EXECUTION_ADAPTER_INCOMPLETE')
+      })
+    }
+    it(`retains ${track} Paper`, () => {
+      expect(executionReady(track, 'paper')).toBe('')
+      expect(() => createExecutionDriver(portfolio(track))).not.toThrow()
+    })
+  }
+  for (const venue of ['okx', 'binance', 'bitget'] as const) {
+    it(`refuses incomplete ${venue} funding but retains its Paper book`, () => {
+      for (const mode of ['demo', 'live'] as const) {
+        expect(executionReady('funding', mode, venue)).toBe('EXECUTION_ADAPTER_INCOMPLETE')
+        expect(() =>
+          createExecutionDriver(
+            portfolio('funding', {
+              mode,
+              settings: { ...settings, venue },
+            }),
+          ),
+        ).toThrow('EXECUTION_ADAPTER_INCOMPLETE')
+      }
+      expect(() =>
+        createExecutionDriver(
+          portfolio('funding', {
+            settings: { ...settings, venue },
+          }),
+        ),
+      ).not.toThrow()
+    })
+  }
+  it('preserves existing Bybit funding Demo write permission', () => {
+    expect(() => executionWritesAllowed('demo', 'funding')).not.toThrow()
   })
 })

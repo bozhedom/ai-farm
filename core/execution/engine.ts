@@ -125,7 +125,7 @@ export async function controlExecution(
     if (p.status === 'running') return { ok: true }
     if (executionRiskStopped(p)) throw new Error('EXECUTION_RISK_STOP')
     if (units(p.capital) < units(P.minCapital)) throw new Error('EXECUTION_ALLOCATION_REQUIRED')
-    const ready = executionReady(track, mode)
+    const ready = executionReady(track, mode, p.settings.venue)
     if (ready) throw new Error(ready)
     const open = await query<ExecutionOperation>(
       'SELECT * FROM execution_operations WHERE track=$1 AND mode=$2 AND closed_at IS NULL',
