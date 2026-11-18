@@ -19,7 +19,7 @@ import {
   executionRiskStopped,
   safeExecutionError,
 } from './execution/store'
-import { executionTracks, type ExecutionTrack } from './execution/types'
+import { executionDirection, executionTracks, type ExecutionTrack } from './execution/types'
 import { EXECUTION_POLICY } from './policy'
 import { units } from './trading/decimal'
 import { workerLoops } from './worker-loops'
@@ -85,6 +85,11 @@ const trackName: Record<ExecutionTrack, string> = {
   funding: 'Фандинг',
   defi: 'DeFi',
   prediction: 'Прогнозы',
+  futures: 'Фьючерсы',
+  margin: 'Маржа',
+  earn: 'Накопления',
+  swap: 'Обмен DeFi',
+  options: 'Опционы',
 }
 const exchangeName: Record<TradingExchange, string> = {
   okx: 'OKX',
@@ -409,7 +414,7 @@ async function apply(d: PlannedDecision, deps: AutopilotDeps): Promise<Autopilot
         ? 'manager'
         : d.action === 'start_trading'
           ? 'trading'
-          : d.track
+          : d.track && executionDirection(d.track)
   if (direction && !(await directionAllowed(direction)))
     return {
       ...decision,

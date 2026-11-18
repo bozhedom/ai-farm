@@ -16,6 +16,7 @@ import {
 } from './store'
 import {
   ExecutionRejected,
+  executionDirection,
   type ExecutionDriver,
   type ExecutionIntent,
   type ExecutionLeg,
@@ -33,12 +34,13 @@ async function defaultFactory(p: ExecutionPortfolio) {
 }
 
 const opening = (intent: ExecutionIntent) =>
-  ['buy', 'short', 'approve', 'supply'].includes(intent.action)
+  ['buy', 'short', 'approve', 'supply', 'borrow', 'swap', 'subscribe'].includes(intent.action)
 const openingForbidden = (p: ExecutionPortfolio) =>
   p.close_requested || p.status === 'stopped' || p.status === 'attention'
 
 function nonceReservation(p: ExecutionPortfolio, prepared: PreparedExecution) {
-  if (p.mode === 'paper' || prepared.intent.venue !== 'aave') return [null, null, null]
+  if (p.mode === 'paper' || !['aave', 'uniswap'].includes(prepared.intent.venue))
+    return [null, null, null]
   const { chainId, sender, nonce } = prepared.payload
   if (
     typeof chainId !== 'number' ||
@@ -57,6 +59,10 @@ export async function configureExecution(input: unknown) {
   const data = allocationSchema.parse(input)
   if (data.track === 'arbitrage' && data.settings.buyExchange === data.settings.sellExchange)
     throw new Error('EXECUTION_DIFFERENT_EXCHANGES_REQUIRED')
+  if (data.track === 'defi' && data.mode === 'demo' && data.settings.defiNetwork === 'mainnet')
+    throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
+  if (data.track === 'defi' && data.mode === 'live' && data.settings.defiNetwork !== 'mainnet')
+    throw new Error('EXECUTION_DEFI_NETWORK_MISMATCH')
   return executionLock(async () => {
     await ensureExecution()
     await transaction(async (db) => {
@@ -66,7 +72,8 @@ export async function configureExecution(input: unknown) {
           throw new Error('EXECUTION_ALLOCATION_IMMUTABLE')
         if (
           data.settings.buyExchange !== p.settings.buyExchange ||
-          data.settings.sellExchange !== p.settings.sellExchange
+          data.settings.sellExchange !== p.settings.sellExchange ||
+          data.settings.venue !== p.settings.venue
         )
           throw new Error('EXECUTION_CONNECTIONS_IMMUTABLE')
         if (executionRiskStopped(p)) throw new Error('EXECUTION_RISK_STOP')
@@ -114,7 +121,7 @@ export async function controlExecution(
       await executionEvent(p, action === 'close' ? 'EXECUTION_CLOSE_REQUESTED' : 'EXECUTION_PAUSED')
       return { ok: true }
     }
-    await assertDirectionAllowed(track)
+    await assertDirectionAllowed(executionDirection(track))
     if (p.status === 'running') return { ok: true }
     if (executionRiskStopped(p)) throw new Error('EXECUTION_RISK_STOP')
     if (units(p.capital) < units(P.minCapital)) throw new Error('EXECUTION_ALLOCATION_REQUIRED')
@@ -342,7 +349,7 @@ async function runPortfolio(
   if (!op) {
     if (
       p.status !== 'running' ||
-      !(await directionAllowed(p.track)) ||
+      !(await directionAllowed(executionDirection(p.track))) ||
       isStopping() ||
       (p.last_scan && Date.now() - p.last_scan.getTime() < P.scanMs)
     )
@@ -393,7 +400,7 @@ async function runPortfolio(
       throw new Error('EXECUTION_BUDGET_EXCEEDED')
     if (isStopping()) return
     await transaction(async (db) => {
-      await assertDirectionAllowed(p.track, db)
+      await assertDirectionAllowed(executionDirection(p.track), db)
       await query(
         'INSERT INTO execution_operations(id,track,mode,reserve,plan) VALUES($1,$2,$3,$4,$5)',
         [

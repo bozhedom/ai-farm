@@ -59,6 +59,11 @@ describe('autopilot decisions', () => {
       'configure_execution execution:arbitrage:paper',
       'configure_execution execution:funding:paper',
       'configure_execution execution:defi:paper',
+      'configure_execution execution:futures:paper',
+      'configure_execution execution:margin:paper',
+      'configure_execution execution:earn:paper',
+      'configure_execution execution:swap:paper',
+      'configure_execution execution:options:paper',
     ])
     const plan = autopilotPlan(input())
     expect(plan.find((d) => d.key === 'trading:okx:demo')).toMatchObject({
@@ -130,6 +135,11 @@ describe('autopilot decisions', () => {
       'start_trading trading:bybit:demo',
       'start_trading trading:bitget:paper',
       'configure_execution execution:defi:paper',
+      'configure_execution execution:futures:paper',
+      'configure_execution execution:margin:paper',
+      'configure_execution execution:earn:paper',
+      'configure_execution execution:swap:paper',
+      'configure_execution execution:options:paper',
     ])
     for (const key of ['schedule', 'manager', 'trading:okx:paper', 'trading:bybit:paper'])
       expect(plan.find((d) => d.key === key)?.status).toBe('blocked')

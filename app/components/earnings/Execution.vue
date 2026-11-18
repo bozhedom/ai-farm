@@ -33,7 +33,15 @@ const capital = ref(''),
   hold = ref(24),
   ticker = ref(''),
   probability = ref(50),
-  outcome = ref<'yes' | 'no'>('yes')
+  outcome = ref<'yes' | 'no'>('yes'),
+  venue = ref('bybit'),
+  leverage = ref(2),
+  takeProfit = ref(200),
+  stopLoss = ref(150),
+  liqBuffer = ref(2000),
+  slippage = ref(30),
+  defiNetwork = ref<'local' | 'sepolia' | 'mainnet'>('sepolia'),
+  optionKind = ref<'call' | 'put'>('call')
 const editing = ref(false),
   busy = ref(false),
   error = ref(''),
@@ -52,6 +60,14 @@ function copyForm() {
   ticker.value = s.predictionTicker
   probability.value = s.probabilityBps / 100
   outcome.value = s.outcome
+  venue.value = s.venue || 'bybit'
+  leverage.value = s.leverage ?? 2
+  takeProfit.value = s.takeProfitBps ?? 200
+  stopLoss.value = s.stopLossBps ?? 150
+  liqBuffer.value = s.liquidationBufferBps ?? 2000
+  slippage.value = s.slippageBps ?? 30
+  defiNetwork.value = s.defiNetwork || 'sepolia'
+  optionKind.value = s.optionKind || 'call'
 }
 function editSettings() {
   copyForm()
@@ -113,6 +129,14 @@ async function act(action: 'save' | 'start' | 'pause' | 'close') {
             predictionTicker: ticker.value.trim().toUpperCase(),
             probabilityBps: Math.round(probability.value * 100),
             outcome: outcome.value,
+            venue: venue.value,
+            leverage: leverage.value,
+            takeProfitBps: takeProfit.value,
+            stopLossBps: stopLoss.value,
+            liquidationBufferBps: liqBuffer.value,
+            slippageBps: slippage.value,
+            defiNetwork: defiNetwork.value,
+            optionKind: optionKind.value,
           },
         },
       })
@@ -170,12 +194,22 @@ async function act(action: 'save' | 'start' | 'pause' | 'close') {
         <h3>
           {{
             track === 'funding'
-              ? 'Фандинг · Bybit'
+              ? 'Фандинг'
               : track === 'defi'
                 ? 'Вложения · Aave'
                 : track === 'prediction'
                   ? 'Контракты · Kalshi'
-                  : 'Межбиржевые сделки'
+                  : track === 'futures'
+                    ? 'Бессрочные фьючерсы'
+                    : track === 'margin'
+                      ? 'Маржинальный спот'
+                      : track === 'earn'
+                        ? 'Накопления биржи'
+                        : track === 'swap'
+                          ? 'Обмен Uniswap V3'
+                          : track === 'options'
+                            ? 'Опционы'
+                            : 'Межбиржевые сделки'
           }}
         </h3>
         <span class="e-stage" role="status">{{ executionStatuses[data.status] }}</span>
@@ -229,6 +263,44 @@ async function act(action: 'save' | 'start' | 'pause' | 'close') {
             </select></label
           >
         </template>
+        <template v-if="['funding', 'futures', 'margin', 'earn', 'options'].includes(track)">
+          <label
+            >Площадка<select v-model="venue" :disabled="data.activated">
+              <option
+                v-for="v in venues.filter((item) => track !== 'earn' || item.id !== 'bitget')"
+                :key="v.id"
+                :value="v.id"
+              >
+                {{ v.name }}
+              </option>
+            </select></label
+          >
+        </template>
+        <template v-if="track === 'defi'">
+          <label
+            >Сеть Aave<select v-model="defiNetwork" :disabled="mode === 'live'">
+              <option value="sepolia">Sepolia (тестовая)</option>
+              <option value="mainnet">Ethereum</option>
+              <option value="local">Локальный Anvil</option>
+            </select></label
+          >
+          <p class="t-muted e-form-note">
+            Demo использует только Sepolia или локальный узел. Ethereum доступен после отдельного
+            включения Live и проверки пинов контрактов.
+          </p>
+        </template>
+        <template v-if="track === 'options'">
+          <label
+            >Тип опциона<select v-model="optionKind">
+              <option value="call">Колл</option>
+              <option value="put">Пут</option>
+            </select></label
+          >
+          <p class="t-muted e-form-note">
+            Покупается только длинная позиция. Убыток ограничен уплаченной премией. Коротко опционы
+            не выписываются.
+          </p>
+        </template>
         <p v-if="data.activated" class="t-muted e-form-note">
           Сумма и подключённые счета закреплены после первого запуска.
         </p>
@@ -262,12 +334,55 @@ async function act(action: 'save' | 'start' | 'pause' | 'close') {
         <details class="e-form-options">
           <summary>Условия работы</summary>
           <div class="e-execution-form">
-            <label v-if="track === 'arbitrage' || track === 'funding'"
+            <label
+              v-if="
+                ['arbitrage', 'funding', 'futures', 'margin', 'swap', 'options'].includes(track)
+              "
               >Монеты <span class="t-muted">(необязательно)</span
               ><input v-model="symbols" placeholder="Автоматический отбор" /><small
                 >Через запятую. Например, SOL, LINK.</small
               ></label
             >
+            <label v-if="track === 'futures' || track === 'margin'"
+              >Плечо, не выше 3<input
+                v-model.number="leverage"
+                type="number"
+                min="1"
+                max="3"
+                required
+            /></label>
+            <label v-if="track === 'futures' || track === 'margin'"
+              >Стоп, базисных пунктов<input
+                v-model.number="stopLoss"
+                type="number"
+                min="0"
+                max="2000"
+                required
+            /></label>
+            <label v-if="track === 'futures' || track === 'margin'"
+              >Фиксация прибыли, базисных пунктов<input
+                v-model.number="takeProfit"
+                type="number"
+                min="0"
+                max="5000"
+                required
+            /></label>
+            <label v-if="track === 'futures' || track === 'margin'"
+              >Запас до ликвидации, базисных пунктов<input
+                v-model.number="liqBuffer"
+                type="number"
+                min="500"
+                max="5000"
+                required
+            /></label>
+            <label v-if="track === 'swap'"
+              >Проскальзывание, базисных пунктов<input
+                v-model.number="slippage"
+                type="number"
+                min="1"
+                max="50"
+                required
+            /></label>
             <label v-if="track === 'arbitrage' || track === 'prediction'"
               >Минимальная разница, базисных пунктов<input
                 v-model.number="edge"

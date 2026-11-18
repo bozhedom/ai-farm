@@ -36,6 +36,14 @@ export const executionSettingsSchema = z
       .default(''),
     probabilityBps: z.number().int().min(1).max(9999).default(5000),
     outcome: z.enum(['yes', 'no']).default('yes'),
+    venue: z.enum(['okx', 'bybit', 'binance', 'bitget']).default('bybit'),
+    leverage: z.number().int().min(1).max(3).default(2),
+    takeProfitBps: z.number().int().min(0).max(5000).default(200),
+    stopLossBps: z.number().int().min(0).max(2000).default(150),
+    liquidationBufferBps: z.number().int().min(500).max(5000).default(2000),
+    slippageBps: z.number().int().min(1).max(50).default(30),
+    defiNetwork: z.enum(['local', 'sepolia', 'mainnet']).default('sepolia'),
+    optionKind: z.enum(['call', 'put']).default('call'),
   })
   .strict()
 export const allocationSchema = executionScopeSchema

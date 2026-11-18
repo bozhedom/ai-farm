@@ -81,6 +81,39 @@ export const EXECUTION_POLICY = Object.freeze({
     closeBeforeMs: 60_000,
     minOrder: '1',
   }),
+  futures: Object.freeze({
+    minLeverage: 1,
+    maxLeverage: 3,
+    defaultLeverage: 2,
+    liquidationBufferBps: 2000,
+    defaultStopLossBps: 150,
+    defaultTakeProfitBps: 200,
+    maxStopLossBps: 2000,
+    maxTakeProfitBps: 5000,
+  }),
+  margin: Object.freeze({
+    minLeverage: 1,
+    maxLeverage: 3,
+    defaultLeverage: 2,
+    liquidationBufferBps: 2000,
+    defaultStopLossBps: 150,
+    defaultTakeProfitBps: 200,
+    paperInterestBpsPerDay: 5,
+  }),
+  earn: Object.freeze({
+    /** Virtual paper APY only; not a promised live rate. */
+    paperApyBps: 300,
+    minHoldMs: 60_000,
+  }),
+  swap: Object.freeze({
+    maxSlippageBps: 50,
+    defaultSlippageBps: 30,
+    maxFeeBps: 30,
+  }),
+  options: Object.freeze({
+    maxLossBps: 500,
+    maxAllocationBps: 1000,
+  }),
 })
 
 export const POLICY = Object.freeze({

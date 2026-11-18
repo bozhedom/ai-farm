@@ -19,6 +19,7 @@ import {
   type FundingMarket,
 } from '../adapters/bybit-funding'
 import { createPaperAdapter } from '../adapters/paper'
+import { fundingVenue } from '../venues'
 import type {
   ExecutionAdapter,
   ExecutionDecision,
@@ -45,8 +46,11 @@ type FundingClient = Pick<
   | 'lookup'
   | 'cancel'
 >
-type Dependencies = { venue?: FundingClient; now?: () => number }
-const venueName = 'bybit-funding' as const
+type Dependencies = {
+  venue?: FundingClient
+  now?: () => number
+  exchange?: 'okx' | 'bybit' | 'binance' | 'bitget'
+}
 const week = 7 * 24 * 60 * 60_000
 
 /**
@@ -136,6 +140,7 @@ export function createFundingDriver(
   dependencies: Dependencies = {},
 ): ExecutionDriver {
   const now = dependencies.now || Date.now
+  const venueName = fundingVenue(dependencies.exchange || 'bybit')
   const venue =
     dependencies.venue ||
     new BybitFundingAdapter({ ...options, mode: mode === 'paper' ? 'demo' : mode }, fetch, now)
@@ -263,7 +268,7 @@ export function createFundingDriver(
       return execution
     },
     async accounts(p) {
-      if (mode === 'paper') return [{ identity: 'bybit-funding:paper:virtual', venue: venueName }]
+      if (mode === 'paper') return [{ identity: `${venueName}:paper:virtual`, venue: venueName }]
       const candidates = await symbols(p)
       const account = await venue.account(candidates[0] || 'BTC-USDT')
       if (!p.started_at && account.availableMargin < units(p.capital))

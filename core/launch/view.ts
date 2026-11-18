@@ -25,6 +25,11 @@ const trackTitle: Record<ExecutionTrack, string> = {
   funding: 'Фандинг',
   defi: 'DeFi',
   prediction: 'Прогнозы',
+  futures: 'Фьючерсы',
+  margin: 'Маржа',
+  earn: 'Накопления',
+  swap: 'Обмен DeFi',
+  options: 'Опционы',
 }
 
 export async function launchInput(now = new Date()): Promise<LaunchInput> {

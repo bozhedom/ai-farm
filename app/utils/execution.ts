@@ -43,6 +43,18 @@ const messages: Record<string, string> = {
   EXECUTION_CONNECTION_FAILED: 'Нет ответа от подключения. Повторим проверку.',
   EXECUTION_DIFFERENT_EXCHANGES_REQUIRED: 'Выберите две разные биржи.',
   INVALID_INPUT: 'Проверьте сумму и настройки.',
+  EXECUTION_DEFI_NETWORK_MISMATCH: 'Выбранная сеть Aave не совпадает с конфигурацией кошелька.',
+  EXECUTION_DEFI_ADDRESS_MISMATCH:
+    'Адреса пула Aave не совпадают с официальными для выбранной сети.',
+  EXECUTION_LEVERAGE_FORBIDDEN: 'Плечо выше разрешённого предела 3.',
+  EXECUTION_SLIPPAGE_EXCEEDED: 'Проскальзывание выше заданного предела. Сделка не исполнена.',
+  EXECUTION_SLIPPAGE_FORBIDDEN: 'Проскальзывание выше допустимого максимума.',
+  EXECUTION_EARN_ADAPTER_PENDING:
+    'Живые накопительные продукты ещё требуют приёмки и кода продукта биржи.',
+  EXECUTION_EARN_VENUE_UNSUPPORTED: 'Для этой биржи гибкие накопления не подключены.',
+  EXECUTION_OPTIONS_ADAPTER_PENDING:
+    'Живое исполнение опционов ещё в подготовке. Доступна тренировка.',
+  EXECUTION_OPTIONS_LOSS_CAP: 'Премия превысила допустимый предел убытка.',
 }
 export function executionMessage(code: string) {
   if (messages[code]) return messages[code]
@@ -80,4 +92,9 @@ export const executionActions: Record<string, string> = {
   revoke: 'Отмена разрешения',
   supply: 'Внесение',
   withdraw: 'Возврат',
+  borrow: 'Займ',
+  repay: 'Погашение',
+  swap: 'Обмен',
+  subscribe: 'Размещение',
+  redeem: 'Возврат вклада',
 }

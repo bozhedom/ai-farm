@@ -1,11 +1,69 @@
+import type { WorkDirection } from '../contracts/work-focus'
+
 /** Server-owned execution plans. Never passed to a model or accepted directly from the browser. */
-export const executionTracks = ['arbitrage', 'funding', 'defi', 'prediction'] as const
+export const executionTracks = [
+  'arbitrage',
+  'funding',
+  'defi',
+  'prediction',
+  'futures',
+  'margin',
+  'earn',
+  'swap',
+  'options',
+] as const
 export type ExecutionTrack = (typeof executionTracks)[number]
+/**
+ * Work focus has no separate switches for the newer books. Each follows the venue family it
+ * shares: exchange accounts (perpetuals, margin, earn, options) follow funding, Uniswap follows DeFi.
+ */
+export const executionDirection = (track: ExecutionTrack): WorkDirection =>
+  track === 'swap'
+    ? 'defi'
+    : track === 'futures' || track === 'margin' || track === 'earn' || track === 'options'
+      ? 'funding'
+      : track
 export type ExecutionMode = 'paper' | 'demo' | 'live'
 export type ExecutionVenue =
-  'okx' | 'bybit' | 'binance' | 'bitget' | 'bybit-funding' | 'aave' | 'kalshi'
+  | 'okx'
+  | 'bybit'
+  | 'binance'
+  | 'bitget'
+  | 'bybit-funding'
+  | 'okx-funding'
+  | 'binance-funding'
+  | 'bitget-funding'
+  | 'bybit-futures'
+  | 'okx-futures'
+  | 'binance-futures'
+  | 'bitget-futures'
+  | 'okx-margin'
+  | 'bybit-margin'
+  | 'binance-margin'
+  | 'bitget-margin'
+  | 'okx-earn'
+  | 'bybit-earn'
+  | 'binance-earn'
+  | 'aave'
+  | 'uniswap'
+  | 'kalshi'
+  | 'bybit-options'
+  | 'okx-options'
+  | 'deribit-options'
 export type ExecutionAction =
-  'buy' | 'sell' | 'short' | 'cover' | 'approve' | 'revoke' | 'supply' | 'withdraw'
+  | 'buy'
+  | 'sell'
+  | 'short'
+  | 'cover'
+  | 'approve'
+  | 'revoke'
+  | 'supply'
+  | 'withdraw'
+  | 'borrow'
+  | 'repay'
+  | 'swap'
+  | 'subscribe'
+  | 'redeem'
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 
 /** All decimal strings are exact values, compatible with trading/decimal (18 places). */
@@ -20,6 +78,9 @@ export interface ExecutionIntent {
   positionQuantity: string
   outcome?: 'yes' | 'no'
   expiresAt: number
+  stopPrice?: string
+  takePrice?: string
+  leverage?: number
 }
 
 /** Persist before broadcast. Payload may contain a signed transaction; never expose it in a DTO. */
@@ -56,9 +117,12 @@ export class ExecutionRejected extends Error {
 }
 
 export type ExecutionStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'attention'
+export type ExecutionExchange = 'okx' | 'bybit' | 'binance' | 'bitget'
+export type DefiNetwork = 'local' | 'sepolia' | 'mainnet'
+export type OptionKind = 'call' | 'put'
 export interface ExecutionSettings {
-  buyExchange: 'okx' | 'bybit' | 'binance' | 'bitget'
-  sellExchange: 'okx' | 'bybit' | 'binance' | 'bitget'
+  buyExchange: ExecutionExchange
+  sellExchange: ExecutionExchange
   symbols: string[]
   minEdgeBps: number
   minFundingBps: number
@@ -66,6 +130,17 @@ export interface ExecutionSettings {
   predictionTicker: string
   probabilityBps: number
   outcome: 'yes' | 'no'
+  /** Isolated venue for funding, futures, margin, earn and options. Immutable after start. */
+  venue?: ExecutionExchange
+  /** Isolated USDT-M leverage, capped at 3. */
+  leverage?: number
+  takeProfitBps?: number
+  stopLossBps?: number
+  liquidationBufferBps?: number
+  /** Uniswap V3 max slippage. */
+  slippageBps?: number
+  defiNetwork?: DefiNetwork
+  optionKind?: OptionKind
 }
 
 export interface ExecutionPortfolio {
@@ -113,6 +188,11 @@ export interface ExecutionPlan {
   rate: string
   nextPaymentAt: number
   intervalMs: number
+  side?: 'buy' | 'sell'
+  leverage?: number
+  stopPrice?: string
+  takePrice?: string
+  network?: DefiNetwork
 }
 export interface ExecutionLeg {
   id: string
@@ -126,7 +206,7 @@ export interface ExecutionLeg {
 }
 export interface ExecutionFlow {
   externalId: string
-  kind: 'funding' | 'settlement'
+  kind: 'funding' | 'settlement' | 'interest' | 'premium' | 'yield'
   amount: string
   at: number
 }

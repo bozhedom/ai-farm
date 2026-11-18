@@ -51,17 +51,25 @@ export function verifiedAssets() {
     throw new Error('EXECUTION_ASSET_REGISTRY_INVALID')
   }
 }
+
+function hasVenueKeys(prefix: string, suffix: string, names: string[]) {
+  return names.some((name) => {
+    const key = executionSecret(`${prefix}_${name}_${suffix}_API_KEY`)
+    const secret = executionSecret(`${prefix}_${name}_${suffix}_SECRET`)
+    if (!key || !secret) return false
+    if (
+      ['OKX', 'BITGET'].includes(name) &&
+      !executionSecret(`${prefix}_${name}_${suffix}_PASSPHRASE`)
+    )
+      return false
+    return true
+  })
+}
 export function executionReady(track: ExecutionTrack, mode: ExecutionMode) {
   if (mode === 'paper') return ''
   try {
     executionWritesAllowed(mode, track)
     const suffix = mode.toUpperCase()
-    if (
-      track === 'funding' &&
-      (!executionSecret(`FUNDING_BYBIT_${suffix}_API_KEY`) ||
-        !executionSecret(`FUNDING_BYBIT_${suffix}_SECRET`))
-    )
-      return 'EXECUTION_CREDENTIALS_REQUIRED'
     if (
       track === 'prediction' &&
       (!executionSecret(`PREDICTION_KALSHI_${suffix}_KEY_ID`) ||
@@ -72,6 +80,32 @@ export function executionReady(track: ExecutionTrack, mode: ExecutionMode) {
       return 'EXECUTION_WALLET_REQUIRED'
     if (track === 'arbitrage' && !verifiedAssets().length)
       return 'EXECUTION_ASSET_REGISTRY_REQUIRED'
+    if (
+      track === 'funding' &&
+      !hasVenueKeys('FUNDING', suffix, ['BYBIT', 'OKX', 'BINANCE', 'BITGET'])
+    )
+      return 'EXECUTION_CREDENTIALS_REQUIRED'
+    if (
+      (track === 'futures' || track === 'margin') &&
+      !hasVenueKeys(track === 'futures' ? 'FUTURES' : 'MARGIN', suffix, [
+        'BYBIT',
+        'OKX',
+        'BINANCE',
+        'BITGET',
+      ])
+    )
+      return 'EXECUTION_CREDENTIALS_REQUIRED'
+    if (track === 'earn' && !hasVenueKeys('EARN', suffix, ['BYBIT', 'OKX', 'BINANCE']))
+      return 'EXECUTION_CREDENTIALS_REQUIRED'
+    if (
+      track === 'swap' &&
+      (!executionSecret(`SWAP_${suffix}_RPC_URL`) ||
+        !executionSecret(`SWAP_${suffix}_PRIVATE_KEY`) ||
+        !executionSecret(`SWAP_${suffix}_SENDER`))
+    )
+      return 'EXECUTION_WALLET_REQUIRED'
+    if (track === 'options' && !hasVenueKeys('OPTIONS', suffix, ['BYBIT', 'OKX']))
+      return 'EXECUTION_CREDENTIALS_REQUIRED'
     return ''
   } catch (e) {
     return e instanceof Error && /^EXECUTION_[A-Z_]+$/.test(e.message)

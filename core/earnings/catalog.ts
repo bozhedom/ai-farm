@@ -1,5 +1,16 @@
 export type EarningTrackId =
-  'spot' | 'bots' | 'arbitrage' | 'yield' | 'prediction' | 'business' | 'services'
+  | 'spot'
+  | 'bots'
+  | 'arbitrage'
+  | 'yield'
+  | 'futures'
+  | 'margin'
+  | 'earn'
+  | 'swap'
+  | 'options'
+  | 'prediction'
+  | 'business'
+  | 'services'
 
 export interface EarningTrack {
   id: EarningTrackId
@@ -35,7 +46,42 @@ export const earningTracks: EarningTrack[] = [
     title: 'Фандинг и DeFi',
     stage: 'Операции',
     summary:
-      'Пара из спота и фьючерса на Bybit или размещение USDC в Aave. У каждого направления отдельный счёт.',
+      'Пара из спота и бессрочного контракта на Bybit, OKX, Binance или Bitget, либо размещение USDC в Aave. У каждого направления отдельный счёт.',
+  },
+  {
+    id: 'futures',
+    title: 'Бессрочные фьючерсы',
+    stage: 'Операции',
+    summary:
+      'Направленные сделки USDT-M с изолированной маржой и плечом не выше 3. Стоп, фиксация и дистанция до ликвидации проверяются на сервере.',
+  },
+  {
+    id: 'margin',
+    title: 'Маржинальный спот',
+    stage: 'Операции',
+    summary:
+      'Спот с изолированным плечом не выше 3. Займ, проценты и дистанция до ликвидации учитываются отдельно от обычной торговли монетами.',
+  },
+  {
+    id: 'earn',
+    title: 'Накопления биржи',
+    stage: 'Операции',
+    summary:
+      'Гибкие накопительные продукты Bybit, OKX и Binance. На тренировке доход виртуальный и не обещает ставку живого продукта.',
+  },
+  {
+    id: 'swap',
+    title: 'Обмен DeFi',
+    stage: 'Операции',
+    summary:
+      'Обмен через Uniswap V3 с ограничением проскальзывания. Реальная сеть включается отдельно и по умолчанию выключена.',
+  },
+  {
+    id: 'options',
+    title: 'Опционы',
+    stage: 'Операции',
+    summary:
+      'Покупка колла или пута с потолком убытка, равным уплаченной премии. Коротко опционы не выписываются. Живое исполнение ещё в подготовке.',
   },
   {
     id: 'prediction',
