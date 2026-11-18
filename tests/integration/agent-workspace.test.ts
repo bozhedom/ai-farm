@@ -132,6 +132,7 @@ it('changes the real OpenRouter envelope per role without relaxing its price or 
     ...c,
     MODEL_PROVIDER: 'openai',
     OPENAI_TRANSPORT: 'openrouter',
+    OPENROUTER_PAID_MODEL: 'openai/gpt-6-astra',
   })
   vi.stubGlobal(
     'fetch',
